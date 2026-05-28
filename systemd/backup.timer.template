@@ -1,0 +1,12 @@
+[Unit]
+Description=Trigger nightly server backup at 03:00
+Requires=backup.service
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=5min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

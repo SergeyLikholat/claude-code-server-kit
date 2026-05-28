@@ -1,0 +1,44 @@
+# Что бэкапить — список путей.
+# Скопируйте в /opt/backup/includes.txt и адаптируйте.
+# Пути НЕ существующие в системе автоматически пропускаются.
+
+# === КРИТИЧНО — секреты и ключи шифрования (без них нельзя расшифровать БД) ===
+/root/.secrets
+/root/.ssh
+/root/.config
+/root/.gitconfig
+/root/.mcp.json
+
+# === Claude память + конфигурация ===
+/root/.claude
+/root/.claude-mem
+/root/.claude.json
+
+# === Корневые конфиги/инструкции ===
+/root/CLAUDE.md
+/root/AGENTS.md
+
+# === Все ваши проекты ===
+/root/projects
+
+# === Дампы БД и tar volumes (создаются pre-backup.sh в /var/backups/) ===
+/var/backups/pg
+/var/backups/sqlite
+/var/backups/docker-volumes
+/var/backups/meta
+
+# === Системные конфиги ===
+/etc/systemd/system
+/etc/cron.d
+/etc/crontab
+
+# === Кастомные tools (если используете) ===
+/opt/claude-telegram
+/opt/claude-telegram-router
+/opt/nanobanana
+/opt/gemini-tts
+/opt/openpyxl_safe
+/opt/tg-md
+/opt/backup
+# /opt/parakeet  # обычно НЕ нужно (модель качается заново)
+# /opt/gigaam    # обычно НЕ нужно (модель качается заново)

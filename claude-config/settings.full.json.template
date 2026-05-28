@@ -1,0 +1,68 @@
+{
+  "_comment": "Полный шаблон settings.json со всеми модулями. install.sh подставляет переменные и удаляет неактивные блоки.",
+  "defaultModel": "claude-sonnet-4-6",
+  "alwaysThinkingEnabled": true,
+  "user": {
+    "name": "__USER_NAME__",
+    "email": "__USER_EMAIL__"
+  },
+  "permissions": {
+    "allowedTools": [
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(systemctl status *)",
+      "Bash(journalctl -u *)"
+    ]
+  },
+  "hooks": {
+    "_comment_hooks": "Активируются через --module hooks-extras",
+    "SessionStart": [],
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "Stop": []
+  },
+  "telegram": {
+    "_comment_tg": "Заполняется --module tg-bot",
+    "enabled": false,
+    "botUsername": "__TG_BOT_USERNAME__",
+    "chatId": "__TG_CHAT_ID__",
+    "forumMode": false
+  },
+  "claudeMem": {
+    "_comment_mem": "Заполняется --module claude-mem",
+    "enabled": false,
+    "semanticInject": true,
+    "workerUrl": "http://127.0.0.1:37700",
+    "excludedProjects": []
+  },
+  "backup": {
+    "_comment_backup": "Заполняется --module backup",
+    "enabled": false,
+    "repository": "rclone:yadisk:__BACKUP_TARGET_PATH__",
+    "scheduleCron": "0 3 * * *",
+    "retention": {
+      "daily": 7,
+      "weekly": 4,
+      "monthly": 6
+    }
+  },
+  "parakeet": {
+    "_comment_pk": "Заполняется --module parakeet",
+    "enabled": false,
+    "url": "http://localhost:8089/transcribe",
+    "variant": "__PARAKEET_VARIANT__"
+  },
+  "agentSubpaths": [
+    "/root/.claude/agents",
+    "/root/everything-claude-code/agents"
+  ],
+  "skillSubpaths": [
+    "/root/.claude/skills",
+    "/root/everything-claude-code/skills"
+  ],
+  "rulesSubpaths": [
+    "/root/.claude/rules",
+    "/root/everything-claude-code/rules"
+  ]
+}

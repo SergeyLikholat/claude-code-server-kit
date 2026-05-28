@@ -1,0 +1,16 @@
+[Unit]
+Description=Server backup to Yandex Disk via restic
+Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=__BACKUP_SCRIPT__
+
+[Service]
+Type=oneshot
+ExecStart=__BACKUP_SCRIPT__
+StandardOutput=append:/var/log/backup-systemd.log
+StandardError=append:/var/log/backup-systemd.log
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=4h
+Restart=no

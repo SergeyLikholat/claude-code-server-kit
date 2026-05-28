@@ -1,0 +1,16 @@
+{
+  "name": "claude-telegram-router",
+  "version": "1.0.0",
+  "description": "Orchestrator daemon: polls Telegram, dispatches per-topic claude workers in parallel.",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "grammy": "^1.30.0",
+    "uuid": "^10.0.0",
+    "ajv": "^8.17.1"
+  }
+}

@@ -1,0 +1,58 @@
+# restic exclude — что НЕ бэкапить даже если попало в includes
+
+# Кэши и сборочные артефакты
+**/node_modules
+**/.next
+**/.turbo
+**/.cache
+**/dist
+**/build
+**/.venv
+**/__pycache__
+*.pyc
+*.pyo
+**/venv
+**/env
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Кэши пользователя
+/root/.cache
+/root/.vscode-server
+/root/.npm
+/root/.bun
+/root/.local/share
+/root/.local/lib
+/root/.local/state
+/root/.insightface
+/root/.dotnet
+
+# Логи
+*.log
+**/logs
+/var/log
+
+# Временные
+/root/tmp
+/root/.tmp
+/tmp
+/var/tmp
+
+# Большие бинарники / ML-модели (восстанавливаются из источника)
+/opt/parakeet
+/opt/gigaam
+**/*.onnx
+**/*.bin
+**/*.pt
+**/*.safetensors
+**/*.pkl
+
+# Docker внутренности
+/var/lib/docker/overlay2
+/var/lib/docker/buildkit
+/var/lib/docker/image
+/var/lib/docker/tmp
+
+# Restic cache
+/var/cache/restic

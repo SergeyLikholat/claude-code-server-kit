@@ -1,0 +1,36 @@
+# Никогда не коммитим
+.env
+.env.*
+!.env.example
+*.secret
+*.key
+*.pem
+restic-password
+*-password
+*.bak.*
+*.swp
+.DS_Store
+
+# Логи и runtime
+*.log
+logs/
+.tmp/
+
+# Кэши
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.cache/
+.venv/
+venv/
+
+# Локальная разработка
+.vscode/
+.idea/
+*.local
+memory/
+notes/
+
+# Если кто-то случайно положил рядом install-state
+/var/lib/claude-code-server-kit/

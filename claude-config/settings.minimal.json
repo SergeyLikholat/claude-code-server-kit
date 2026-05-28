@@ -1,0 +1,25 @@
+{
+  "_comment": "Минимальный settings.json — генерируется core install. После установки модулей будет расширен.",
+  "defaultModel": "claude-sonnet-4-6",
+  "alwaysThinkingEnabled": true,
+  "user": {
+    "name": "__USER_NAME__",
+    "email": "__USER_EMAIL__"
+  },
+  "permissions": {
+    "allowedTools": []
+  },
+  "hooks": {},
+  "agentSubpaths": [
+    "/root/.claude/agents",
+    "/root/everything-claude-code/agents"
+  ],
+  "skillSubpaths": [
+    "/root/.claude/skills",
+    "/root/everything-claude-code/skills"
+  ],
+  "rulesSubpaths": [
+    "/root/.claude/rules",
+    "/root/everything-claude-code/rules"
+  ]
+}

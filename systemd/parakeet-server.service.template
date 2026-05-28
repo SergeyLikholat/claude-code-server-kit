@@ -1,0 +1,15 @@
+[Unit]
+Description=Parakeet HTTP transcription server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+ExecStart=__WORKDIR__/venv/bin/python3 __WORKDIR__/server.py --port __PORT__
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/parakeet-server.log
+StandardError=append:/var/log/parakeet-server.log
+
+[Install]
+WantedBy=multi-user.target

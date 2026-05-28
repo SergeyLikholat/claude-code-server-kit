@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram message router for Claude Code
+After=claude-telegram.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__SECRETS_ENV_FILE__
+ExecStart=/usr/bin/node __WORKDIR__/index.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/tg-router.log
+StandardError=append:/var/log/tg-router.log
+
+[Install]
+WantedBy=multi-user.target

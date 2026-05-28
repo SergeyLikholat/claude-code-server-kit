@@ -1,0 +1,46 @@
+# /opt/backup/config.yml — конфигурация что бэкапить
+# Скопируйте config.example.yml → config.yml и адаптируйте под себя.
+#
+# Если файла нет — pre-backup просто бэкапит файловую систему (без PG/sqlite/volumes).
+
+# ============================================================
+# PostgreSQL контейнеры — для каждого делается pg_dump или pg_dumpall
+# ============================================================
+postgres_containers:
+  # Пример: одна БД с не-superuser юзером (нужен pg_dump для конкретной БД)
+  # - name: plane-app-plane-db-1
+  #   user: plane
+  #   database: plane
+  #   output_name: plane
+  #
+  # Пример: superuser, дампим весь кластер
+  # - name: supabase-db
+  #   user: postgres
+  #   dump_all: true
+  #   output_name: supabase
+
+# ============================================================
+# SQLite базы — copy через ".backup" (online, без stop сервиса)
+# ============================================================
+sqlite_files:
+  # Пример:
+  # - path: /root/.claude-mem/claude-mem.db
+  #   output_name: claude-mem
+
+# ============================================================
+# Docker volumes для tar — только те что важны
+# ============================================================
+docker_volumes:
+  # Пример:
+  # - name: localai_telethon_session
+  #   description: "TG-сессия (иначе релогин по SMS)"
+  # - name: localai_nocodb_data
+  #   description: "лиды NocoDB"
+
+# ============================================================
+# Произвольные команды до бэкапа (например, n8n export workflows)
+# ============================================================
+pre_backup_commands:
+  # Пример:
+  # - description: "Экспорт n8n workflows"
+  #   command: "docker exec n8n n8n export:workflow --all --output=/tmp/wf.json && docker cp n8n:/tmp/wf.json /var/backups/n8n-wf.json"
