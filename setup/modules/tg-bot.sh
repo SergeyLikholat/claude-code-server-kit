@@ -126,6 +126,20 @@ install_bot \
   "TELEGRAM_BOT_TOKEN"
 
 # ============================================================
+# Бонус: tg-notify utilities (notify.sh + schedule-notify.sh)
+# ============================================================
+# Standalone-скрипты для отправки TG-сообщений из cron / других скриптов.
+# Используют тот же TELEGRAM_BOT_TOKEN что и роутер.
+log "▸ Установка tg-notify утилит в /opt/tg-notify/"
+ensure_dir /opt/tg-notify 755
+cp -n "$KIT_DIR/tools/tg-notify/notify.sh" /opt/tg-notify/ 2>/dev/null || true
+cp -n "$KIT_DIR/tools/tg-notify/schedule-notify.sh" /opt/tg-notify/ 2>/dev/null || true
+chmod +x /opt/tg-notify/*.sh 2>/dev/null || true
+ok "  → /opt/tg-notify/notify.sh и schedule-notify.sh готовы"
+log "  Примеры использования: см. /opt/tg-notify/README.md (или tools/tg-notify/README.md в kit'е)"
+cp -n "$KIT_DIR/tools/tg-notify/README.md" /opt/tg-notify/ 2>/dev/null || true
+
+# ============================================================
 # Опционально: второй бот (tg-router2)
 # ============================================================
 if [ "$INSTALL_SECOND" = "true" ]; then
