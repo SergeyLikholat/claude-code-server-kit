@@ -81,7 +81,7 @@
 
 Если уже установили модуль, в логах сервера:
 ```bash
-journalctl -u claude-telegram -f
+journalctl -u tg-router -f
 ```
 Напишите любое сообщение в группу → в логах увидите `chat.id: -100...`.
 
@@ -112,11 +112,35 @@ Telegram Chat ID (группа куда бот пишет, например -100
 ```
 
 Скрипт:
-- Скопирует код бота в `/opt/claude-telegram/` и `/opt/claude-telegram-router/`
-- Сохранит секреты в `/root/.secrets/tg-bot.env` (chmod 600)
-- Создаст systemd-юниты `claude-telegram.service` и `tg-router.service`
-- Запустит их и проверит что бот отвечает
-- Пришлёт в группу тестовое сообщение: `🤖 Claude Code Server Kit подключён. Готов к работе.`
+- Скопирует код бота в `/opt/claude-telegram-router/`
+- Сохранит токен в `/root/.claude/channels/telegram/.env` (chmod 600)
+- Создаст systemd-юнит `tg-router.service` с `Restart=always`
+- **Включит автозапуск (`systemctl enable`)** — после перезагрузки сервера бот сам запустится
+- Запустит и проверит что бот отвечает
+
+### Автозапуск после перезагрузки
+
+`tg-router.service` устанавливается **enabled** — это значит:
+- После `reboot` сервера бот запустится автоматически
+- Если бот упал (ошибка / OOM) — systemd рестартует через 5 секунд (`Restart=always`)
+- Проверить что enabled: `systemctl is-enabled tg-router` → должно быть `enabled`
+- Логи перезапусков: `journalctl -u tg-router -n 100`
+
+### Второй бот (опционально)
+
+Если нужен **второй бот** на том же сервере (например, для семьи / команды / разделения личного и рабочего):
+
+```bash
+sudo bash install.sh --module tg-bot -- --second-bot
+```
+
+Установит отдельный systemd-юнит `tg-router2.service` с независимым:
+- Кодом в `/opt/claude-telegram-router2/`
+- Конфигом в `/root/.claude/channels/telegram2/.env`
+- Lock-директорией `/run/claude-telegram2/`
+- Также `enabled` (автозапуск)
+
+Боты работают параллельно, не конфликтуют.
 
 ---
 
@@ -215,13 +239,13 @@ Telegram Chat ID (группа куда бот пишет, например -100
 
 ```bash
 # Проверить что сервис запущен
-systemctl status claude-telegram
+systemctl status tg-router
 
 # Посмотреть логи
-journalctl -u claude-telegram -n 50
+journalctl -u tg-router -n 50
 
 # Перезапустить
-sudo systemctl restart claude-telegram
+sudo systemctl restart tg-router
 ```
 
 ### «Conflict: terminated by other getUpdates request»
@@ -230,18 +254,18 @@ sudo systemctl restart claude-telegram
 
 ```bash
 # Остановите всё
-sudo systemctl stop claude-telegram tg-router
+sudo systemctl stop tg-router
 
 # Очистите webhook (на всякий случай)
 curl -X POST "https://api.telegram.org/bot$TOKEN/deleteWebhook?drop_pending_updates=true"
 
 # Запустите снова
-sudo systemctl start claude-telegram tg-router
+sudo systemctl start tg-router
 ```
 
 ### Бот видит свои же сообщения и зацикливается
 
-Бывает если включили в `BotFather` privacy off и бот реагирует на свои сообщения. В `/opt/claude-telegram/config.js` есть фильтр `ignore_bot_messages: true` — убедитесь что включён.
+Бывает если включили в `BotFather` privacy off и бот реагирует на свои сообщения. В `/opt/claude-telegram-router/access.js` есть фильтр `ignore_bot_messages: true` — убедитесь что включён.
 
 ### «Я хочу разрешить ботом пользоваться кому-то ещё»
 
@@ -250,7 +274,7 @@ sudo systemctl start claude-telegram tg-router
 TELEGRAM_ALLOWED_CHATS=-1001234567890,-1009876543210
 TELEGRAM_ALLOWED_USERS=123456789,987654321
 ```
-И перезапустите: `sudo systemctl restart claude-telegram`.
+И перезапустите: `sudo systemctl restart tg-router`.
 
 ⚠️ Бот получит доступ к вашему серверу через Claude. Доверяйте только тем кто имеет право на полный доступ.
 
@@ -267,7 +291,7 @@ sudo bash uninstall.sh --module tg-bot
 ```
 
 - Остановит и удалит сервисы
-- Удалит код из `/opt/claude-telegram/` и `/opt/claude-telegram-router/`
+- Удалит код из `/opt/claude-telegram-router/`
 - Сохранит `~/.secrets/tg-bot.env` в `~/.removed-modules-backup/` (на случай если передумаете)
 - НЕ удаляет самого бота в Telegram — это делайте сами через @BotFather (`/deletebot`)
 

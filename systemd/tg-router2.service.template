@@ -1,5 +1,5 @@
 [Unit]
-Description=Claude Code Telegram router + per-topic worker dispatcher
+Description=Claude Code Telegram router #2 (second bot, e.g. family/team-shared)
 Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
 After=network-online.target
 Wants=network-online.target
@@ -13,11 +13,13 @@ ExecStart=/usr/bin/node __WORKDIR__/index.js
 Restart=always
 RestartSec=5s
 
-# systemd-managed /run/<dir>/ для per-topic lockfiles
+# Отдельные runtime/state директории, чтобы не конфликтовать с основным tg-router
 RuntimeDirectory=__RUNTIME_DIR__
 RuntimeDirectoryMode=0700
 
 Environment=NODE_ENV=production
+Environment=TELEGRAM_STATE_DIR=__STATE_DIR__
+Environment=TG_ROUTER_LOCK_DIR=/run/__RUNTIME_DIR__
 EnvironmentFile=-__ENV_FILE__
 
 StandardOutput=journal

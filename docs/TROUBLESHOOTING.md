@@ -232,16 +232,16 @@ restic restore SNAPSHOT_ID --target /
 ### Бот молчит на сообщения
 
 ```bash
-sudo systemctl status claude-telegram
-sudo journalctl -u claude-telegram -n 50
+sudo systemctl status tg-router
+sudo journalctl -u tg-router -n 50
 ```
 
 Самое частое:
 - **«Conflict: terminated by other getUpdates»** — у того же токена есть второй consumer. Стопаните, удалите webhook, запустите снова:
   ```bash
-  sudo systemctl stop claude-telegram
+  sudo systemctl stop tg-router
   curl -X POST "https://api.telegram.org/bot$TG_TOKEN/deleteWebhook?drop_pending_updates=true"
-  sudo systemctl start claude-telegram
+  sudo systemctl start tg-router
   ```
 - **«Unauthorized»** — неверный токен в `/root/.secrets/tg-bot.env`. Перепроверьте у @BotFather.
 
@@ -250,7 +250,7 @@ sudo journalctl -u claude-telegram -n 50
 В `/root/.secrets/tg-bot.env` проверьте `TELEGRAM_CHAT_ID`. Если поменялся:
 ```bash
 sudo nano /root/.secrets/tg-bot.env
-sudo systemctl restart claude-telegram
+sudo systemctl restart tg-router
 ```
 
 ### Хочу добавить топик для конкретного проекта

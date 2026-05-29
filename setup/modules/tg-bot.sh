@@ -1,110 +1,170 @@
 #!/bin/bash
-# Модуль tg-bot: Telegram-бот для управления Claude
+# Модуль tg-bot: Telegram-роутер для управления Claude.
+#
+# По умолчанию ставит один бот (tg-router).
+# Опция --second-bot ставит ВТОРОЙ бот (tg-router2) рядом с первым
+#   (для членов семьи / команды / тестового канала).
+
 set -e
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
 MODULE_NAME="tg-bot"
+INSTALL_SECOND=false
+
+# Парсинг аргументов модуля
+for arg in "$@"; do
+  case "$arg" in
+    --second-bot) INSTALL_SECOND=true ;;
+  esac
+done
+
 log "Установка модуля: $MODULE_NAME"
 
 # ============================================================
-# 1. Сбор данных от пользователя
+# Общая функция установки одного бота
 # ============================================================
-ask "Telegram Bot Token (от @BotFather)" "" TELEGRAM_BOT_TOKEN
-if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-  warn "Bot token не указан — модуль пропущен"
+install_bot() {
+  local name="$1"               # tg-router или tg-router2
+  local workdir="$2"            # /opt/claude-telegram-router(2)
+  local runtime_dir="$3"        # claude-telegram(2)
+  local state_dir="$4"          # /root/.claude/channels/telegram(2)
+  local env_file="$5"           # /root/.claude/channels/telegram(2)/.env
+  local template="$6"           # путь к systemd template
+  local token_var="$7"          # имя переменной с токеном
+
+  log "▸ Установка $name (workdir: $workdir)"
+
+  # 1. Получить токен
+  local TOKEN="${!token_var:-}"
+  if [ -z "$TOKEN" ]; then
+    ask "Telegram Bot Token для $name (от @BotFather)" "" TOKEN
+  fi
+  if [ -z "$TOKEN" ]; then
+    warn "Токен для $name не указан — пропускаю"
+    return 0
+  fi
+
+  # 2. Проверка токена
+  log "Проверяю токен..."
+  local bot_info
+  bot_info=$(curl -sS "https://api.telegram.org/bot${TOKEN}/getMe" 2>/dev/null || echo '{"ok":false}')
+  if ! echo "$bot_info" | grep -q '"ok":true'; then
+    err "Токен невалидный. Проверьте у @BotFather."
+    return 1
+  fi
+  local bot_username
+  bot_username=$(echo "$bot_info" | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["username"])' 2>/dev/null)
+  ok "  Бот: @$bot_username"
+
+  # 3. Установка кода в /opt/
+  ensure_dir /opt 755
+  if [ ! -d "$workdir" ]; then
+    cp -r "$KIT_DIR/tools/claude-telegram-router" "$workdir"
+    log "  Код скопирован в $workdir"
+  else
+    log "  $workdir уже существует, не перезаписываю код (используем существующий)"
+  fi
+
+  # 4. npm install (если ещё не сделан)
+  if [ ! -d "$workdir/node_modules" ]; then
+    log "  npm install зависимостей..."
+    (cd "$workdir" && npm install --production --silent 2>&1 | tail -3) || warn "  npm install вернул ошибку"
+  fi
+
+  # 5. Env-файл (соглашение: /root/.claude/channels/telegram(2)/.env)
+  ensure_dir "$state_dir" 700
+  if [ ! -f "$env_file" ]; then
+    cat > "$env_file" <<EOF
+TELEGRAM_BOT_TOKEN=$TOKEN
+TELEGRAM_FORCE_POLLING=0
+EOF
+    chmod 600 "$env_file"
+    log "  Env создан: $env_file"
+  else
+    log "  $env_file уже существует — НЕ перезаписываю (используем существующий)"
+  fi
+
+  # 6. Systemd unit
+  if [ "$name" = "tg-router2" ]; then
+    install_systemd_unit "$name" "$template" \
+      "WORKDIR=$workdir" \
+      "RUNTIME_DIR=$runtime_dir" \
+      "STATE_DIR=$state_dir" \
+      "ENV_FILE=$env_file"
+  else
+    install_systemd_unit "$name" "$template" \
+      "WORKDIR=$workdir" \
+      "RUNTIME_DIR=$runtime_dir" \
+      "ENV_FILE=$env_file"
+  fi
+
+  # 7. Enable + start
+  systemctl enable "${name}.service"
+  systemctl restart "${name}.service"
+  sleep 2
+
+  if systemctl is-active --quiet "${name}.service"; then
+    ok "  $name запущен и enabled (стартует автоматически после перезагрузки)"
+  else
+    warn "  $name не запустился. Логи: journalctl -u $name -n 50"
+  fi
+
+  echo "BOT_USERNAME_${name//-/_}=$bot_username" >> /tmp/tg-bot-install.summary
+}
+
+# ============================================================
+# Установка основного бота (tg-router)
+# ============================================================
+install_bot \
+  "tg-router" \
+  "/opt/claude-telegram-router" \
+  "claude-telegram" \
+  "/root/.claude/channels/telegram" \
+  "/root/.claude/channels/telegram/.env" \
+  "$KIT_DIR/systemd/tg-router.service.template" \
+  "TELEGRAM_BOT_TOKEN"
+
+# ============================================================
+# Опционально: второй бот (tg-router2)
+# ============================================================
+if [ "$INSTALL_SECOND" = "true" ]; then
   echo
-  echo "Как получить:"
-  echo "  1. Откройте https://t.me/BotFather"
-  echo "  2. /newbot, придумайте имя"
-  echo "  3. Скопируйте токен вида 123456:ABCdef..."
-  echo "  4. Запустите: TELEGRAM_BOT_TOKEN=ваш_токен sudo bash install.sh --module tg-bot"
-  exit 0
-fi
-
-ask "Telegram Chat ID (группа или ваш личный, например -1001234567890)" "" TELEGRAM_CHAT_ID
-ask "Использовать форум-режим с топиками? (y/n)" "n" TG_FORUM_MODE
-
-# Проверка валидности токена
-log "Проверяю токен..."
-BOT_INFO=$(curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" 2>/dev/null || echo '{"ok":false}')
-if echo "$BOT_INFO" | grep -q '"ok":true'; then
-  BOT_USERNAME=$(echo "$BOT_INFO" | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["username"])' 2>/dev/null)
-  ok "Бот найден: @$BOT_USERNAME"
-else
-  err "Токен невалидный. Проверьте у @BotFather."
-  exit 1
+  log "▸ Установка второго бота (--second-bot)"
+  install_bot \
+    "tg-router2" \
+    "/opt/claude-telegram-router2" \
+    "claude-telegram2" \
+    "/root/.claude/channels/telegram2" \
+    "/root/.claude/channels/telegram2/.env" \
+    "$KIT_DIR/systemd/tg-router2.service.template" \
+    "TELEGRAM_BOT_TOKEN_2"
 fi
 
 # ============================================================
-# 2. Копирование кода в /opt/
+# Финал
 # ============================================================
-log "Копирую код в /opt/claude-telegram/"
-ensure_dir /opt 755
-cp -r "$KIT_DIR/tools/claude-telegram" /opt/
-
-log "Копирую роутер в /opt/claude-telegram-router/"
-cp -r "$KIT_DIR/tools/claude-telegram-router" /opt/
-
-# Зависимости
-if [ -f /opt/claude-telegram/package.json ]; then
-  cd /opt/claude-telegram && npm install --production --silent 2>&1 | tail -3
-fi
-if [ -f /opt/claude-telegram-router/package.json ]; then
-  cd /opt/claude-telegram-router && npm install --production --silent 2>&1 | tail -3
-fi
-
-# ============================================================
-# 3. Секреты
-# ============================================================
-save_secrets /root/.secrets/tg-bot.env \
-  TELEGRAM_BOT_TOKEN \
-  TELEGRAM_CHAT_ID \
-  TG_FORUM_MODE
-
-# ============================================================
-# 4. Systemd-юнит
-# ============================================================
-install_systemd_unit "claude-telegram" \
-  "$KIT_DIR/systemd/claude-telegram.service.template" \
-  "SECRETS_ENV_FILE=/root/.secrets/tg-bot.env" \
-  "WORKDIR=/opt/claude-telegram"
-
-systemctl enable --now claude-telegram.service
-
-# Опционально роутер
-if [ -f "$KIT_DIR/systemd/tg-router.service.template" ]; then
-  install_systemd_unit "tg-router" \
-    "$KIT_DIR/systemd/tg-router.service.template" \
-    "SECRETS_ENV_FILE=/root/.secrets/tg-bot.env" \
-    "WORKDIR=/opt/claude-telegram-router"
-  systemctl enable --now tg-router.service 2>/dev/null || true
-fi
-
-# ============================================================
-# 5. Smoke-test
-# ============================================================
-sleep 3
-if systemctl is-active --quiet claude-telegram; then
-  ok "claude-telegram запущен"
-
-  # Тестовое сообщение
-  curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${TELEGRAM_CHAT_ID}" \
-    -d "text=🤖 Claude Code Server Kit подключён. Готов к работе." \
-    > /dev/null && ok "Тестовое сообщение отправлено в TG"
-else
-  warn "claude-telegram не запустился. Логи: journalctl -u claude-telegram -n 50"
-fi
-
 cat <<EOF
 
 ${BOLD}${GREEN}✓ Модуль tg-bot установлен${NC}
 
-Что дальше:
-  • Напишите боту @${BOT_USERNAME:-yourbot} любое сообщение — он перешлёт в Claude
-  • Логи: journalctl -u claude-telegram -f
-  • Перезапуск: sudo systemctl restart claude-telegram
-  • Настройка топиков: см. docs/TELEGRAM-SETUP.md
+Что работает:
+  • tg-router  — systemd unit enabled (автоматически стартует после перезагрузки)
+$([ "$INSTALL_SECOND" = "true" ] && echo "  • tg-router2 — systemd unit enabled (второй бот)")
+
+Полезные команды:
+  • Логи:      journalctl -u tg-router -f
+  • Статус:    systemctl status tg-router
+  • Рестарт:   sudo systemctl restart tg-router
+$([ "$INSTALL_SECOND" = "true" ] && echo "  • Аналогично tg-router2")
+
+Чтобы добавить второй бот позже:
+  sudo bash install.sh --module tg-bot -- --second-bot
+
+Конфиги (env-файлы с токенами):
+  • /root/.claude/channels/telegram/.env  (основной)
+$([ "$INSTALL_SECOND" = "true" ] && echo "  • /root/.claude/channels/telegram2/.env (второй)")
 
 EOF
+
+rm -f /tmp/tg-bot-install.summary
