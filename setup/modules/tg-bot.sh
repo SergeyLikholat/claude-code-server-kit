@@ -21,6 +21,45 @@ done
 
 log "Установка модуля: $MODULE_NAME"
 
+# Гарантировать Node.js — нужен и для роутера, и для запуска
+# MCP-сервера плагина claude-plugins-official/telegram.
+ensure_node
+
+# Установить официальный Telegram-плагин Claude Code (MCP-сервер reply/react/
+# download_attachment). Без него headless-claude worker внутри роутера
+# физически не может отправить ответ — он лишь напишет в stdout, который
+# пользователь не видит, и в чате тишина.
+log "▸ Telegram MCP-плагин (claude-plugins-official/telegram)"
+install_claude_plugin "telegram" "claude-plugins-official" "anthropics/claude-plugins-official" || \
+  warn "Плагин не установлен — бот сможет принимать сообщения, но не отвечать через MCP"
+
+# Создать дефолтный routing.json — без него index.js падает на каждом
+# сообщении (JSON.parse(readFileSync(ROUTING_FILE))).
+ensure_default_routing() {
+  local state_dir="$1"
+  local routing_file="$state_dir/routing.json"
+  ensure_dir "$state_dir" 700
+  if [ -f "$routing_file" ]; then
+    log "  routing.json уже существует — не трогаю"
+    return 0
+  fi
+  local sid
+  sid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())')"
+  cat > "$routing_file" <<EOF
+{
+  "general": {
+    "name": "General",
+    "project_dir": "/root",
+    "session_id": "$sid"
+  },
+  "topics": {},
+  "ux": {}
+}
+EOF
+  chmod 600 "$routing_file"
+  log "  routing.json создан: $routing_file"
+}
+
 # ============================================================
 # Общая функция установки одного бота
 # ============================================================
@@ -78,12 +117,16 @@ install_bot() {
     cat > "$env_file" <<EOF
 TELEGRAM_BOT_TOKEN=$TOKEN
 TELEGRAM_FORCE_POLLING=0
+# PARAKEET_URL=http://127.0.0.1:8002/transcribe   # раскомментируйте после установки модуля parakeet
 EOF
     chmod 600 "$env_file"
     log "  Env создан: $env_file"
   else
     log "  $env_file уже существует — НЕ перезаписываю (используем существующий)"
   fi
+
+  # 5b. Дефолтный routing.json (требуется loadRouting() в index.js).
+  ensure_default_routing "$state_dir"
 
   # 6. Systemd unit
   if [ "$name" = "tg-router2" ]; then

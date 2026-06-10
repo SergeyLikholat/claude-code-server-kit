@@ -1,10 +1,27 @@
 #!/bin/bash
-# Модуль backup: автоматический шифрованный бэкап на Яндекс.Диск через restic + rclone
+# Модуль backup: автоматический шифрованный бэкап через restic + rclone
+# на выбранный backend (Yandex.Disk / Google Drive / любой rclone remote).
+#
+# Использование:
+#   sudo bash install.sh --module backup                          # дефолт: Yandex.Disk
+#   sudo bash install.sh --module backup -- --backend gdrive      # Google Drive
+#   sudo bash install.sh --module backup -- --backend custom --remote NAME
 set -e
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
-log "Установка модуля: backup"
+BACKEND="yandex"
+CUSTOM_REMOTE=""
+for arg in "$@"; do
+  case "$arg" in
+    --backend=*) BACKEND="${arg#*=}" ;;
+    --backend)   shift; BACKEND="${1:-yandex}" ;;
+    --remote=*)  CUSTOM_REMOTE="${arg#*=}" ;;
+    --remote)    shift; CUSTOM_REMOTE="${1:-}" ;;
+  esac
+done
+
+log "Установка модуля: backup (backend: $BACKEND)"
 
 # ============================================================
 # 1. Установка restic + rclone
@@ -12,7 +29,59 @@ log "Установка модуля: backup"
 apt_install restic rclone
 
 # ============================================================
-# 2. Сбор данных от пользователя
+# 2. Backend-specific: выбираем rclone remote
+# ============================================================
+RCLONE_REMOTE=""
+case "$BACKEND" in
+  yandex)
+    RCLONE_REMOTE="yadisk"
+    ;;
+  gdrive)
+    RCLONE_REMOTE="gdrive"
+    if ! rclone listremotes 2>/dev/null | grep -q "^gdrive:$"; then
+      cat <<EOF
+
+▸ Для Google Drive нужно один раз настроить rclone-remote с именем "gdrive".
+   Самый простой способ — авторизоваться на машине С браузером:
+
+     1. Установите rclone локально (https://rclone.org/install/)
+     2. Локально: rclone authorize "drive"
+        → откроется браузер, войдите в Google, нажмите "Разрешить"
+        → скопируйте JSON-токен (одна длинная строка)
+     3. На сервере: запустите 'rclone config' и создайте remote:
+        n) New remote → name: gdrive → storage: drive
+        scope: 1 (full access) → root_folder_id/service_account: пусто
+        Use auto config: n → вставьте JSON-токен → y (advanced: n) → q (quit)
+     4. Перезапустите этот модуль.
+
+EOF
+      fatal "rclone remote 'gdrive' не настроен — см. инструкцию выше"
+    fi
+    ;;
+  custom)
+    [ -z "$CUSTOM_REMOTE" ] && fatal "С --backend custom нужен --remote NAME"
+    RCLONE_REMOTE="$CUSTOM_REMOTE"
+    if ! rclone listremotes 2>/dev/null | grep -q "^${RCLONE_REMOTE}:$"; then
+      fatal "rclone remote '$RCLONE_REMOTE' не настроен. Запустите 'rclone config'."
+    fi
+    ;;
+  *)
+    fatal "Неизвестный backend: $BACKEND (доступно: yandex, gdrive, custom)"
+    ;;
+esac
+
+# Не-yandex бэкенды используют существующий rclone remote и пропускают OAuth-блок
+if [ "$BACKEND" != "yandex" ]; then
+  ask "Папка в $BACKEND для бэкапа" "/server-backups/restic-main" BACKUP_TARGET_PATH
+  ok "Использую rclone remote: $RCLONE_REMOTE"
+  # Прыгаем сразу к restic-инициализации (блок 5+ ниже).
+  SKIP_YANDEX_OAUTH=1
+fi
+
+if [ "${SKIP_YANDEX_OAUTH:-0}" != "1" ]; then
+
+# ============================================================
+# 2y. Yandex OAuth flow (только для backend=yandex)
 # ============================================================
 ask "Yandex OAuth Client ID (см. docs/BACKUP-SETUP.md)" "" YANDEX_CLIENT_ID
 if [ -z "$YANDEX_CLIENT_ID" ]; then
@@ -88,16 +157,18 @@ os.chmod('/root/.config/rclone/rclone.conf', 0o600)
 "
 ok "rclone.conf создан"
 
-# Проверка доступа
-if rclone lsd yadisk: >/dev/null 2>&1; then
-  ok "Я.Диск доступен"
+fi  # end SKIP_YANDEX_OAUTH
+
+# Проверка доступа (для любого backend)
+if rclone lsd "${RCLONE_REMOTE}:" >/dev/null 2>&1; then
+  ok "Backend $BACKEND ($RCLONE_REMOTE) доступен"
 else
-  err "Не удалось подключиться к Я.Диску"
+  err "Не удалось подключиться к ${RCLONE_REMOTE}: (проверьте rclone config)"
   exit 1
 fi
 
 # Создать target папку
-rclone mkdir "yadisk:${BACKUP_TARGET_PATH#/}" 2>/dev/null || true
+rclone mkdir "${RCLONE_REMOTE}:${BACKUP_TARGET_PATH#/}" 2>/dev/null || true
 
 # ============================================================
 # 5. Restic password
@@ -145,14 +216,17 @@ log "Устанавливаю backup-инфраструктуру в /opt/backup
 ensure_dir /opt/backup 755
 cp -r "$KIT_DIR/backup/"* /opt/backup/
 
-# Подставляем путь Я.Диска в env-скрипт
-sed -i "s|__BACKUP_TARGET_PATH__|${BACKUP_TARGET_PATH#/}|g" /opt/backup/scripts/restic-env.sh
+# Подставляем путь и remote в env-скрипт
+sed -i \
+  -e "s|__BACKUP_TARGET_PATH__|${BACKUP_TARGET_PATH#/}|g" \
+  -e "s|__RCLONE_REMOTE__|${RCLONE_REMOTE}|g" \
+  /opt/backup/scripts/restic-env.sh
 chmod +x /opt/backup/scripts/*.sh
 
 # ============================================================
 # 7. Restic init (или skip если уже инициализирован)
 # ============================================================
-export RESTIC_REPOSITORY="rclone:yadisk:${BACKUP_TARGET_PATH#/}"
+export RESTIC_REPOSITORY="rclone:${RCLONE_REMOTE}:${BACKUP_TARGET_PATH#/}"
 export RESTIC_PASSWORD_FILE="/root/.secrets/restic-password"
 
 if restic snapshots >/dev/null 2>&1; then

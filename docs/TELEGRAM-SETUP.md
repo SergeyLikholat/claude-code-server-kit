@@ -209,18 +209,35 @@ sudo bash install.sh --module tg-bot -- --second-bot
 - **Топик «Бэкап»** — сюда приходят уведомления о бэкапах
 - **Топик «Мониторинг»** — алерты от других сервисов
 
-Чтобы Claude автоматически подгружал контекст проекта в зависимости от топика — настройте маршрутизацию в `~/.claude/scripts/telegram-routing.json`:
+Чтобы Claude автоматически подгружал контекст проекта в зависимости от топика — отредактируйте `/root/.claude/channels/telegram/routing.json` (создаётся при установке модуля с дефолтным `general`-топиком):
 
 ```json
 {
-  "by_thread_id": {
-    "10": "/root/projects/project-a/CLAUDE.md",
-    "20": "/root/projects/project-b/CLAUDE.md"
+  "general": {
+    "name": "General",
+    "project_dir": "/root",
+    "session_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "topics": {
+    "10": {
+      "name": "Project A",
+      "project_dir": "/root/projects/project-a",
+      "session_id": "11111111-1111-1111-1111-111111111111"
+    },
+    "20": {
+      "name": "Project B",
+      "project_dir": "/root/projects/project-b",
+      "session_id": "22222222-2222-2222-2222-222222222222"
+    }
   }
 }
 ```
 
-(Где `10`, `20` — `message_thread_id` соответствующих топиков, узнать через debug-режим бота.)
+- Ключи в `topics` — это `message_thread_id` форум-топиков (видно в логах: `journalctl -u tg-router -f`).
+- `project_dir` — рабочая директория, под которой запустится Claude (CLAUDE.md этого каталога автоматически попадёт в контекст).
+- `session_id` — UUID, ОДИН на топик; роутер сам решает `--resume` или `--session-id` по наличию файла `~/.claude/projects/<slug>/<session_id>.jsonl`.
+
+После правки рестарт не нужен — `routing.json` перечитывается на каждое входящее сообщение.
 
 ---
 

@@ -1,15 +1,17 @@
 [Unit]
-Description=Parakeet HTTP transcription server
+Description=Parakeet-TDT v3 HTTP transcription server
+Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=__WORKDIR__
-ExecStart=__WORKDIR__/venv/bin/python3 __WORKDIR__/server.py --port __PORT__
+Environment=PARAKEET_MODEL_DIR=__MODEL_DIR__
+ExecStart=__WORKDIR__/venv/bin/python3 __WORKDIR__/server.py --host 127.0.0.1 --port __PORT__
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:/var/log/parakeet-server.log
-StandardError=append:/var/log/parakeet-server.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

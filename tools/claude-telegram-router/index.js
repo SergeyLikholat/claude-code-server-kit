@@ -12,6 +12,7 @@ const { handlePhoto, handleVoice, handleDocument, handleAudio, handleVideo } = r
 const { withLock, isLockBusy } = require('./lock')
 const { runClaudeWorker } = require('./dispatch')
 const { runCommand, isCommand } = require('./commands')
+const { transcribeIfConfigured } = require('./transcribe')
 
 const ROUTING_FILE = join(STATE_DIR, 'routing.json')
 const ENV_FILE = join(STATE_DIR, '.env')
@@ -272,10 +273,17 @@ bot.on('message:photo', fireAndForget(async ctx => {
 }))
 
 bot.on('message:voice', fireAndForget(async ctx => {
-  const caption = ctx.message.caption ?? '(voice message)'
+  let caption = ctx.message.caption ?? '(voice message)'
   let attachment = null
   try { attachment = await handleVoice(bot, ctx) } catch (err) {
     console.error('tg-router: voice download failed:', err.message)
+  }
+  if (attachment) {
+    const text = await transcribeIfConfigured(attachment.path).catch(() => null)
+    if (text) {
+      caption = `(voice transcript)\n${text}`
+      attachment.transcript = text
+    }
   }
   await handleInbound(bot, ctx, caption, attachment)
 }))
@@ -290,10 +298,17 @@ bot.on('message:document', fireAndForget(async ctx => {
 }))
 
 bot.on('message:audio', fireAndForget(async ctx => {
-  const caption = ctx.message.caption ?? '(audio)'
+  let caption = ctx.message.caption ?? '(audio)'
   let attachment = null
   try { attachment = await handleAudio(bot, ctx) } catch (err) {
     console.error('tg-router: audio download failed:', err.message)
+  }
+  if (attachment) {
+    const text = await transcribeIfConfigured(attachment.path).catch(() => null)
+    if (text) {
+      caption = `(audio transcript)\n${text}`
+      attachment.transcript = text
+    }
   }
   await handleInbound(bot, ctx, caption, attachment)
 }))

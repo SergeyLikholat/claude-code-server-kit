@@ -85,8 +85,13 @@ const ALLOWED_TOOLS = [
 ]
 
 function projectSlug(dir) {
-  // Matches claude-code's slug logic: '/' AND '_' → '-' (claude-code normalizes both).
-  return dir.replace(/[/_]/g, '-')
+  // Matches claude-code's slug logic: EVERY non-alphanumeric character → '-'.
+  // The earlier `/[/_]/g` regex only replaced `/` and `_`, which silently broke
+  // session resume for any topic whose project_dir contained Cyrillic, spaces
+  // or dots — sessionExists() returned false, the worker re-spawned with
+  // --session-id for an already-existing session, and crashed with
+  // "Session ID … is already in use" on every message after the first.
+  return dir.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
 function sessionJsonlPath(projectDir, sessionId) {
