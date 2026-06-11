@@ -12,6 +12,7 @@ const { handlePhoto, handleVoice, handleDocument, handleAudio, handleVideo } = r
 const { withLock, isLockBusy } = require('./lock')
 const { runClaudeWorker } = require('./dispatch')
 const { runCommand, isCommand } = require('./commands')
+const bridge = require('./bridge')
 const { transcribeIfConfigured } = require('./transcribe')
 
 const ROUTING_FILE = join(STATE_DIR, 'routing.json')
@@ -173,12 +174,36 @@ async function handleInbound(bot, ctx, text, attachment) {
 
   // slash-command intercept: runs synchronously, no worker spawn
   if (text && isCommand(text)) {
-    const { handled, reply } = runCommand(text, topic)
+    const { handled, reply, reply_markup } = runCommand(text, topic, { ctx })
     if (handled) {
-      const opts = threadId != null ? { message_thread_id: Number(threadId) } : {}
-      await bot.api.sendMessage(chat_id, reply || '(ok)', opts).catch(() => {})
+      const baseOpts = threadId != null ? { message_thread_id: Number(threadId) } : {}
+      const htmlOpts = { ...baseOpts, parse_mode: 'HTML', disable_web_page_preview: true }
+      if (reply_markup) htmlOpts.reply_markup = reply_markup
+      await bot.api.sendMessage(chat_id, reply || '(ok)', htmlOpts).catch(err => {
+        // Fallback to plain text if HTML parsing fails (e.g. mismatched tags)
+        console.error('tg-router: HTML parse failed, falling back to plain:', err?.description || err?.message || err)
+        const plainOpts = { ...baseOpts }
+        if (reply_markup) plainOpts.reply_markup = reply_markup
+        return bot.api.sendMessage(chat_id, reply || '(ok)', plainOpts).catch(() => {})
+      })
       return
     }
+  }
+
+  // VS Code Live bridge override: for topic.mode === 'vscode_bridge',
+  // route the message to the session selected via /connect, not the placeholder
+  // session_id from routing.json.
+  if (topic.mode === 'vscode_bridge') {
+    const state = bridge.getBridge(chat_id, threadId)
+    if (!state) {
+      const opts = threadId != null ? { message_thread_id: Number(threadId) } : {}
+      await bot.api.sendMessage(chat_id,
+        '🔌 Сессия не выбрана. Используй `/list` чтобы увидеть доступные сессии, потом `/connect <N>` для подключения.',
+        opts).catch(() => {})
+      return
+    }
+    topic.project_dir = state.project_dir
+    topic.session_id = state.session_id
   }
 
   const lockPath = join(LOCK_DIR, `topic-${threadId || 'general'}.lock`)
@@ -320,6 +345,147 @@ bot.on('message:video', fireAndForget(async ctx => {
     console.error('tg-router: video download failed:', err.message)
   }
   await handleInbound(bot, ctx, caption, attachment)
+}))
+
+// -- Callback queries (inline keyboard clicks) ------------------------------
+bot.on('callback_query:data', fireAndForget(async ctx => {
+  const botUsername = bot.botInfo?.username
+  const gateResult = gate(ctx, botUsername)
+  if (gateResult.action === 'drop') {
+    await ctx.answerCallbackQuery({ text: 'нет доступа', show_alert: false }).catch(() => {})
+    return
+  }
+  const data = ctx.callbackQuery.data || ''
+  const m = ctx.callbackQuery.message
+  if (!m) {
+    await ctx.answerCallbackQuery().catch(() => {})
+    return
+  }
+  // Parse: "list[-all]:page=N" | "list[-all]:noop"
+  const m2 = data.match(/^(list|list-all):(page=(\d+)|noop)$/)
+  if (m2) {
+    const includeAgents = m2[1] === 'list-all'
+    if (m2[2] === 'noop') {
+      await ctx.answerCallbackQuery().catch(() => {})
+      return
+    }
+    const page = parseInt(m2[3], 10)
+    const { text, reply_markup } = bridge.buildListPage(page, 10, { includeAgents })
+    try {
+      await bot.api.editMessageText(m.chat.id, m.message_id, text, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup,
+      })
+    } catch (err) {
+      const desc = err?.description || ''
+      if (!desc.includes('not modified')) {
+        console.error('tg-router: edit list page failed:', desc || err?.message)
+      }
+    }
+    await ctx.answerCallbackQuery().catch(() => {})
+    return
+  }
+  // Parse: "con:<session_id>" — direct selection from number button
+  const conMatch = data.match(/^con:([a-f0-9-]{8,})$/i)
+  if (conMatch) {
+    const wantedId = conMatch[1]
+    const all = bridge.scanSessions({ excludeTgRouted: true, excludeAgents: false, limit: 5000 })
+    const session = all.find(s => s.session_id === wantedId)
+    if (!session) {
+      await ctx.answerCallbackQuery({ text: 'Сессия не найдена (возможно удалена)', show_alert: true }).catch(() => {})
+      return
+    }
+    const chatId = String(m.chat.id)
+    const threadId = m.message_thread_id ?? null
+    bridge.setBridge(chatId, threadId, session.session_id, session.cwd)
+    const titleRaw = session.ai_title || session.project_slug || session.session_id.slice(0, 8)
+    const titleHtml = String(titleRaw).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const replyText = [
+      `🟢 <b>Подключено</b>`,
+      titleHtml,
+      '',
+      `Пиши обычным текстом — сообщения уйдут в эту сессию.`,
+    ].join('\n')
+    try {
+      await bot.api.editMessageText(m.chat.id, m.message_id, replyText, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: bridge.buildConnectedKeyboard(),
+      })
+    } catch (err) {
+      console.error('tg-router: edit on connect failed:', err?.description || err?.message)
+    }
+    await ctx.answerCallbackQuery({ text: `Подключено: ${String(titleRaw).slice(0, 60)}` }).catch(() => {})
+    return
+  }
+  // Parse: "quick:list" | "quick:status" | "quick:disconnect" — buttons under "Подключено"/"Отключено".
+  const quickMatch = data.match(/^quick:(list|status|disconnect)$/)
+  if (quickMatch) {
+    const action = quickMatch[1]
+    const chatId = String(m.chat.id)
+    const threadId = m.message_thread_id ?? null
+    const baseOpts = { parse_mode: 'HTML', disable_web_page_preview: true }
+    if (action === 'list') {
+      const { text, reply_markup } = bridge.buildListPage(1)
+      try {
+        await bot.api.sendMessage(m.chat.id, text, {
+          ...baseOpts,
+          reply_markup,
+          message_thread_id: threadId != null ? Number(threadId) : undefined,
+        })
+      } catch (err) {
+        console.error('tg-router: quick list send failed:', err?.description || err?.message)
+      }
+      await ctx.answerCallbackQuery().catch(() => {})
+      return
+    }
+    if (action === 'status') {
+      const state = bridge.getBridge(chatId, threadId)
+      const text = state
+        ? [`🟢 <b>Подключено</b>`,
+            `session: <code>${state.session_id.slice(0, 8)}</code>`,
+            `project: <code>${state.project_dir}</code>`,
+            `since: ${state.connected_at}`].join('\n')
+        : `🔌 Не подключено к сессии.`
+      try {
+        await bot.api.sendMessage(m.chat.id, text, {
+          ...baseOpts,
+          message_thread_id: threadId != null ? Number(threadId) : undefined,
+        })
+      } catch (err) {
+        console.error('tg-router: quick status send failed:', err?.description || err?.message)
+      }
+      await ctx.answerCallbackQuery().catch(() => {})
+      return
+    }
+    if (action === 'disconnect') {
+      const prev = bridge.getBridge(chatId, threadId)
+      if (!prev) {
+        await ctx.answerCallbackQuery({ text: 'Уже отключено', show_alert: false }).catch(() => {})
+        return
+      }
+      bridge.clearBridge(chatId, threadId)
+      const text = `⚪ Отключено от сессии <code>${prev.session_id.slice(0, 8)}</code> (<code>${prev.project_dir}</code>).`
+      try {
+        await bot.api.editMessageText(m.chat.id, m.message_id, text, {
+          ...baseOpts,
+          reply_markup: bridge.buildDisconnectedKeyboard(),
+        })
+      } catch (err) {
+        // Fallback to new message if edit failed
+        await bot.api.sendMessage(m.chat.id, text, {
+          ...baseOpts,
+          reply_markup: bridge.buildDisconnectedKeyboard(),
+          message_thread_id: threadId != null ? Number(threadId) : undefined,
+        }).catch(() => {})
+      }
+      await ctx.answerCallbackQuery({ text: 'Отключено' }).catch(() => {})
+      return
+    }
+  }
+  // Unknown callback — silently ack
+  await ctx.answerCallbackQuery().catch(() => {})
 }))
 
 // Periodic: send pairing approvals

@@ -1,13 +1,21 @@
 // Slash-command dispatcher. Router calls this BEFORE spawning a worker.
 // Returns { handled: true, reply?: string } if it ran a command.
-// MVP wiring: /status and /help work directly; /digest, /reset, /rollback
-// are stubs that return a "not yet implemented" response until context-mgr
-// and digest modules are wired in (see context-mgr.js).
+//
+// Extended to support VS Code Bridge commands (mode=vscode_bridge topic):
+//   /list      — show recent sessions registry
+//   /connect N — bind topic to session N (or by session_id prefix)
+//   /disconnect — release topic from bridged session
+//   /status    — existing behavior; also shows bridge state when in bridge mode
 
 const { readFileSync, statSync, existsSync } = require('fs')
 const { sessionJsonlPath } = require('./dispatch')
+const bridge = require('./bridge')
 
-const AVAILABLE_COMMANDS = ['/help', '/status', '/digest', '/reset', '/rollback']
+const AVAILABLE_COMMANDS = [
+  '/help', '/status', '/digest', '/reset', '/rollback',
+  // bridge:
+  '/list', '/connect', '/disconnect',
+]
 
 function isCommand(text) {
   if (!text) return false
@@ -37,18 +45,53 @@ function countLines(path) {
   } catch { return 0 }
 }
 
-function cmdHelp() {
-  return [
+function cmdHelp(isBridge) {
+  const lines = [
     'Доступные команды:',
     '/status — размер сессии и контекст',
     '/digest — сгенерировать дайджест (без ротации)',
     '/reset — ротировать сессию (дайджест + чистая сессия)',
     '/rollback — откатить на предыдущую сессию',
     '/help — эта справка',
-  ].join('\n')
+  ]
+  if (isBridge) {
+    lines.push('')
+    lines.push('VS Code Bridge:')
+    lines.push('/list — показать последние сессии Claude Code')
+    lines.push('/connect <N|prefix> — подключить топик к выбранной сессии')
+    lines.push('/disconnect — отключить топик от сессии')
+  }
+  return lines.join('\n')
 }
 
-function cmdStatus(topic) {
+function cmdStatus(topic, ctx) {
+  const isBridge = topic.mode === 'vscode_bridge'
+  if (isBridge) {
+    const chatId = ctx?.chat?.id != null ? String(ctx.chat.id) : null
+    const threadId = ctx?.message?.message_thread_id ?? null
+    const state = chatId ? bridge.getBridge(chatId, threadId) : null
+    if (!state) {
+      return [
+        '🔌 **VS Code Live** — статус: не подключено',
+        '',
+        'Используй `/list` для списка сессий, потом `/connect <N>` для подключения.',
+      ].join('\n')
+    }
+    const jsonl = sessionJsonlPath(state.project_dir, state.session_id)
+    if (!existsSync(jsonl)) {
+      return `🔌 **VS Code Live** — подключено к \`${state.session_id.slice(0, 8)}\`, но JSONL-файл не найден. Возможно сессия была удалена. Попробуй \`/list\` и переподключи.`
+    }
+    const size = statSync(jsonl).size
+    const turns = countLines(jsonl)
+    return [
+      `🟢 **VS Code Live** — подключено`,
+      `• session: \`${state.session_id}\``,
+      `• project: ${state.project_dir}`,
+      `• размер: ${humanBytes(size)} · turns: ${turns}`,
+      `• подключено с: ${state.connected_at}`,
+    ].join('\n')
+  }
+  // Standard status for non-bridge topics
   const jsonl = sessionJsonlPath(topic.project_dir, topic.session_id)
   if (!existsSync(jsonl)) {
     return `📊 Сессия ещё не создана (session_id=${topic.session_id}). Первое сообщение создаст её.`
@@ -70,27 +113,100 @@ function cmdStatus(topic) {
   ].join('\n')
 }
 
+function cmdList(topic, args) {
+  if (topic.mode !== 'vscode_bridge') {
+    return '⚠️ <code>/list</code> работает только в топике с режимом vscode_bridge.'
+  }
+  let page = 1
+  let includeAgents = false
+  for (const a of (args || [])) {
+    const lower = String(a).toLowerCase()
+    if (lower === 'all' || lower === 'agents') { includeAgents = true; continue }
+    const n = parseInt(a, 10)
+    if (!isNaN(n) && n >= 1) page = n
+  }
+  const { text, reply_markup } = bridge.buildListPage(page, 10, { includeAgents })
+  return reply_markup ? { text, reply_markup } : text
+}
+
+function cmdConnect(topic, ctx, args) {
+  if (topic.mode !== 'vscode_bridge') {
+    return '⚠️ <code>/connect</code> работает только в топике с режимом vscode_bridge.'
+  }
+  const query = (args || []).join(' ').trim()
+  if (!query) {
+    return 'Использование: <code>/connect &lt;N&gt;</code> или <code>/connect &lt;session_id_prefix&gt;</code>. Сначала <code>/list</code> чтобы увидеть варианты.'
+  }
+  // Resolve over full session set (so absolute indices from /list pages work).
+  const sessions = bridge.scanSessions({ excludeTgRouted: true, limit: 500 })
+  const res = bridge.resolveSessionByQuery(sessions, query)
+  if (!res.ok) {
+    return `⚠️ ${res.error}`
+  }
+  const s = res.session
+  const chatId = String(ctx.chat.id)
+  const threadId = ctx.message.message_thread_id ?? null
+  bridge.setBridge(chatId, threadId, s.session_id, s.cwd)
+  const title = s.ai_title || s.project_slug || s.session_id.slice(0, 8)
+  const titleHtml = String(title).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return {
+    text: [
+      `🟢 <b>Подключено</b>`,
+      titleHtml,
+      '',
+      'Пиши обычным текстом — сообщения уйдут в эту сессию.',
+    ].join('\n'),
+    reply_markup: bridge.buildConnectedKeyboard(),
+  }
+}
+
+function cmdDisconnect(topic, ctx) {
+  if (topic.mode !== 'vscode_bridge') {
+    return '⚠️ <code>/disconnect</code> работает только в топике с режимом vscode_bridge.'
+  }
+  const chatId = String(ctx.chat.id)
+  const threadId = ctx.message.message_thread_id ?? null
+  const prev = bridge.getBridge(chatId, threadId)
+  if (!prev) {
+    return '⚪ Топик и так не подключён к сессии.'
+  }
+  bridge.clearBridge(chatId, threadId)
+  return {
+    text: `⚪ Отключено от сессии <code>${prev.session_id.slice(0, 8)}</code> (<code>${prev.project_dir}</code>).`,
+    reply_markup: bridge.buildDisconnectedKeyboard(),
+  }
+}
+
 function cmdNotImpl(name) {
   return `🚧 \`${name}\` пока не подключён. В ближайшей итерации будет.`
 }
 
 // Main entry called from index.js dispatch pipeline.
 // Returns { handled, reply } — if handled, caller skips worker spawn.
+// New deps: ctx (Telegram context, needed by bridge commands for chat/thread IDs)
 function runCommand(text, topic, deps = {}) {
   if (!isCommand(text)) return { handled: false }
-  const { cmd } = parseCommand(text)
+  const { cmd, args } = parseCommand(text)
+  const ctx = deps.ctx
   let reply
   try {
     switch (cmd) {
-      case '/help':     reply = cmdHelp(); break
-      case '/status':   reply = cmdStatus(topic); break
-      case '/digest':   reply = deps.runDigest ? deps.runDigest(topic) : cmdNotImpl(cmd); break
-      case '/reset':    reply = deps.runReset  ? deps.runReset(topic)  : cmdNotImpl(cmd); break
-      case '/rollback': reply = deps.runRollback ? deps.runRollback(topic) : cmdNotImpl(cmd); break
+      case '/help':       reply = cmdHelp(topic.mode === 'vscode_bridge'); break
+      case '/status':     reply = cmdStatus(topic, ctx); break
+      case '/digest':     reply = deps.runDigest ? deps.runDigest(topic) : cmdNotImpl(cmd); break
+      case '/reset':      reply = deps.runReset  ? deps.runReset(topic)  : cmdNotImpl(cmd); break
+      case '/rollback':   reply = deps.runRollback ? deps.runRollback(topic) : cmdNotImpl(cmd); break
+      case '/list':       reply = cmdList(topic, args); break
+      case '/connect':    reply = cmdConnect(topic, ctx, args); break
+      case '/disconnect': reply = cmdDisconnect(topic, ctx); break
       default: return { handled: false }
     }
   } catch (err) {
     reply = `⚠️ ошибка команды ${cmd}: ${err.message}`
+  }
+  // Reply can be: string (plain text) or { text, reply_markup } (with inline keyboard)
+  if (reply && typeof reply === 'object' && reply.text) {
+    return { handled: true, reply: reply.text, reply_markup: reply.reply_markup }
   }
   return { handled: true, reply }
 }

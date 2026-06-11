@@ -241,6 +241,87 @@ sudo bash install.sh --module tg-bot -- --second-bot
 
 ---
 
+## VS Code Live — управление любой VS Code сессией из TG
+
+Это специальный режим топика, через который можно «подключаться» к любой открытой Claude Code сессии в VS Code прямо из Telegram. Подходит когда:
+- Сидишь за ноутом, открыта сессия в VS Code → встал, пошёл — продолжаешь общаться с ней с телефона.
+- Сделал что-то в VS Code, надо догнать на ходу — `/list` → `/connect 1` → пишешь как обычно.
+- На сервере одновременно живут несколько проектных сессий, надо переключаться между ними без редактирования `routing.json`.
+
+### Как работает
+
+Bridge-режим сканирует `~/.claude/projects/<slug>/*.jsonl` — все живые сессии Claude Code на сервере, отфильтровывает уже привязанные к TG-топикам (чтобы не было путаницы) и предлагает выбрать любую через `/list`. После `/connect <N>` все следующие сообщения в этом топике уходят в выбранную сессию через `--resume`.
+
+### Топик в routing.json
+
+В `/root/.claude/channels/telegram/routing.json` добавляется специальный топик с `mode: "vscode_bridge"`:
+
+```json
+{
+  "topics": {
+    "2723": {
+      "name": "VS Code Live",
+      "mode": "vscode_bridge",
+      "project_dir": "/root",
+      "session_id": "_BRIDGE_PLACEHOLDER_"
+    }
+  }
+}
+```
+
+- `2723` — `message_thread_id` форум-топика «VS Code Live» в твоей TG-группе.
+- `_BRIDGE_PLACEHOLDER_` — фиктивный session_id; реальный приходит из стейт-файла `vscode_bridge.json` после `/connect`.
+
+### Команды (работают только в bridge-топике)
+
+| Команда | Что делает |
+|---|---|
+| `/list` | Список последних VS Code сессий (страницы по 10, кнопки-номера для быстрого `/connect`) |
+| `/list 2` | Перейти на страницу 2 |
+| `/list all` | Включая claude-mem observer-сессии (обычно скрыты) |
+| `/connect 1` | Привязать топик к сессии №1 из списка |
+| `/connect a3f4` | Привязать по префиксу session_id (минимум 4 символа) |
+| `/disconnect` | Отвязать топик от сессии |
+| `/status` | Сколько сообщений / размер JSONL подключённой сессии |
+
+Inline-клавиатура: под `/list` — кнопки `1 2 3 4 5` и `‹ 2/4 ›`; под `🟢 Подключено` — `📋 Сменить · ℹ Статус · ⏹ Отвязать`.
+
+### Установка на чистый сервер
+
+Включить сразу при установке tg-bot:
+
+```bash
+VSCODE_LIVE_THREAD_ID=2723 sudo bash install.sh --module tg-bot -- --with-vscode-live
+```
+
+(подставь свой `message_thread_id` форум-топика — узнать можно через `journalctl -u tg-router -f` после первого сообщения в нужный топик).
+
+### Доустановка на УЖЕ работающий сервер
+
+Если tg-router уже стоит и работает, и хочешь добавить только bridge-фичу:
+
+```bash
+sudo bash tools/claude-telegram-router/install-vscode-live.sh
+```
+
+или одной командой без клонирования репо:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/tools/claude-telegram-router/install-vscode-live.sh | sudo VSCODE_LIVE_THREAD_ID=2723 bash
+```
+
+Что делает скрипт:
+1. Бэкапит `index.js`, `commands.js`, `routing.json` с таймстампом.
+2. Кладёт новые `bridge.js`, `transcribe.js`, обновлённые `index.js` / `commands.js`.
+3. Добавляет VS Code Live топик в `routing.json` (если задан `VSCODE_LIVE_THREAD_ID`).
+4. Рестартует `tg-router.service` и проверяет что он живой.
+5. При сбое — автоматический откат на бэкап.
+6. Создаёт `rollback-vscode-live.sh <TS>` для ручного отката.
+
+Конкретные шаги по топикам, фильтрам и формату display-name — в коде [`tools/claude-telegram-router/bridge.js`](../tools/claude-telegram-router/bridge.js).
+
+---
+
 ## Конфиденциальность
 
 - **Все сообщения проходят через серверы Telegram** — Telegram их видит. Не пишите боту что-то что не написали бы в обычной TG-переписке.

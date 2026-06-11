@@ -11,11 +11,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
 MODULE_NAME="tg-bot"
 INSTALL_SECOND=false
+WITH_VSCODE_LIVE=false
 
 # Парсинг аргументов модуля
 for arg in "$@"; do
   case "$arg" in
-    --second-bot) INSTALL_SECOND=true ;;
+    --second-bot)       INSTALL_SECOND=true ;;
+    --with-vscode-live) WITH_VSCODE_LIVE=true ;;
   esac
 done
 
@@ -35,6 +37,8 @@ install_claude_plugin "telegram" "claude-plugins-official" "anthropics/claude-pl
 
 # Создать дефолтный routing.json — без него index.js падает на каждом
 # сообщении (JSON.parse(readFileSync(ROUTING_FILE))).
+# Если задан --with-vscode-live и есть env VSCODE_LIVE_THREAD_ID —
+# сразу добавляет топик в режиме vscode_bridge.
 ensure_default_routing() {
   local state_dir="$1"
   local routing_file="$state_dir/routing.json"
@@ -45,6 +49,13 @@ ensure_default_routing() {
   fi
   local sid
   sid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())')"
+
+  local topics_json="{}"
+  if [ "$WITH_VSCODE_LIVE" = "true" ] && [ -n "${VSCODE_LIVE_THREAD_ID:-}" ]; then
+    topics_json="{\"$VSCODE_LIVE_THREAD_ID\": {\"name\": \"VS Code Live\", \"mode\": \"vscode_bridge\", \"project_dir\": \"/root\", \"session_id\": \"_BRIDGE_PLACEHOLDER_\"}}"
+    log "  routing.json: добавлен VS Code Live на thread_id=$VSCODE_LIVE_THREAD_ID"
+  fi
+
   cat > "$routing_file" <<EOF
 {
   "general": {
@@ -52,12 +63,18 @@ ensure_default_routing() {
     "project_dir": "/root",
     "session_id": "$sid"
   },
-  "topics": {},
+  "topics": $topics_json,
   "ux": {}
 }
 EOF
   chmod 600 "$routing_file"
   log "  routing.json создан: $routing_file"
+
+  # vscode_bridge.json — пустой стейт для bridge-режима (если включён)
+  if [ "$WITH_VSCODE_LIVE" = "true" ]; then
+    local bridge_state="$state_dir/vscode_bridge.json"
+    [ -f "$bridge_state" ] || { echo '{}' > "$bridge_state" && chmod 600 "$bridge_state"; }
+  fi
 }
 
 # ============================================================
@@ -217,6 +234,10 @@ $([ "$INSTALL_SECOND" = "true" ] && echo "  • Аналогично tg-router2"
 
 Чтобы добавить второй бот позже:
   sudo bash install.sh --module tg-bot -- --second-bot
+
+Добавить VS Code Live (управление любой VS Code сессией из TG):
+  $([ "$WITH_VSCODE_LIVE" = "true" ] && echo "уже включено в routing.json (топик \"VS Code Live\")" || echo "VSCODE_LIVE_THREAD_ID=42 sudo bash install.sh --module tg-bot -- --with-vscode-live")
+  или на работающем сервере: bash tools/claude-telegram-router/install-vscode-live.sh
 
 Конфиги (env-файлы с токенами):
   • /root/.claude/channels/telegram/.env  (основной)
