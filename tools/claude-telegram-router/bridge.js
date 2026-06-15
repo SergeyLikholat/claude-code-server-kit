@@ -14,7 +14,10 @@ const { join, dirname } = require('path')
 const { homedir } = require('os')
 
 const SESSIONS_ROOT = join(homedir(), '.claude', 'projects')
-const STATE_FILE = '/root/.claude/channels/telegram/vscode_bridge.json'
+// Per-topic delivery/bridge state. Derived from the same TELEGRAM_STATE_DIR as
+// access.js so multi-user (per-Unix-user) instances each get their own file.
+const STATE_DIR = process.env.TELEGRAM_STATE_DIR || join(homedir(), '.claude', 'channels', 'telegram')
+const STATE_FILE = join(STATE_DIR, 'vscode_bridge.json')
 
 // ---- Sessions registry scanner ----
 
@@ -650,10 +653,19 @@ function markdownToTelegramHtml(input) {
 function setLastPulledUuid(chatId, threadId, uuid) {
   const state = readState()
   const key = bridgeKey(chatId, threadId)
-  if (!state[key]) return
+  // Create the key even for non-bridge topics — the per-topic state file now
+  // also tracks "last delivered assistant message" for the daemon auto-pull
+  // (which runs for EVERY topic, not just vscode_bridge ones).
+  if (!state[key]) state[key] = {}
   state[key].last_pulled_uuid = uuid
   state[key].last_pulled_at = new Date().toISOString()
   writeState(state)
+}
+
+// Last assistant-message uuid already delivered to this topic (any topic).
+function getLastPulledUuid(chatId, threadId) {
+  const state = readState()
+  return state[bridgeKey(chatId, threadId)]?.last_pulled_uuid || null
 }
 
 // Quick-action keyboard shown under "⚪ Отключено" message.
@@ -736,6 +748,7 @@ module.exports = {
   buildDisconnectedKeyboard,
   findLastAssistantMessage,
   setLastPulledUuid,
+  getLastPulledUuid,
   extractAssistantText,
   markdownToTelegramHtml,
   buildControlPanelKeyboard,

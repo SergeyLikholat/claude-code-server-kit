@@ -24,7 +24,7 @@ function resolveClaudeBin() {
     if (existsSync(c)) { _cachedBin = c; return c }
   }
   try {
-    const extDir = '/root/.vscode-server/extensions'
+    const extDir = join(homedir(), '.vscode-server', 'extensions')
     const entries = readdirSync(extDir)
       .filter((n) => /^anthropic\.claude-code-.*-linux-x64$/.test(n))
       .map((n) => {
@@ -38,67 +38,36 @@ function resolveClaudeBin() {
   return null
 }
 
-// System-prompt appended to every worker — forces safe Telegram formatting.
-const TG_FORMAT_RULE = [
+// Built-in tools always available to the worker. The official telegram MCP
+// plugin is NOT installed — the router is self-sufficient: it auto-pulls the
+// final assistant message from the JSONL log and sends it via the grammy Bot
+// API itself (see index.js). So Claude must NEVER rely on telegram MCP tools.
+const BASE_TOOLS = [
+  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Agent', 'WebFetch', 'WebSearch', 'TodoWrite',
+]
+
+// Optional extra MCP tools, opt-in via env (comma-separated). Lets a deployment
+// add its own MCP servers (e.g. a task tracker, docs lookup) WITHOUT hardcoding
+// anyone's personal plugins into the kit. Example:
+//   TG_EXTRA_ALLOWED_TOOLS=mcp__yougile__yougile_list_tasks,mcp__plugin_context7_context7__query-docs
+const EXTRA_TOOLS = (process.env.TG_EXTRA_ALLOWED_TOOLS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean)
+
+const ALLOWED_TOOLS = [...BASE_TOOLS, ...EXTRA_TOOLS]
+
+// System-prompt appended to every worker. Since there is no telegram MCP, the
+// daemon delivers the answer by reading the final assistant message from the
+// JSONL session log and sending it to Telegram (converting Markdown → TG HTML).
+const WORKER_FORMAT_RULE = [
   '',
   '## Telegram delivery (CRITICAL — read before answering)',
   '',
-  'You are running as a headless Telegram worker. The user CANNOT see your stdout, transcript, thinking, or any text you write outside of tool calls.',
+  'You are a headless Telegram worker. The daemon will fetch your FINAL assistant message from the JSONL session log and send it to Telegram automatically. There is no telegram MCP tool.',
   '',
-  'The ONLY way the user sees a response is via `mcp__plugin_telegram_telegram__reply`.',
-  '',
-  '- EVERY turn that produces a user-visible response MUST call `mcp__plugin_telegram_telegram__reply` with the `chat_id` from the incoming `<channel ...>` tag (and `message_thread_id` if present).',
-  '- Even short acknowledgements ("на связи", "понял", "готово") MUST go through `reply`. Plain assistant text is silently discarded.',
-  '- If you have nothing to say (e.g. the message was an automated heartbeat), call `react` instead — but never end a turn that the user is waiting on without sending something via reply or react.',
-  '- Reactions (`react`) supplement reply; they do NOT replace it for substantive answers.',
-  '',
-  '## Telegram reply formatting (STRICT)',
-  '',
-  'When calling `mcp__plugin_telegram_telegram__reply`:',
-  '- ALWAYS pass `format="text"` (or omit it — default is text).',
-  '- NEVER pass `format="markdownv2"`. The plugin auto-formats text → MarkdownV2.',
-  '- For bold write `**text**`; italic `*text*`; code `` `code` ``; fenced block ```` ```lang\\ncode\\n``` ````. Plugin converts these to valid MarkdownV2.',
-  '- Do NOT escape characters yourself. The plugin escapes everything.',
-  '- If you really need pre-escaped MarkdownV2 (rare), double-check pattern `*bold*` (one asterisk) — `**` is invalid bold in MarkdownV2.',
-].join('\n')
-
-const ALLOWED_TOOLS = [
-  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Agent', 'WebFetch', 'WebSearch', 'TodoWrite',
-  'mcp__plugin_telegram_telegram__reply',
-  'mcp__plugin_telegram_telegram__react',
-  'mcp__plugin_telegram_telegram__edit_message',
-  'mcp__plugin_telegram_telegram__download_attachment',
-  'mcp__yougile__yougile_list_projects',
-  'mcp__yougile__yougile_list_boards',
-  'mcp__yougile__yougile_list_columns',
-  'mcp__yougile__yougile_list_tasks',
-  'mcp__yougile__yougile_get_task',
-  'mcp__yougile__yougile_create_task',
-  'mcp__yougile__yougile_update_task',
-  'mcp__yougile__yougile_list_contacts',
-  'mcp__yougile__yougile_create_contact',
-  'mcp__yougile__yougile_list_comments',
-  'mcp__yougile__yougile_add_comment',
-  'mcp__yougile__yougile_list_stickers',
-  'mcp__plugin_context7_context7__resolve-library-id',
-  'mcp__plugin_context7_context7__query-docs',
-]
-
-// Tools for bridged sessions (VS Code Live): NO MCP Telegram tools.
-// Daemon auto-pulls the final assistant message from JSONL and sends it itself,
-// so Claude must NOT call mcp__plugin_telegram_telegram__reply.
-const ALLOWED_TOOLS_BRIDGED = ALLOWED_TOOLS.filter(t => !t.startsWith('mcp__plugin_telegram_'))
-
-const BRIDGED_FORMAT_RULE = [
-  '',
-  '## Bridged mode (CRITICAL — read before answering)',
-  '',
-  'You are running inside a Telegram VS Code Live bridge. The daemon will fetch your final assistant message from the JSONL session log and send it to Telegram automatically.',
-  '',
-  '- DO NOT call mcp__plugin_telegram_telegram__reply or any telegram MCP tools. They are not available in this mode.',
-  '- Write your final answer as a normal assistant message (plain text + standard Markdown). The daemon converts it to Telegram HTML and sends it.',
-  '- Use other tools (Bash, Read, Edit, etc.) freely for the actual work — just do not try to send messages via MCP.',
-  '- Markdown: use **bold**, *italic*, `code`, ```fenced```, [links](url), ## headings — daemon converts everything correctly.',
+  '- Write your answer as a normal assistant message (plain text + standard Markdown). Do NOT try to call any telegram/MCP "reply" tool — none exists.',
+  '- Your final assistant message IS what the user receives. Make it self-contained.',
+  '- Use other tools (Bash, Read, Edit, etc.) freely for the actual work.',
+  '- Markdown: **bold**, *italic*, `code`, ```fenced```, [links](url), ## headings — the daemon converts everything to valid Telegram HTML.',
 ].join('\n')
 
 function projectSlug(dir) {
@@ -185,27 +154,24 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
 }
 
 // Spawn claude worker.
-//   opts: { project_dir, session_id, prompt, timeout_ms, env, onStdoutLine, bridged }
-//   bridged=true → MCP Telegram tools removed from allowedTools, replaced system prompt
-//   so Claude writes its final answer as a plain assistant message instead of
-//   calling mcp__plugin_telegram_telegram__reply. Daemon then auto-pulls from JSONL.
+//   opts: { project_dir, session_id, prompt, timeout_ms, env, onStdoutLine }
+//   All workers run in "bridged" mode: no telegram MCP tools; Claude writes a
+//   plain assistant message, the daemon auto-pulls it from JSONL and sends it.
 // Returns: { code, stdout, stderr, durationMs }
 async function runClaudeWorker(opts) {
-  const { project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine, bridged = false } = opts
+  const { project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine } = opts
 
   mkdirSync(project_dir, { recursive: true })
   const resumes = sessionExists(project_dir, session_id)
 
-  const tools = bridged ? ALLOWED_TOOLS_BRIDGED : ALLOWED_TOOLS
-  const sysPromptAppend = bridged ? BRIDGED_FORMAT_RULE : TG_FORMAT_RULE
   const args = [
     '--print',
     resumes ? '--resume' : '--session-id',
     session_id,
     '--permission-mode', 'dontAsk',
-    '--allowedTools', ...tools,
+    '--allowedTools', ...ALLOWED_TOOLS,
     '--add-dir', project_dir,
-    '--append-system-prompt', sysPromptAppend,
+    '--append-system-prompt', WORKER_FORMAT_RULE,
   ]
 
   const claudeBin = resolveClaudeBin()

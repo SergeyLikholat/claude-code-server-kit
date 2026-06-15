@@ -18,7 +18,7 @@ const { transcribeIfConfigured } = require('./transcribe')
 const ROUTING_FILE = join(STATE_DIR, 'routing.json')
 const ENV_FILE = join(STATE_DIR, '.env')
 const PID_FILE = join(STATE_DIR, 'bot.pid')
-const LOCK_DIR = '/run/claude-telegram'
+const LOCK_DIR = process.env.TG_ROUTER_LOCK_DIR || '/run/claude-telegram'
 
 // -- Env loading (mirror plugin behavior) ------------------------------------
 try {
@@ -242,7 +242,6 @@ async function handleInbound(bot, ctx, text, attachment) {
         session_id: topic.session_id,
         prompt,
         timeout_ms: ux.worker_timeout_ms || 600000,
-        bridged: topic.mode === 'vscode_bridge',
       })
       outcome = {
         ok: res.code === 0 && !res.killed,
@@ -265,50 +264,50 @@ async function handleInbound(bot, ctx, text, attachment) {
       await closeStatus(bot, chat_id, statusId, ux, outcome)
     }
 
-    // Bridged-mode post-turn actions (VS Code Live topic):
-    //   1. Auto-pull final assistant message from JSONL → send to TG (Claude in
-    //      bridged mode can't call mcp__plugin_telegram_telegram__reply).
-    //   2. Send floating control panel below it (switch/disconnect quick access).
-    if (topic.mode === 'vscode_bridge' && outcome.ok) {
-      const bridgeState = bridge.getBridge(chat_id, threadId)
-      if (bridgeState) {
-        // 1) Auto-pull final assistant message
-        try {
-          const jsonlPath = join(
-            homedir(), '.claude', 'projects',
-            bridgeState.project_dir.replace(/[^a-zA-Z0-9]/g, '-'),
-            `${bridgeState.session_id}.jsonl`
-          )
-          const latest = bridge.findLastAssistantMessage(jsonlPath)
-          if (latest && latest.uuid && latest.uuid !== bridgeState.last_pulled_uuid) {
-            bridge.setLastPulledUuid(chat_id, threadId, latest.uuid)
-            const htmlBody = bridge.markdownToTelegramHtml(latest.text)
-            const MAX = 3900
-            const tgOpts = { parse_mode: 'HTML', disable_web_page_preview: true, message_thread_id: threadId != null ? Number(threadId) : undefined }
-            try {
-              if (htmlBody.length <= MAX) {
-                await bot.api.sendMessage(chat_id, htmlBody, tgOpts)
-              } else {
-                const chunkSize = MAX - 50
-                for (let i = 0; i < htmlBody.length; i += chunkSize) {
-                  await bot.api.sendMessage(chat_id, htmlBody.slice(i, i + chunkSize), tgOpts)
-                    .catch(async () => {
-                      const plainOpts = { ...tgOpts }
-                      delete plainOpts.parse_mode
-                      await bot.api.sendMessage(chat_id, latest.text.slice(i, i + chunkSize), plainOpts).catch(() => {})
-                    })
-                }
+    // Post-turn delivery (ALL topics — there is no telegram MCP plugin):
+    //   1. Auto-pull the final assistant message from JSONL and send it to TG.
+    //      `topic.project_dir`/`topic.session_id` are already resolved here for
+    //      both normal topics and vscode_bridge (overwritten from bridge state above).
+    //   2. For vscode_bridge topics only — also send a floating control panel.
+    if (outcome.ok) {
+      try {
+        const jsonlPath = join(
+          homedir(), '.claude', 'projects',
+          (topic.project_dir || '/root').replace(/[^a-zA-Z0-9]/g, '-'),
+          `${topic.session_id}.jsonl`
+        )
+        const latest = bridge.findLastAssistantMessage(jsonlPath)
+        const prevUuid = bridge.getLastPulledUuid(chat_id, threadId)
+        if (latest && latest.uuid && latest.uuid !== prevUuid) {
+          bridge.setLastPulledUuid(chat_id, threadId, latest.uuid)
+          const htmlBody = bridge.markdownToTelegramHtml(latest.text)
+          const MAX = 3900
+          const tgOpts = { parse_mode: 'HTML', disable_web_page_preview: true, message_thread_id: threadId != null ? Number(threadId) : undefined }
+          try {
+            if (htmlBody.length <= MAX) {
+              await bot.api.sendMessage(chat_id, htmlBody, tgOpts)
+            } else {
+              const chunkSize = MAX - 50
+              for (let i = 0; i < htmlBody.length; i += chunkSize) {
+                await bot.api.sendMessage(chat_id, htmlBody.slice(i, i + chunkSize), tgOpts)
+                  .catch(async () => {
+                    const plainOpts = { ...tgOpts }
+                    delete plainOpts.parse_mode
+                    await bot.api.sendMessage(chat_id, latest.text.slice(i, i + chunkSize), plainOpts).catch(() => {})
+                  })
               }
-            } catch (err) {
-              console.error('tg-router: auto-pull HTML send failed, fallback plain:', err?.description || err?.message)
-              const plainOpts = { message_thread_id: threadId != null ? Number(threadId) : undefined }
-              await bot.api.sendMessage(chat_id, latest.text.slice(0, 4096), plainOpts).catch(() => {})
             }
+          } catch (err) {
+            console.error('tg-router: auto-pull HTML send failed, fallback plain:', err?.description || err?.message)
+            const plainOpts = { message_thread_id: threadId != null ? Number(threadId) : undefined }
+            await bot.api.sendMessage(chat_id, latest.text.slice(0, 4096), plainOpts).catch(() => {})
           }
-        } catch (err) {
-          console.error('tg-router: auto-pull failed:', err.message)
         }
-        // 2) Floating control panel (delete previous one first — keep chat clean)
+      } catch (err) {
+        console.error('tg-router: auto-pull failed:', err.message)
+      }
+      // Floating control panel — only for vscode_bridge topics.
+      if (topic.mode === 'vscode_bridge') {
         const prevPanelId = bridge.getLastPanelMessageId(chat_id, threadId)
         if (prevPanelId) {
           await bot.api.deleteMessage(chat_id, prevPanelId).catch(() => {})

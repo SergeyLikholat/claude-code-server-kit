@@ -11,15 +11,15 @@
   },
   "hooks": {},
   "agentSubpaths": [
-    "/root/.claude/agents",
-    "/root/everything-claude-code/agents"
+    "__HOME__/.claude/agents",
+    "__ECC_DIR__/agents"
   ],
   "skillSubpaths": [
-    "/root/.claude/skills",
-    "/root/everything-claude-code/skills"
+    "__HOME__/.claude/skills",
+    "__ECC_DIR__/skills"
   ],
   "rulesSubpaths": [
-    "/root/.claude/rules",
-    "/root/everything-claude-code/rules"
+    "__HOME__/.claude/rules",
+    "__ECC_DIR__/rules"
   ]
 }
