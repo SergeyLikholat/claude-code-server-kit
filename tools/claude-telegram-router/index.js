@@ -242,6 +242,7 @@ async function handleInbound(bot, ctx, text, attachment) {
         session_id: topic.session_id,
         prompt,
         timeout_ms: ux.worker_timeout_ms || 600000,
+        bridged: topic.mode === 'vscode_bridge',
       })
       outcome = {
         ok: res.code === 0 && !res.killed,
@@ -262,6 +263,66 @@ async function handleInbound(bot, ctx, text, attachment) {
       clearInterval(tickInt)
       await statusPromise
       await closeStatus(bot, chat_id, statusId, ux, outcome)
+    }
+
+    // Bridged-mode post-turn actions (VS Code Live topic):
+    //   1. Auto-pull final assistant message from JSONL → send to TG (Claude in
+    //      bridged mode can't call mcp__plugin_telegram_telegram__reply).
+    //   2. Send floating control panel below it (switch/disconnect quick access).
+    if (topic.mode === 'vscode_bridge' && outcome.ok) {
+      const bridgeState = bridge.getBridge(chat_id, threadId)
+      if (bridgeState) {
+        // 1) Auto-pull final assistant message
+        try {
+          const jsonlPath = join(
+            homedir(), '.claude', 'projects',
+            bridgeState.project_dir.replace(/[^a-zA-Z0-9]/g, '-'),
+            `${bridgeState.session_id}.jsonl`
+          )
+          const latest = bridge.findLastAssistantMessage(jsonlPath)
+          if (latest && latest.uuid && latest.uuid !== bridgeState.last_pulled_uuid) {
+            bridge.setLastPulledUuid(chat_id, threadId, latest.uuid)
+            const htmlBody = bridge.markdownToTelegramHtml(latest.text)
+            const MAX = 3900
+            const tgOpts = { parse_mode: 'HTML', disable_web_page_preview: true, message_thread_id: threadId != null ? Number(threadId) : undefined }
+            try {
+              if (htmlBody.length <= MAX) {
+                await bot.api.sendMessage(chat_id, htmlBody, tgOpts)
+              } else {
+                const chunkSize = MAX - 50
+                for (let i = 0; i < htmlBody.length; i += chunkSize) {
+                  await bot.api.sendMessage(chat_id, htmlBody.slice(i, i + chunkSize), tgOpts)
+                    .catch(async () => {
+                      const plainOpts = { ...tgOpts }
+                      delete plainOpts.parse_mode
+                      await bot.api.sendMessage(chat_id, latest.text.slice(i, i + chunkSize), plainOpts).catch(() => {})
+                    })
+                }
+              }
+            } catch (err) {
+              console.error('tg-router: auto-pull HTML send failed, fallback plain:', err?.description || err?.message)
+              const plainOpts = { message_thread_id: threadId != null ? Number(threadId) : undefined }
+              await bot.api.sendMessage(chat_id, latest.text.slice(0, 4096), plainOpts).catch(() => {})
+            }
+          }
+        } catch (err) {
+          console.error('tg-router: auto-pull failed:', err.message)
+        }
+        // 2) Floating control panel (delete previous one first — keep chat clean)
+        const prevPanelId = bridge.getLastPanelMessageId(chat_id, threadId)
+        if (prevPanelId) {
+          await bot.api.deleteMessage(chat_id, prevPanelId).catch(() => {})
+        }
+        const panelOpts = threadId != null ? { message_thread_id: Number(threadId) } : {}
+        panelOpts.reply_markup = bridge.buildControlPanelKeyboard()
+        panelOpts.parse_mode = 'HTML'
+        try {
+          const sent = await bot.api.sendMessage(chat_id, '🎛 <i>управление сессией</i>', panelOpts)
+          bridge.setLastPanelMessageId(chat_id, threadId, sent.message_id)
+        } catch (err) {
+          console.error('tg-router: control panel send failed:', err?.description || err?.message)
+        }
+      }
     }
   })
 }
@@ -419,6 +480,107 @@ bot.on('callback_query:data', fireAndForget(async ctx => {
     await ctx.answerCallbackQuery({ text: `Подключено: ${String(titleRaw).slice(0, 60)}` }).catch(() => {})
     return
   }
+  // Parse: "quick:new" — create a fresh empty bridged session (like "+ New" in VS Code Sidebar).
+  if (data === 'quick:new') {
+    const chatId = String(m.chat.id)
+    const threadId = m.message_thread_id ?? null
+    // Delete previous floating panel if any.
+    const prevPanelId = bridge.getLastPanelMessageId(chatId, threadId)
+    if (prevPanelId) {
+      await bot.api.deleteMessage(chatId, prevPanelId).catch(() => {})
+    }
+    const newSessionId = bridge.createBridgeSession(chatId, threadId, '/root')
+    const replyText = [
+      '🟢 <b>Новая сессия создана</b>',
+      `session: <code>${newSessionId.slice(0, 8)}</code>`,
+      `project: <code>/root</code>`,
+      '',
+      'Пиши обычным текстом — это будет первое сообщение в новой пустой сессии.',
+    ].join('\n')
+    const baseOpts = { parse_mode: 'HTML', disable_web_page_preview: true }
+    const tgOpts = { ...baseOpts, message_thread_id: threadId != null ? Number(threadId) : undefined, reply_markup: bridge.buildFreshConnectedKeyboard() }
+    try {
+      await bot.api.sendMessage(m.chat.id, replyText, tgOpts)
+    } catch (err) {
+      console.error('tg-router: quick:new send failed:', err?.description || err?.message)
+    }
+    await ctx.answerCallbackQuery({ text: `Создана новая сессия ${newSessionId.slice(0, 8)}` }).catch(() => {})
+    return
+  }
+  // Parse: "quick:pull" — fetch latest assistant message from connected session.
+  if (data === 'quick:pull') {
+    const chatId = String(m.chat.id)
+    const threadId = m.message_thread_id ?? null
+    const state = bridge.getBridge(chatId, threadId)
+    if (!state) {
+      await ctx.answerCallbackQuery({ text: 'Не подключено к сессии', show_alert: true }).catch(() => {})
+      return
+    }
+    const jsonlPath = join(homedir(), '.claude', 'projects',
+      state.project_dir.replace(/[^a-zA-Z0-9]/g, '-'), `${state.session_id}.jsonl`)
+    const latest = bridge.findLastAssistantMessage(jsonlPath)
+    if (!latest || !latest.uuid) {
+      await ctx.answerCallbackQuery({
+        text: latest?.isStreaming ? 'Сессия только запустилась' : 'Нет ответов в этой сессии',
+        show_alert: false,
+      }).catch(() => {})
+      return
+    }
+    const baseOpts = { parse_mode: 'HTML', disable_web_page_preview: true }
+    const tgOpts = { ...baseOpts, message_thread_id: threadId != null ? Number(threadId) : undefined }
+    // Case A: same as last pulled → nothing new
+    if (state.last_pulled_uuid && state.last_pulled_uuid === latest.uuid) {
+      if (latest.isStreaming || latest.hasActivityAfter) {
+        await ctx.answerCallbackQuery({ text: '🔄 Сессия работает, новый ответ ещё не готов' }).catch(() => {})
+      } else {
+        const ago = latest.timestamp ? new Date(latest.timestamp).toISOString().slice(11, 16) + ' UTC' : 'недавно'
+        await ctx.answerCallbackQuery({
+          text: `✅ Свежих ответов нет (последний был в ${ago})`,
+          show_alert: false,
+        }).catch(() => {})
+      }
+      return
+    }
+    // Case B: new answer — send it
+    bridge.setLastPulledUuid(chatId, threadId, latest.uuid)
+    const MAX = 3900
+    const htmlBody = bridge.markdownToTelegramHtml(latest.text)
+    const header = '<b>📥 Свежий ответ</b>\n\n'
+    let trailer = ''
+    if (latest.hasActivityAfter || latest.isStreaming) {
+      trailer = '\n\n<i>⏳ Сессия продолжает работу — нажми ещё раз через минуту чтобы получить следующий ответ.</i>'
+    }
+    try {
+      if (htmlBody.length <= MAX - header.length - trailer.length) {
+        await bot.api.sendMessage(m.chat.id, header + htmlBody + trailer, tgOpts)
+      } else {
+        const chunkSize = MAX - 50
+        const chunks = []
+        for (let i = 0; i < htmlBody.length; i += chunkSize) chunks.push(htmlBody.slice(i, i + chunkSize))
+        for (let i = 0; i < chunks.length; i++) {
+          const prefix = i === 0 ? header : ''
+          const suffix = i === chunks.length - 1 ? trailer : '\n<i>(продолжение ниже)</i>'
+          try {
+            await bot.api.sendMessage(m.chat.id, prefix + chunks[i] + suffix, tgOpts)
+          } catch (err) {
+            console.error('tg-router: chunk HTML send failed, fallback to plain:', err?.description || err?.message)
+            const plainOpts = { ...tgOpts }
+            delete plainOpts.parse_mode
+            await bot.api.sendMessage(m.chat.id, (prefix.replace(/<[^>]+>/g, '') + chunks[i].replace(/<[^>]+>/g, '') + suffix.replace(/<[^>]+>/g, '')), plainOpts).catch(() => {})
+          }
+        }
+      }
+    } catch (err) {
+      console.error('tg-router: quick:pull send failed:', err?.description || err?.message)
+      try {
+        const plainOpts = { ...tgOpts }
+        delete plainOpts.parse_mode
+        await bot.api.sendMessage(m.chat.id, '📥 Свежий ответ\n\n' + latest.text, plainOpts)
+      } catch {}
+    }
+    await ctx.answerCallbackQuery().catch(() => {})
+    return
+  }
   // Parse: "quick:list" | "quick:status" | "quick:disconnect" — buttons under "Подключено"/"Отключено".
   const quickMatch = data.match(/^quick:(list|status|disconnect)$/)
   if (quickMatch) {
@@ -466,6 +628,12 @@ bot.on('callback_query:data', fireAndForget(async ctx => {
         return
       }
       bridge.clearBridge(chatId, threadId)
+      // Delete floating control panel if it exists (not needed after disconnect).
+      const prevPanelId = bridge.getLastPanelMessageId(chatId, threadId)
+      if (prevPanelId) {
+        await bot.api.deleteMessage(chatId, prevPanelId).catch(() => {})
+        bridge.clearLastPanelMessageId(chatId, threadId)
+      }
       const text = `⚪ Отключено от сессии <code>${prev.session_id.slice(0, 8)}</code> (<code>${prev.project_dir}</code>).`
       try {
         await bot.api.editMessageText(m.chat.id, m.message_id, text, {

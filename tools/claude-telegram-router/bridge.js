@@ -78,11 +78,18 @@ function slugToCwdGuess(slug) {
   return slug.replace(/^-/, '/').replace(/-/g, '/')
 }
 
-// Heuristic: identify claude-mem auto-spawned observer/memory-agent sessions.
+// Heuristic: identify auto-spawned/background utility sessions that should not
+// be shown in /list (claude-mem observers, context-mgr workers, etc).
 function isAgentSession(s) {
   if (!s) return false
-  if (s.cwd && (s.cwd.includes('/.claude-mem/') || s.cwd.includes('/observer-sessions') || s.cwd.includes('/claude-mem/observer'))) return true
-  if (s.slug && (s.slug.includes('claude-mem') || s.slug.includes('observer-sessions'))) return true
+  const cwd = s.cwd || ''
+  const slug = s.slug || ''
+  // claude-mem observer sessions
+  if (cwd.includes('/.claude-mem/') || cwd.includes('/observer-sessions') || cwd.includes('/claude-mem/observer')) return true
+  if (slug.includes('claude-mem') || slug.includes('observer-sessions')) return true
+  // context-mgr utility sessions (background TG-history compressors etc)
+  if (cwd.includes('/_infra/context-mgr') || cwd.includes('/.infra/context-mgr')) return true
+  if (cwd.endsWith('/context-mgr')) return true
   return false
 }
 
@@ -197,16 +204,16 @@ function projectShortName(cwd) {
 
 // ---- Session display name: prefer routing.json mapping, then JSONL preview ----
 
-// Routing-файлы, из которых нужно вытащить session_id уже занятых TG-топиков
+// Routing-файлы, из которых вытаскиваем session_id уже занятых TG-топиков
 // (чтобы /list скрывал их из общего списка VS Code сессий).
 //
 // Дефолт — основной + опциональный второй бот.
 // Перекрыть можно через env TG_ROUTING_FILES (запятая-разделённый список):
 //   TG_ROUTING_FILES=/root/.claude/channels/telegram/routing.json,/path/to/other.json
 //
-// Owner-метка для отображения в /list берётся либо из routing.json
-// (поле `ux.owner`), либо из basename каталога файла (telegram → "bot1",
-// telegram2 → "bot2"). Без хардкодa имён.
+// Owner-метка для отображения в /list берётся из routing.json (поле ux.owner),
+// иначе из basename каталога файла (telegram → "telegram", telegram2 → ...).
+// Без хардкода личных имён.
 const TG_ROUTING_FILES = (process.env.TG_ROUTING_FILES || [
   '/root/.claude/channels/telegram/routing.json',
   '/root/.claude/channels/telegram2/routing.json',
@@ -317,7 +324,11 @@ function sessionDisplayName(session) {
   }
   const cwd = session.cwd
   if (cwd === '/root' || !cwd) {
-    return session.entrypoint === 'claude-vscode' ? `${emoji} VS Code` : 'home'
+    if (session.entrypoint === 'claude-vscode') return `${emoji} VS Code`
+    // Anything else with cwd=/root and no title — most likely a fresh session
+    // created from Telegram (sdk-cli entrypoint). Show as "Новая (TG)" so it's
+    // distinguishable from VS Code-launched ones.
+    return `📱 Новая (TG)`
   }
   const parts = cwd.split('/').filter(Boolean)
   const tail = parts.length ? parts[parts.length - 1] : '/'
@@ -407,6 +418,8 @@ function buildPageKeyboard(page, totalPages, opts = {}) {
   const slice = opts.slice || []
   const indexOffset = opts.indexOffset || 0
   const rows = []
+  // Top row — "new session" shortcut (always visible, like "+ New session" in VS Code Sidebar)
+  rows.push([{ text: '➕ Новая сессия', callback_data: 'quick:new' }])
   // Selector buttons (5 per row), absolute number = indexOffset + localIdx + 1
   const perRow = 5
   for (let i = 0; i < slice.length; i += perRow) {
@@ -453,25 +466,257 @@ function buildListPage(page = 1, perPage = 10, opts = {}) {
   return { text, reply_markup, page, totalPages, slice }
 }
 
-// Quick-action keyboard shown under "🟢 Подключено" message.
+// Quick-action keyboard shown under "🟢 Подключено" message (for existing sessions).
 function buildConnectedKeyboard() {
   return {
+    inline_keyboard: [
+      [{ text: '📥 Свежий ответ', callback_data: 'quick:pull' }],
+      [
+        { text: '📋 Сменить',  callback_data: 'quick:list' },
+        { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
+      ],
+    ],
+  }
+}
+
+// Keyboard for "🟢 Новая сессия создана" — no pull button, no status.
+function buildFreshConnectedKeyboard() {
+  return {
     inline_keyboard: [[
-      { text: '📋 Сменить',     callback_data: 'quick:list' },
-      { text: 'ℹ Статус',       callback_data: 'quick:status' },
-      { text: '⏹ Отвязать',    callback_data: 'quick:disconnect' },
+      { text: '📋 Сменить',  callback_data: 'quick:list' },
+      { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
     ]],
   }
+}
+
+// Extract a textual content string from an assistant message record.
+// Returns the text content joined; returns '' if no text parts.
+function extractAssistantText(obj) {
+  if (!obj) return ''
+  const content = obj.message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  let out = ''
+  for (const part of content) {
+    if (part && part.type === 'text' && typeof part.text === 'string') {
+      out += (out ? '\n' : '') + part.text
+    }
+  }
+  return out
+}
+
+// Find the latest assistant message with textual content in the JSONL.
+// Returns { uuid, text, timestamp, hasActivityAfter, isStreaming } or null.
+//   hasActivityAfter — true if there are user/tool_use records after this assistant
+//                      (means a new turn is being processed)
+//   isStreaming      — true if the file mtime is within 30s (means actively writing)
+function findLastAssistantMessage(jsonlPath) {
+  const fsmod = require('fs')
+  try {
+    const stat = fsmod.statSync(jsonlPath)
+    const sizeNow = stat.size
+    const mtimeMs = stat.mtimeMs
+    const isStreaming = (Date.now() - mtimeMs) < 30_000
+
+    // Read last ~2 MB or whole file if smaller. Claude per-turn JSONL records
+    // are usually <100 KB each, so 2 MB covers many recent turns.
+    const tailSize = Math.min(2 * 1024 * 1024, sizeNow)
+    const fd = fsmod.openSync(jsonlPath, 'r')
+    let tail
+    try {
+      const buf = Buffer.alloc(tailSize)
+      const n = fsmod.readSync(fd, buf, 0, tailSize, sizeNow - tailSize)
+      tail = buf.slice(0, n).toString('utf8')
+    } finally {
+      fsmod.closeSync(fd)
+    }
+    // If we read mid-line at the start, drop the first (probably-broken) line.
+    if (sizeNow > tailSize) {
+      const nl = tail.indexOf('\n')
+      if (nl >= 0) tail = tail.slice(nl + 1)
+    }
+    const lines = tail.split('\n')
+
+    // Scan from end to find the latest assistant with text.
+    let lastAssistantIdx = -1
+    let lastAssistantObj = null
+    let lastAssistantText = ''
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line.includes('"type":"assistant"')) continue
+      let obj
+      try { obj = JSON.parse(line) } catch { continue }
+      if (obj.type !== 'assistant') continue
+      const text = extractAssistantText(obj)
+      if (!text) continue
+      lastAssistantIdx = i
+      lastAssistantObj = obj
+      lastAssistantText = text
+      break
+    }
+    if (!lastAssistantObj) return { uuid: null, text: null, isStreaming, hasActivityAfter: false }
+
+    // hasActivityAfter — does any line after lastAssistantIdx contain user/tool_use?
+    let hasActivityAfter = false
+    for (let j = lastAssistantIdx + 1; j < lines.length; j++) {
+      const l = lines[j]
+      if (!l.trim()) continue
+      if (l.includes('"type":"user"') || l.includes('"type":"tool_use"')) {
+        hasActivityAfter = true
+        break
+      }
+    }
+
+    return {
+      uuid: lastAssistantObj.uuid || null,
+      text: lastAssistantText,
+      timestamp: lastAssistantObj.timestamp || null,
+      hasActivityAfter,
+      isStreaming,
+    }
+  } catch (err) {
+    return { uuid: null, text: null, isStreaming: false, hasActivityAfter: false, error: err.message }
+  }
+}
+
+// Convert Claude-style Markdown to Telegram HTML, safely handling code blocks
+// (so ** inside code doesn't become bold). Supports:
+//   ```lang\n...code...``` → <pre><code class="language-lang">...</code></pre>
+//   `code` → <code>code</code>
+//   **bold** → <b>bold</b>
+//   *italic* / _italic_ → <i>...</i>
+//   [text](url) → <a href="url">text</a>
+function markdownToTelegramHtml(input) {
+  if (!input) return ''
+  // Step 1: extract fenced code blocks first, replace with placeholders so
+  // inline conversions don't touch their content.
+  const fences = []
+  let text = input.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+    const idx = fences.length
+    fences.push({ lang, code })
+    return `FENCE${idx}`
+  })
+  // Step 2: extract inline code so ** inside `` doesn't get bolded.
+  const inlines = []
+  text = text.replace(/`([^`\n]+)`/g, (m, code) => {
+    const idx = inlines.length
+    inlines.push(code)
+    return `INLINE${idx}`
+  })
+  // Step 3: HTML-escape the remaining text (before adding our own tags).
+  text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // Step 4: Markdown headers (line-based) — emulate via decoration + bold.
+  //   # H1   → ━━━ HEADER ━━━ (UPPER)
+  //   ## H2  → ▎ Header
+  //   ### H3 → ▸ Header
+  //   ####+  → plain bold
+  text = text.replace(/^(#{1,6})\s+(.+?)\s*$/gm, (m, hashes, content) => {
+    const level = hashes.length
+    if (level === 1) return `<b>━━━ ${content.toUpperCase()} ━━━</b>`
+    if (level === 2) return `<b>▎ ${content}</b>`
+    if (level === 3) return `<b>▸ ${content}</b>`
+    return `<b>${content}</b>`
+  })
+  // Step 5: links — [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => {
+    const u = url.replace(/"/g, '%22')
+    return `<a href="${u}">${label}</a>`
+  })
+  // Step 6: bold (**...** must come before *italic* to avoid conflict).
+  text = text.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+  // Step 6: italic — single * or _ around non-empty text
+  text = text.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, '<i>$1</i>')
+  text = text.replace(/(?<![_\w])_([^_\n]+)_(?![_\w])/g, '<i>$1</i>')
+  // Step 7: restore inline code (escape its content)
+  text = text.replace(/INLINE(\d+)/g, (m, idx) => {
+    const code = inlines[Number(idx)]
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return `<code>${code}</code>`
+  })
+  // Step 8: restore fenced code blocks
+  text = text.replace(/FENCE(\d+)/g, (m, idx) => {
+    const { lang, code } = fences[Number(idx)]
+    const escaped = code
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    if (lang) {
+      return `<pre><code class="language-${lang}">${escaped}</code></pre>`
+    }
+    return `<pre>${escaped}</pre>`
+  })
+  return text
+}
+
+// Update the last_pulled_uuid for a bridge.
+function setLastPulledUuid(chatId, threadId, uuid) {
+  const state = readState()
+  const key = bridgeKey(chatId, threadId)
+  if (!state[key]) return
+  state[key].last_pulled_uuid = uuid
+  state[key].last_pulled_at = new Date().toISOString()
+  writeState(state)
 }
 
 // Quick-action keyboard shown under "⚪ Отключено" message.
 function buildDisconnectedKeyboard() {
   return {
+    inline_keyboard: [
+      [{ text: '➕ Новая сессия', callback_data: 'quick:new' }],
+      [
+        { text: '📋 Список сессий', callback_data: 'quick:list' },
+        { text: 'ℹ Статус',         callback_data: 'quick:status' },
+      ],
+    ],
+  }
+}
+
+// Compact "floating control panel" shown at the bottom of the bridged topic
+// after every Claude turn — gives quick access to switch session or disconnect
+// without scrolling back up to the "🟢 Подключено" message.
+function buildControlPanelKeyboard() {
+  return {
     inline_keyboard: [[
-      { text: '📋 Список сессий', callback_data: 'quick:list' },
-      { text: 'ℹ Статус',         callback_data: 'quick:status' },
+      { text: '📋 Сменить',  callback_data: 'quick:list' },
+      { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
     ]],
   }
+}
+
+// Create a new empty bridged session — generates a fresh UUID, binds the topic
+// to it, does NOT touch the JSONL (it'll be created on first message via
+// `claude --session-id <new>`). Returns the new session_id.
+function createBridgeSession(chatId, threadId, projectDir = '/root') {
+  // RFC 4122 UUID v4 generator (no external dep)
+  const crypto = require('crypto')
+  const bytes = crypto.randomBytes(16)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+  setBridge(chatId, threadId, uuid, projectDir)
+  return uuid
+}
+
+// Track the message_id of the last floating control panel so we can delete it
+// before sending a new one (keeps the chat clean — only one panel at a time).
+function setLastPanelMessageId(chatId, threadId, messageId) {
+  const state = readState()
+  const key = bridgeKey(chatId, threadId)
+  if (!state[key]) return
+  state[key].last_panel_message_id = messageId
+  writeState(state)
+}
+
+function getLastPanelMessageId(chatId, threadId) {
+  const state = readState()
+  return state[bridgeKey(chatId, threadId)]?.last_panel_message_id || null
+}
+
+function clearLastPanelMessageId(chatId, threadId) {
+  const state = readState()
+  const key = bridgeKey(chatId, threadId)
+  if (!state[key]) return
+  delete state[key].last_panel_message_id
+  writeState(state)
 }
 
 module.exports = {
@@ -489,5 +734,15 @@ module.exports = {
   buildListPage,
   buildConnectedKeyboard,
   buildDisconnectedKeyboard,
+  findLastAssistantMessage,
+  setLastPulledUuid,
+  extractAssistantText,
+  markdownToTelegramHtml,
+  buildControlPanelKeyboard,
+  buildFreshConnectedKeyboard,
+  setLastPanelMessageId,
+  getLastPanelMessageId,
+  clearLastPanelMessageId,
+  createBridgeSession,
   STATE_FILE,
 }

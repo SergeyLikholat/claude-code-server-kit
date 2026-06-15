@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Доустановка VS Code Live bridge на УЖЕ работающий tg-router.
+# Доустановка / обновление VS Code Live bridge на УЖЕ работающий tg-router.
+#
+# Фичи VS Code Live:
+#   • /list /connect /disconnect — подключиться к любой VS Code сессии из TG
+#   • ➕ Новая сессия — создать чистую сессию прямо из Telegram (кнопка)
+#   • bridged-режим — Claude пишет обычный ответ, демон сам забирает его из
+#     JSONL и шлёт в TG (без MCP reply); ответ конвертится Markdown→TG HTML
+#   • floating control panel + 📥 Свежий ответ (pull) под каждым ответом
+#   • новые TG-сессии автоматически появляются в VS Code Sidebar
 #
 # Что делает:
-#   1. Бэкапит текущие index.js / commands.js / routing.json (timestamped).
-#   2. Кладёт новый bridge.js + transcribe.js + патченные index.js / commands.js
+#   1. Бэкапит index.js / commands.js / dispatch.js / routing.json (timestamped).
+#   2. Кладёт новые bridge.js + transcribe.js + патченные index/commands/dispatch
 #      рядом со старыми (атомарно).
-#   3. Добавляет в routing.json новый топик "VS Code Live" с mode=vscode_bridge
+#   3. Добавляет в routing.json топик "VS Code Live" с mode=vscode_bridge
 #      на указанном thread_id (если ещё не добавлен).
 #   4. Создаёт пустой vscode_bridge.json для bridge-стейта.
 #   5. Рестартует tg-router.service и проверяет что он живой;
@@ -55,6 +63,7 @@ require_root
 [ -d "$STATE_DIR" ] || fail "Не найден $STATE_DIR — tg-router без state-каталога"
 [ -f "$LIVE_DIR/index.js" ]    || fail "Нет $LIVE_DIR/index.js"
 [ -f "$LIVE_DIR/commands.js" ] || fail "Нет $LIVE_DIR/commands.js"
+[ -f "$LIVE_DIR/dispatch.js" ] || fail "Нет $LIVE_DIR/dispatch.js"
 [ -f "$STATE_DIR/routing.json" ] || fail "Нет $STATE_DIR/routing.json"
 
 # Резолвим источник файлов: либо локальный клон репо, либо github raw
@@ -68,7 +77,7 @@ elif [ -f "$(dirname "$0")/bridge.js" ]; then
 else
   SRC_DIR="$(mktemp -d)"
   log "Источник: GitHub ($GH_RAW_BASE)"
-  for f in bridge.js commands.js index.js transcribe.js; do
+  for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
     log "  Качаю $f"
     curl -fsSL "$GH_RAW_BASE/$f" -o "$SRC_DIR/$f" || fail "Не скачался $f"
   done
@@ -76,7 +85,7 @@ fi
 
 # Pre-flight: syntax check всех новых файлов
 log "Проверяю синтаксис новых файлов"
-for f in bridge.js commands.js index.js transcribe.js; do
+for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
   [ -f "$SRC_DIR/$f" ] || fail "Не найден $SRC_DIR/$f"
   node -c "$SRC_DIR/$f" || fail "Битый JS: $SRC_DIR/$f"
 done
@@ -86,6 +95,7 @@ ok "Все файлы валидны"
 log "Бэкаплю текущие файлы (.bak.$TS)"
 cp "$LIVE_DIR/index.js"        "$LIVE_DIR/index.js.bak.$TS"
 cp "$LIVE_DIR/commands.js"     "$LIVE_DIR/commands.js.bak.$TS"
+cp "$LIVE_DIR/dispatch.js"     "$LIVE_DIR/dispatch.js.bak.$TS"
 cp "$STATE_DIR/routing.json"   "$STATE_DIR/routing.json.bak.$TS"
 [ -f "$LIVE_DIR/bridge.js" ]    && cp "$LIVE_DIR/bridge.js"    "$LIVE_DIR/bridge.js.bak.$TS"
 [ -f "$LIVE_DIR/transcribe.js" ] && cp "$LIVE_DIR/transcribe.js" "$LIVE_DIR/transcribe.js.bak.$TS"
@@ -96,6 +106,7 @@ log "Раскатываю новые версии файлов"
 install -m 0644 "$SRC_DIR/bridge.js"     "$LIVE_DIR/bridge.js"
 install -m 0644 "$SRC_DIR/commands.js"   "$LIVE_DIR/commands.js"
 install -m 0644 "$SRC_DIR/index.js"      "$LIVE_DIR/index.js"
+install -m 0644 "$SRC_DIR/dispatch.js"   "$LIVE_DIR/dispatch.js"
 install -m 0644 "$SRC_DIR/transcribe.js" "$LIVE_DIR/transcribe.js"
 ok "Файлы на месте"
 
@@ -169,6 +180,7 @@ TS="\${1:-}"
 [ -z "\$TS" ] && { echo "Usage: \$0 <YYYYMMDD-HHMMSS>"; ls $LIVE_DIR/*.bak.* | sed 's/.*\.bak\.//' | sort -u; exit 1; }
 cp "$LIVE_DIR/index.js.bak.\$TS"      "$LIVE_DIR/index.js"
 cp "$LIVE_DIR/commands.js.bak.\$TS"   "$LIVE_DIR/commands.js"
+cp "$LIVE_DIR/dispatch.js.bak.\$TS"   "$LIVE_DIR/dispatch.js"
 cp "$STATE_DIR/routing.json.bak.\$TS" "$STATE_DIR/routing.json"
 [ -f "$LIVE_DIR/bridge.js.bak.\$TS" ] && cp "$LIVE_DIR/bridge.js.bak.\$TS" "$LIVE_DIR/bridge.js" || rm -f "$LIVE_DIR/bridge.js"
 [ -f "$LIVE_DIR/transcribe.js.bak.\$TS" ] && cp "$LIVE_DIR/transcribe.js.bak.\$TS" "$LIVE_DIR/transcribe.js" || rm -f "$LIVE_DIR/transcribe.js"
@@ -181,6 +193,7 @@ else
   warn "$SVC не поднялся — авто-откат"
   cp "$LIVE_DIR/index.js.bak.$TS"      "$LIVE_DIR/index.js"
   cp "$LIVE_DIR/commands.js.bak.$TS"   "$LIVE_DIR/commands.js"
+  cp "$LIVE_DIR/dispatch.js.bak.$TS"   "$LIVE_DIR/dispatch.js"
   cp "$STATE_DIR/routing.json.bak.$TS" "$STATE_DIR/routing.json"
   rm -f "$LIVE_DIR/bridge.js"
   systemctl restart "$SVC"

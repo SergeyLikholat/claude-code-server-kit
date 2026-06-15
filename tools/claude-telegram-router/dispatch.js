@@ -84,6 +84,23 @@ const ALLOWED_TOOLS = [
   'mcp__plugin_context7_context7__query-docs',
 ]
 
+// Tools for bridged sessions (VS Code Live): NO MCP Telegram tools.
+// Daemon auto-pulls the final assistant message from JSONL and sends it itself,
+// so Claude must NOT call mcp__plugin_telegram_telegram__reply.
+const ALLOWED_TOOLS_BRIDGED = ALLOWED_TOOLS.filter(t => !t.startsWith('mcp__plugin_telegram_'))
+
+const BRIDGED_FORMAT_RULE = [
+  '',
+  '## Bridged mode (CRITICAL — read before answering)',
+  '',
+  'You are running inside a Telegram VS Code Live bridge. The daemon will fetch your final assistant message from the JSONL session log and send it to Telegram automatically.',
+  '',
+  '- DO NOT call mcp__plugin_telegram_telegram__reply or any telegram MCP tools. They are not available in this mode.',
+  '- Write your final answer as a normal assistant message (plain text + standard Markdown). The daemon converts it to Telegram HTML and sends it.',
+  '- Use other tools (Bash, Read, Edit, etc.) freely for the actual work — just do not try to send messages via MCP.',
+  '- Markdown: use **bold**, *italic*, `code`, ```fenced```, [links](url), ## headings — daemon converts everything correctly.',
+].join('\n')
+
 function projectSlug(dir) {
   // Matches claude-code's slug logic: EVERY non-alphanumeric character → '-'.
   // The earlier `/[/_]/g` regex only replaced `/` and `_`, which silently broke
@@ -102,23 +119,93 @@ function sessionExists(projectDir, sessionId) {
   return existsSync(sessionJsonlPath(projectDir, sessionId))
 }
 
+// After claude finishes writing a new session, patch JSONL so VS Code Sidebar
+// displays it:
+//   1. Replace "entrypoint":"sdk-cli" → "claude-vscode" in all records
+//   2. Append a synthetic ai-title record at the end so Sidebar has a title to show
+//      (Sidebar filter appears to require at least one ai-title record).
+// Safe to call after claude --print has fully completed (no concurrent writes).
+function patchFirstEntrypointToVscode(projectDir, sessionId) {
+  const fs = require('fs')
+  const path = sessionJsonlPath(projectDir, sessionId)
+  if (!fs.existsSync(path)) return false
+  const content = fs.readFileSync(path, 'utf8')
+  const lines = content.split('\n')
+  let modified = false
+  let firstUserText = null
+  let hasAiTitle = false
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim()) continue
+    if (lines[i].includes('"type":"ai-title"')) hasAiTitle = true
+    if (lines[i].includes('"entrypoint":"sdk-cli"')) {
+      let obj
+      try { obj = JSON.parse(lines[i]) } catch { continue }
+      if (obj.entrypoint === 'sdk-cli') {
+        obj.entrypoint = 'claude-vscode'
+        lines[i] = JSON.stringify(obj)
+        modified = true
+      }
+    }
+    // Capture first user message text for synthetic ai-title (skip system tags)
+    if (!firstUserText && lines[i].includes('"type":"user"')) {
+      try {
+        const obj = JSON.parse(lines[i])
+        const content = obj.message?.content
+        let txt = ''
+        if (typeof content === 'string') {
+          txt = content
+        } else if (Array.isArray(content)) {
+          for (const part of content) {
+            if (typeof part === 'string') txt += part + ' '
+            else if (part && typeof part.text === 'string') txt += part.text + ' '
+          }
+        }
+        txt = txt.replace(/<channel[^>]*>/g, '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').replace(/\s+/g, ' ').trim()
+        if (txt) firstUserText = txt
+      } catch {}
+    }
+  }
+  // Append synthetic ai-title if none exists (Sidebar needs it to display the session)
+  if (!hasAiTitle) {
+    const title = firstUserText
+      ? (firstUserText.length > 60 ? firstUserText.slice(0, 57) + '...' : firstUserText)
+      : 'Telegram session'
+    const aiTitleRecord = JSON.stringify({
+      type: 'ai-title',
+      aiTitle: title,
+      sessionId: sessionId,
+    })
+    lines.push(aiTitleRecord)
+    modified = true
+  }
+  if (modified) {
+    fs.writeFileSync(path, lines.join('\n'))
+  }
+  return modified
+}
+
 // Spawn claude worker.
-//   opts: { project_dir, session_id, prompt, timeout_ms, env, onStdoutLine }
+//   opts: { project_dir, session_id, prompt, timeout_ms, env, onStdoutLine, bridged }
+//   bridged=true → MCP Telegram tools removed from allowedTools, replaced system prompt
+//   so Claude writes its final answer as a plain assistant message instead of
+//   calling mcp__plugin_telegram_telegram__reply. Daemon then auto-pulls from JSONL.
 // Returns: { code, stdout, stderr, durationMs }
 async function runClaudeWorker(opts) {
-  const { project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine } = opts
+  const { project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine, bridged = false } = opts
 
   mkdirSync(project_dir, { recursive: true })
   const resumes = sessionExists(project_dir, session_id)
 
+  const tools = bridged ? ALLOWED_TOOLS_BRIDGED : ALLOWED_TOOLS
+  const sysPromptAppend = bridged ? BRIDGED_FORMAT_RULE : TG_FORMAT_RULE
   const args = [
     '--print',
     resumes ? '--resume' : '--session-id',
     session_id,
     '--permission-mode', 'dontAsk',
-    '--allowedTools', ...ALLOWED_TOOLS,
+    '--allowedTools', ...tools,
     '--add-dir', project_dir,
-    '--append-system-prompt', TG_FORMAT_RULE,
+    '--append-system-prompt', sysPromptAppend,
   ]
 
   const claudeBin = resolveClaudeBin()
@@ -174,6 +261,18 @@ async function runClaudeWorker(opts) {
       resolve(1)
     })
   })
+
+  // Post-create patch: rewrite "sdk-cli" → "claude-vscode" in JSONL records so
+  // newly created sessions show up in VS Code Sidebar. Safe — claude --print
+  // has already finished writing (no concurrent writes).
+  // Only run for new sessions (resumes === false), and only on success.
+  if (!resumes && code === 0) {
+    try {
+      patchFirstEntrypointToVscode(project_dir, session_id)
+    } catch (err) {
+      console.error('tg-router: entrypoint patch failed:', err.message)
+    }
+  }
 
   return {
     code,
