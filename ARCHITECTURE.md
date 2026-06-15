@@ -19,13 +19,16 @@
 │                                                                │
 │   ┌──────────────────────────────────────────────────────┐    │
 │   │  Modules (опционально):                               │    │
-│   │  • tg-bot      → /opt/claude-telegram + systemd       │    │
+│   │  • tg-bot      → /opt/claude-telegram-router + systemd │    │
 │   │  • backup      → restic+rclone → Я.Диск               │    │
 │   │  • parakeet    → /opt/parakeet-server + модель        │    │
-│   │  • claude-mem  → plugin install + worker daemon       │    │
+│   │  • context-mgr → сжатие сессий → ~/obsidian (память)  │    │
 │   │  • helpers     → /opt/{nanobanana,gemini-tts,...}     │    │
 │   │  • hooks-extras → ~/.claude/hooks/*                    │    │
 │   └──────────────────────────────────────────────────────┘    │
+│                                                                │
+│   V2 multi-user: общая инфра + per-user миры                  │
+│   (см. docs/V2-MULTIUSER.md) — provision-user.sh / harden-admin │
 ├────────────────────────────────────────────────────────────────┤
 │  Layer 2: everything-claude-code (community)                   │
 │  https://github.com/affaan-m/everything-claude-code            │
@@ -84,7 +87,7 @@
     │   ├── agents/                       # из ECC base
     │   ├── skills/                       # из ECC base
     │   └── rules/                        # из ECC base
-    ├── .claude-mem/                      # ← claude-mem (SQLite + Chroma)
+    ├── obsidian/                         # ← context-mgr (память: дайджесты + темы)
     ├── .config/rclone/                   # ← backup (Yandex OAuth)
     ├── .secrets/                         # ← backup, helpers (env-файлы)
     └── claude-code-server-kit/           # этот репо, склонирован
@@ -224,7 +227,7 @@ WantedBy=multi-user.target
 
 - **backup** + **tg-bot** = уведомления о бэкапе приходят в TG
 - **parakeet** + **tg-bot** = голосовые сообщения транскрибируются перед отправкой в Claude
-- **claude-mem** + любые сессии = автоматическое сохранение контекста
+- **context-mgr** + любые сессии = автоматическое сжатие и сохранение контекста в Obsidian-vault
 - **hooks-extras** + любые модули = можно повесить хуки на любые события
 
 Если зависимый модуль не установлен — функция просто не активируется, никаких ошибок.

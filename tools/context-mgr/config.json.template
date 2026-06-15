@@ -1,0 +1,39 @@
+{
+  "_comment": "Context-manager одного пользователя. Автономный: держит JSONL сессий в рабочем размере, генерит дайджесты в Obsidian-vault и при переполнении делает hard-reset с сохранением памяти через невидимое system-message в новой сессии. Пути подставляет provision-user.sh (__HOME__).",
+
+  "limits": {
+    "soft_size_mb": 15,
+    "hard_size_mb": 25,
+    "soft_turns": 1500,
+    "hard_turns": 3000
+  },
+
+  "schedules": {
+    "monitor_cron": "*/5 * * * *",
+    "daily_snapshot_cron": "30 4 * * *"
+  },
+
+  "idle_threshold_minutes": 30,
+
+  "model": "sonnet",
+
+  "keep_rotations": 3,
+
+  "paths": {
+    "routing": "__HOME__/.claude/channels/telegram/routing.json",
+    "telegram_env": "__HOME__/.claude/channels/telegram/.env",
+    "lock_dir": "/run/claude-telegram-__USER__",
+    "claude_projects": "__HOME__/.claude/projects",
+    "vault_dir": "__HOME__/obsidian",
+    "logs_dir": "__HOME__/_infra/context-mgr/logs"
+  },
+
+  "notify": {
+    "on_hard_reset": true,
+    "soft_message": "📚 упаковал нашу историю в память, чтобы лучше помнить главное. Продолжай как обычно."
+  },
+
+  "topic_overrides": {
+    "_comment_topic_overrides": "Перекрытие настроек для конкретного thread_id. Пример: { \"3\": { \"limits\": { \"hard_size_mb\": 50 } } }"
+  }
+}

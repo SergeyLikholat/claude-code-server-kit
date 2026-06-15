@@ -1,0 +1,10 @@
+[Unit]
+Description=context-mgr monitor timer (user %i) — каждые 5 минут
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

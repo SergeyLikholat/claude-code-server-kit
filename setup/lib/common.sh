@@ -150,6 +150,21 @@ install_systemd_unit() {
   ok "Установлен systemd unit: $unit_name"
 }
 
+# Установка templated systemd-юнита (foo@.service / foo@.timer).
+# Без подстановки — systemd сам разворачивает %i при enable foo@<instance>.
+# Использование: install_unit_template "путь/foo@.service.template"
+# Имя цели берётся из имени файла без суффикса .template.
+install_unit_template() {
+  local template="$1"
+  [ -f "$template" ] || fatal "Шаблон не найден: $template"
+  local base
+  base="$(basename "$template")"
+  base="${base%.template}"            # foo@.service.template → foo@.service
+  cp "$template" "/etc/systemd/system/$base"
+  systemctl daemon-reload
+  ok "Установлен templated unit: $base"
+}
+
 # Проверка что мы root
 require_root() {
   if [ "$EUID" -ne 0 ]; then
@@ -311,7 +326,7 @@ save_secrets() {
 
 # Экспортировать функции для дочерних скриптов
 export -f log ok warn err fatal section ask ask_secret confirm
-export -f check_requirement_or_skip install_systemd_unit
+export -f check_requirement_or_skip install_systemd_unit install_unit_template
 export -f require_root require_ubuntu apt_installed apt_install
 export -f ensure_dir save_secrets load_env
 export -f find_claude_bin install_claude_plugin ensure_node ensure_bun create_python_venv

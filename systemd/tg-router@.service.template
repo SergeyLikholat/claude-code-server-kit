@@ -1,0 +1,29 @@
+[Unit]
+Description=Claude Code Telegram router (user %i)
+Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/claude-telegram-router
+ExecStart=/usr/bin/node /opt/claude-telegram-router/index.js
+Restart=always
+RestartSec=5s
+
+# Per-user runtime dir для per-topic lockfiles (systemd создаёт /run/claude-telegram-%i, владелец %i)
+RuntimeDirectory=claude-telegram-%i
+RuntimeDirectoryMode=0700
+
+Environment=NODE_ENV=production
+Environment=TELEGRAM_STATE_DIR=/home/%i/.claude/channels/telegram
+Environment=TG_ROUTER_LOCK_DIR=/run/claude-telegram-%i
+EnvironmentFile=-/home/%i/.claude/channels/telegram/.env
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

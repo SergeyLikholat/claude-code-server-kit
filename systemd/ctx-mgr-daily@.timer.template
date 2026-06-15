@@ -1,0 +1,10 @@
+[Unit]
+Description=context-mgr daily snapshot timer (user %i) — каждый день 04:30
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

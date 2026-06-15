@@ -10,6 +10,12 @@
 #   sudo bash install.sh --check            # проверка что установлено
 #   sudo bash install.sh --update           # обновить установленное
 #   sudo bash install.sh --non-interactive  # без подсказок (берёт всё из .env)
+#
+# V2 multi-user (несколько пользователей на одном сервере):
+#   sudo bash install.sh --shared-infra            # общая инфра (один раз)
+#   sudo bash install.sh --provision-user <name>   # завести пользователя
+#   sudo bash install.sh --harden-admin            # защитить админ-директории
+#   См. docs/V2-MULTIUSER.md
 
 set -e
 
@@ -46,6 +52,17 @@ while [ $# -gt 0 ]; do
     --update)
       MODE="update"
       ;;
+    --shared-infra)
+      MODE="shared-infra"
+      ;;
+    --provision-user)
+      shift
+      PROVISION_USER="$1"
+      MODE="provision-user"
+      ;;
+    --harden-admin)
+      MODE="harden-admin"
+      ;;
     --non-interactive)
       NON_INTERACTIVE=true
       ;;
@@ -78,12 +95,13 @@ declare -A MODULE_DESCRIPTIONS=(
   ["tg-bot"]="Telegram-бот для управления Claude с телефона"
   ["backup"]="Автоматические шифрованные бэкапы на Яндекс.Диск"
   ["parakeet"]="Голосовая транскрипция (Parakeet или GigaAM)"
-  ["claude-mem"]="Кросс-сессионная память Claude"
   ["helpers"]="Полезные мелочи: nanobanana, gemini-tts, openpyxl_safe, tg-md"
   ["hooks-extras"]="Дополнительные хуки и автоматизации"
 )
 
-ALL_MODULES=("tg-bot" "backup" "parakeet" "claude-mem" "helpers" "hooks-extras")
+# claude-mem УБРАН из V2: память теперь per-user через obsidian-vault + context-mgr
+# (ставится автоматически в provision-user.sh). См. docs/V2-MULTIUSER.md.
+ALL_MODULES=("tg-bot" "backup" "parakeet" "helpers" "hooks-extras")
 
 # ============================================================
 # Команды
@@ -108,7 +126,24 @@ cmd_check() {
   echo "Core:"
   command -v claude >/dev/null && ok "claude CLI установлен ($(claude --version 2>/dev/null | head -1))" || warn "claude CLI не найден"
   [ -d /root/.claude ] && ok "~/.claude/ существует" || warn "~/.claude/ не найдена"
-  [ -d /root/everything-claude-code ] && ok "ECC base склонирован" || warn "ECC base не найден"
+  { [ -d /opt/ecc-base ] || [ -d /root/everything-claude-code ]; } && ok "ECC base склонирован" || warn "ECC base не найден"
+
+  # V2 multi-user
+  if getent group ccusers >/dev/null 2>&1; then
+    echo
+    echo "V2 multi-user:"
+    [ -d /opt/ecc-base ] && ok "shared ECC: /opt/ecc-base" || warn "нет /opt/ecc-base"
+    [ -d /srv/shared/projects ] && ok "общие проекты: /srv/shared/projects" || warn "нет /srv/shared/projects"
+    local users
+    users="$(getent group ccusers | cut -d: -f4)"
+    echo "  пользователи ccusers: ${users:-(нет)}"
+    for u in ${users//,/ }; do
+      for unit in "tg-router@$u" "ctx-mgr-monitor@$u.timer" "ctx-mgr-daily@$u.timer"; do
+        local st; st=$(systemctl is-active "$unit" 2>/dev/null || echo n/a)
+        printf "    %-28s %s\n" "$unit" "$st"
+      done
+    done
+  fi
 
   echo
   echo "Модули:"
@@ -258,5 +293,8 @@ case "$MODE" in
   modules)  cmd_modules ;;
   all)      cmd_all ;;
   update)   cmd_update ;;
+  shared-infra)    require_root; bash "$KIT_DIR/setup/shared-infra.sh" ;;
+  provision-user)  require_root; bash "$KIT_DIR/setup/provision-user.sh" "$PROVISION_USER" ;;
+  harden-admin)    require_root; bash "$KIT_DIR/setup/harden-admin.sh" ;;
   *)        err "Неизвестный режим: $MODE"; exit 1 ;;
 esac
