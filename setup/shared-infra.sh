@@ -137,7 +137,6 @@ ${BOLD}${GREEN}✓ Shared infra установлена${NC}
 Защита админа:
   sudo bash setup/harden-admin.sh
 
-⚠️  Подписка: один Anthropic-аккаунт на всех пользователей. Это может
-   нарушать ToS подписочных планов (аккаунт = один человек) и делит общий
-   rate-limit. Для команды правильнее Team/API-ключи. См. docs/V2-MULTIUSER.md.
+Подписка: один Anthropic-аккаунт используется всеми «мирами» (общий
+credential). Лимиты подписки — общие на всех. См. docs/V2-MULTIUSER.md.
 EOF
