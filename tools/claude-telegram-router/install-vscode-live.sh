@@ -24,7 +24,7 @@
 #     bash tools/claude-telegram-router/install-vscode-live.sh
 #
 #   На чистой машине (где есть только tg-router):
-#     curl -sSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/tools/claude-telegram-router/install-vscode-live.sh | bash
+#     curl -sSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/tools/claude-telegram-router/install-vscode-live.sh | bash
 #   (скрипт сам подтянет нужные исходники из main ветки репо)
 #
 # Параметры:
@@ -46,7 +46,7 @@ STATE_DIR="${STATE_DIR:-/root/.claude/channels/telegram}"
 SVC="${SVC:-tg-router.service}"
 TS="$(date +%Y%m%d-%H%M%S)"
 
-GH_RAW_BASE="${GH_RAW_BASE:-https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/tools/claude-telegram-router}"
+GH_RAW_BASE="${GH_RAW_BASE:-https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/tools/claude-telegram-router}"
 
 # Цвета
 C_R='\033[0;31m'; C_G='\033[0;32m'; C_Y='\033[0;33m'; C_C='\033[0;36m'; C_N='\033[0m'

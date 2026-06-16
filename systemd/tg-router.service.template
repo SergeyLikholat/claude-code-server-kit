@@ -1,6 +1,6 @@
 [Unit]
 Description=Claude Code Telegram router + per-topic worker dispatcher
-Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+Documentation=https://github.com/SergeyLikholat/cc-multiuser-kit
 After=network-online.target
 Wants=network-online.target
 

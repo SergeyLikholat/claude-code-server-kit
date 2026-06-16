@@ -219,4 +219,4 @@ sudo bash uninstall.sh --module ИМЯ
 
 ## Если что-то не работает
 
-См. [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) или открывайте [issue](https://github.com/SergeyLikholat/claude-code-server-kit/issues).
+См. [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) или открывайте [issue](https://github.com/SergeyLikholat/cc-multiuser-kit/issues).

@@ -273,7 +273,7 @@ ssh root@IP_СЕРВЕРА
 Это делает скрипт `preflight-ssh.sh` из этого репозитория. На сервере выполните:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/preflight-ssh.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/preflight-ssh.sh | bash
 ```
 
 Скрипт:
@@ -346,7 +346,7 @@ ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)"
 ssh-copy-id root@SERVER_IP
 
 # На сервере, после проверки что ключ работает:
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/preflight-ssh.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/preflight-ssh.sh | bash
 # отключает PasswordAuthentication, опционально меняет порт, ставит fail2ban
 ```
 

@@ -1,6 +1,6 @@
 [Unit]
 Description=Parakeet-TDT v3 HTTP transcription server
-Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+Documentation=https://github.com/SergeyLikholat/cc-multiuser-kit
 After=network.target
 
 [Service]

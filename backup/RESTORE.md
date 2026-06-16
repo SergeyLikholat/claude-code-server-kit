@@ -1,6 +1,6 @@
 # 🚨 RESTORE — восстановление из бэкапа
 
-> Для модуля `backup` из [claude-code-server-kit](https://github.com/SergeyLikholat/claude-code-server-kit).
+> Для модуля `backup` из [claude-code-server-kit](https://github.com/SergeyLikholat/cc-multiuser-kit).
 > Это generic-инструкция. Если у вас есть **свой** boevoy runbook — он приоритетнее.
 
 ---

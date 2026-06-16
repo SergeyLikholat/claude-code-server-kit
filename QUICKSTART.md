@@ -154,7 +154,7 @@ Host my-claude-server
 3. **Скопируй эту команду полностью** и вставь в терминал (правая кнопка мыши → Paste, или `Ctrl+Shift+V` на Win/Linux, `Cmd+V` на Mac), затем нажми Enter:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/quickstart.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/quickstart.sh | sudo bash
 ```
 
 4. Скрипт начнёт работу. Будет показывать что делает.

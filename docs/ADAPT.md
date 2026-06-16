@@ -155,7 +155,7 @@ Claude автоматически подхватит правила из люб�
 
 В корне форка:
 1. Измените `README.md` — название, описание, контакты
-2. Замените ссылки `SergeyLikholat/claude-code-server-kit` → ваши
+2. Замените ссылки `SergeyLikholat/cc-multiuser-kit` → ваши
 3. (Опционально) добавьте логотип в `assets/`
 4. Обновите `LICENSE` если меняете лицензию (или оставьте MIT)
 
@@ -235,7 +235,7 @@ sudo bash install.sh --all
 Если активно поддерживаете свой форк — синхронизируйте с upstream раз в месяц:
 
 ```bash
-git remote add upstream https://github.com/SergeyLikholat/claude-code-server-kit
+git remote add upstream https://github.com/SergeyLikholat/cc-multiuser-kit
 git fetch upstream
 git merge upstream/main
 # Разрешите конфликты, проверьте что ваши кастомизации не сломались
@@ -247,5 +247,5 @@ git push origin main
 ## Куда копать дальше
 
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — как всё устроено
-- [Issues](https://github.com/SergeyLikholat/claude-code-server-kit/issues) — задайте вопрос
-- [Discussions](https://github.com/SergeyLikholat/claude-code-server-kit/discussions) — обсуждения
+- [Issues](https://github.com/SergeyLikholat/cc-multiuser-kit/issues) — задайте вопрос
+- [Discussions](https://github.com/SergeyLikholat/cc-multiuser-kit/discussions) — обсуждения

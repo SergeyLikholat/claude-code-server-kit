@@ -17,7 +17,7 @@
 Одна команда:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/quickstart.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/quickstart.sh | sudo bash
 ```
 
 Установит Claude Code CLI + базу из ~150 агентов/скиллов + интерактивно предложит модули. API-ключи на этом этапе не требуются.
@@ -103,7 +103,7 @@ Claude Code от Anthropic — это AI-помощник, который уме
 Чтобы заходить на сервер без пароля и сделать его безопаснее:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/preflight-ssh.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/preflight-ssh.sh | bash
 ```
 
 Скрипт сам определит вашу ситуацию, спросит куда положить ключи и всё настроит. **Детали:** [SSH-SETUP.md](docs/SSH-SETUP.md).
@@ -111,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-k
 ### Шаг 3: Установите core (обязательная база)
 
 ```bash
-git clone https://github.com/SergeyLikholat/claude-code-server-kit
+git clone https://github.com/SergeyLikholat/cc-multiuser-kit
 cd claude-code-server-kit
 sudo bash install.sh
 ```
@@ -167,7 +167,7 @@ claude
 - Опциональные сервисы (Telegram, Яндекс.Диск, HuggingFace) — **бесплатно** в нужных нам объёмах
 
 **Я не программист, справлюсь?**
-Если умеете копировать команды и читать инструкции — да. Документация написана для обычных людей, не для админов. Если застрянете — открывайте [issue](https://github.com/SergeyLikholat/claude-code-server-kit/issues), помогу.
+Если умеете копировать команды и читать инструкции — да. Документация написана для обычных людей, не для админов. Если застрянете — открывайте [issue](https://github.com/SergeyLikholat/cc-multiuser-kit/issues), помогу.
 
 **Можно ли использовать без Telegram / без бэкапа / без X?**
 Да, всё опционально. Core устанавливается отдельно, модули добавляются по желанию. Никаких обязательных интеграций.
@@ -193,6 +193,6 @@ claude
 
 ## Поддержка
 
-- 🐛 Баги и пожелания → [GitHub Issues](https://github.com/SergeyLikholat/claude-code-server-kit/issues)
-- 💬 Вопросы → [GitHub Discussions](https://github.com/SergeyLikholat/claude-code-server-kit/discussions)
+- 🐛 Баги и пожелания → [GitHub Issues](https://github.com/SergeyLikholat/cc-multiuser-kit/issues)
+- 💬 Вопросы → [GitHub Discussions](https://github.com/SergeyLikholat/cc-multiuser-kit/discussions)
 - 🌟 Если полезно — поставьте звёздочку, мотивирует развивать дальше

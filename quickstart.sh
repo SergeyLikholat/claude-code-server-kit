@@ -2,7 +2,7 @@
 # quickstart.sh — установка claude-code-server-kit одной командой.
 #
 # Использование:
-#   curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/quickstart.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/quickstart.sh | sudo bash
 #
 # Что делает:
 #   1. Клонирует репо в /root/claude-code-server-kit
@@ -21,7 +21,7 @@ ask()  { echo -en "${CYAN}?${NC} $*"; }
 
 if [ "$EUID" -ne 0 ]; then
   err "Запускайте через sudo:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/quickstart.sh | sudo bash"
+  echo "  curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/quickstart.sh | sudo bash"
   exit 1
 fi
 
@@ -62,7 +62,7 @@ if [ -d "$KIT_DIR/.git" ]; then
   ok "Уже склонирован, обновлён"
 else
   apt-get install -y -qq git 2>/dev/null
-  git clone --depth 1 https://github.com/SergeyLikholat/claude-code-server-kit "$KIT_DIR"
+  git clone --depth 1 https://github.com/SergeyLikholat/cc-multiuser-kit "$KIT_DIR"
   ok "Склонирован в $KIT_DIR"
 fi
 
@@ -86,7 +86,7 @@ echo "Сейчас вы скорее всего зашли по паролю. Э
 echo "интернете перебирают пароли 24/7. Настройка ключей решает эту проблему."
 echo
 echo "Подробная инструкция (если ещё не настраивали ключи на ноуте):"
-echo "  https://github.com/SergeyLikholat/claude-code-server-kit/blob/main/docs/SSH-SETUP.md"
+echo "  https://github.com/SergeyLikholat/cc-multiuser-kit/blob/main/docs/SSH-SETUP.md"
 echo
 ask "Настроить SSH-hardening сейчас? (потребуется готовый ключ на ноуте) [y/N]: "
 read -r setup_ssh
@@ -161,7 +161,7 @@ ${BOLD}Дальше:${NC}
      ${BOLD}sudo bash $KIT_DIR/install.sh --check${NC}
 
 ${BOLD}Документация:${NC}
-  • https://github.com/SergeyLikholat/claude-code-server-kit
+  • https://github.com/SergeyLikholat/cc-multiuser-kit
   • QUICKSTART.md   — этот путь
   • MODULES.md      — что какой модуль делает
   • TROUBLESHOOTING.md  — если что-то не работает

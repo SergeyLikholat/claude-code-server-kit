@@ -1,6 +1,6 @@
 [Unit]
 Description=Server backup to Yandex Disk via restic
-Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+Documentation=https://github.com/SergeyLikholat/cc-multiuser-kit
 After=docker.service network-online.target
 Wants=network-online.target
 ConditionPathExists=__BACKUP_SCRIPT__

@@ -1,6 +1,6 @@
 # /opt/backup — Backup-инфраструктура
 
-Эта папка — generic-версия backup-системы, разворачивается через `sudo bash install.sh --module backup` из [claude-code-server-kit](https://github.com/SergeyLikholat/claude-code-server-kit).
+Эта папка — generic-версия backup-системы, разворачивается через `sudo bash install.sh --module backup` из [claude-code-server-kit](https://github.com/SergeyLikholat/cc-multiuser-kit).
 
 ## Файлы
 

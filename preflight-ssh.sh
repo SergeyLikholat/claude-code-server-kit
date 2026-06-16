@@ -5,7 +5,7 @@
 # Скрипт проверит что вход по ключу работает, и только тогда отключит вход по паролю.
 #
 # Использование:
-#   curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/preflight-ssh.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/preflight-ssh.sh | bash
 #   ИЛИ
 #   sudo bash preflight-ssh.sh
 
@@ -62,7 +62,7 @@ if [ ! -f "$AUTH_KEYS" ] || [ ! -s "$AUTH_KEYS" ]; then
   echo "  3. Проверьте что заходит БЕЗ пароля"
   echo "  4. Только потом запускайте этот скрипт"
   echo
-  echo "Подробная инструкция: https://github.com/SergeyLikholat/claude-code-server-kit/blob/main/docs/SSH-SETUP.md"
+  echo "Подробная инструкция: https://github.com/SergeyLikholat/cc-multiuser-kit/blob/main/docs/SSH-SETUP.md"
   exit 1
 fi
 
@@ -245,7 +245,7 @@ cat <<EOF
 ${BOLD}Дальше:${NC}
   Установка Claude Code инфраструктуры:
     cd /root
-    git clone https://github.com/SergeyLikholat/claude-code-server-kit
+    git clone https://github.com/SergeyLikholat/cc-multiuser-kit
     cd claude-code-server-kit
     sudo bash install.sh
 

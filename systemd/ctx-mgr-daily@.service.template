@@ -1,6 +1,6 @@
 [Unit]
 Description=context-mgr daily snapshot (user %i)
-Documentation=https://github.com/SergeyLikholat/claude-code-server-kit
+Documentation=https://github.com/SergeyLikholat/cc-multiuser-kit
 
 [Service]
 Type=oneshot

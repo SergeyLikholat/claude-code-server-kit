@@ -321,7 +321,7 @@ sudo bash tools/claude-telegram-router/install-vscode-live.sh
 или одной командой без клонирования репо:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/tools/claude-telegram-router/install-vscode-live.sh | sudo VSCODE_LIVE_THREAD_ID=2723 bash
+curl -sSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/tools/claude-telegram-router/install-vscode-live.sh | sudo VSCODE_LIVE_THREAD_ID=2723 bash
 ```
 
 Что делает скрипт:

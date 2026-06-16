@@ -1,6 +1,6 @@
 # Troubleshooting — что делать если не работает
 
-> Большинство проблем — типовые. Здесь решения по категориям. Если вашего случая нет — [откройте issue](https://github.com/SergeyLikholat/claude-code-server-kit/issues), помогу.
+> Большинство проблем — типовые. Здесь решения по категориям. Если вашего случая нет — [откройте issue](https://github.com/SergeyLikholat/cc-multiuser-kit/issues), помогу.
 
 ---
 
@@ -401,7 +401,7 @@ docker stats            # сколько ест каждый контейнер
    bash install.sh --check > /tmp/diagnostic.txt 2>&1
    sudo journalctl --since "1 hour ago" >> /tmp/diagnostic.txt
    ```
-2. [Откройте issue](https://github.com/SergeyLikholat/claude-code-server-kit/issues/new) с приложенным `diagnostic.txt`
+2. [Откройте issue](https://github.com/SergeyLikholat/cc-multiuser-kit/issues/new) с приложенным `diagnostic.txt`
 3. ⚠️ Перед публикацией просмотрите файл и **уберите секреты** если попали
 
 ---

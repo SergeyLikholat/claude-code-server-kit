@@ -129,7 +129,7 @@ ssh-copy-id root@ВАШ_IP
 
 После проверки запустите на сервере:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-kit/main/preflight-ssh.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/preflight-ssh.sh | bash
 ```
 
 Это **отключит вход по паролю совсем** и сделает сервер устойчивым к перебору паролей.
@@ -142,7 +142,7 @@ curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/claude-code-server-k
 
 ```bash
 cd /root
-git clone https://github.com/SergeyLikholat/claude-code-server-kit
+git clone https://github.com/SergeyLikholat/cc-multiuser-kit
 cd claude-code-server-kit
 sudo bash install.sh
 ```
@@ -245,7 +245,7 @@ git pull
 ### Если что-то идёт не так
 
 1. Смотрите [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-2. Откройте [issue на GitHub](https://github.com/SergeyLikholat/claude-code-server-kit/issues)
+2. Откройте [issue на GitHub](https://github.com/SergeyLikholat/cc-multiuser-kit/issues)
 3. В крайнем случае — пересоздайте VPS (если backup настроен, восстановите из него; если нет — потеряете данные, не критично если только пробовали)
 
 ### Куда копать дальше
