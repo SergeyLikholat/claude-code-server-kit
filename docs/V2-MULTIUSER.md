@@ -65,6 +65,27 @@ sudo bash setup/provision-user.sh alice --sync-creds
 - **Telegram:** свой бот (отдельный токен). Роутер `tg-router@alice` отвечает в bridged-режиме (без telegram-mcp плагина — демон сам забирает ответ из JSONL и шлёт).
 - **VS Code/SSH:** логин под своим аккаунтом (`ssh alice@server`), работает в своём `~/`.
 
+### Bot-bridge: подключение к сессиям и создание новых прямо из бота (без группы)
+
+Можно превратить личный бот пользователя в «менеджер сессий» — как VS Code Live, но без группы/форум-топиков: весь чат с ботом в личке становится мостом.
+
+```bash
+# для конкретного пользователя V2:
+sudo bash tools/claude-telegram-router/install-bot-bridge.sh alice
+# для single-user (root):
+sudo bash tools/claude-telegram-router/install-bot-bridge.sh
+# одной строкой без клонирования:
+curl -sSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/main/tools/claude-telegram-router/install-bot-bridge.sh | sudo bash -s -- alice
+```
+
+После этого в личке с ботом:
+- `/list` — список доступных Claude-сессий
+- `/connect <N>` — подключиться к сессии (по номеру или префиксу session_id)
+- `➕ Новая сессия` (кнопка) — создать новую пустую сессию
+- `/disconnect` — отвязаться, `📥 Свежий ответ` — дотянуть ответ долгой сессии
+
+Любое обычное сообщение боту уходит в подключённую сессию. Технически: скрипт ставит `general.mode = "vscode_bridge"` в `routing.json` пользователя (весь general-канал = мост), обновляет код роутера и рестартует `tg-router@<user>`. Откат: `install-bot-bridge.sh --rollback <TS> <user>`.
+
 ## Память
 
 Без `claude-mem`. Вся долгосрочная память — per-user:
