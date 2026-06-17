@@ -104,6 +104,47 @@ function formatDuration(ms) {
   return `${m}м ${r}с`
 }
 
+// HH:MM по серверному локальному времени
+function hhmm(d) {
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+// «через 2ч 15м» до момента d
+function untilStr(d) {
+  let sec = Math.max(0, Math.round((d.getTime() - Date.now()) / 1000))
+  const h = Math.floor(sec / 3600); const m = Math.round((sec % 3600) / 60)
+  if (h > 0) return `через ${h}ч ${m}м`
+  return `через ${m}м`
+}
+
+// Сообщение о прерывании сессии из-за лимита Anthropic.
+function formatLimitNotice(limit, topicName, startedAt, durationMs) {
+  const started = new Date(startedAt)
+  const head = limit.kind === 'server'
+    ? '🛑 <b>Сессия прервана</b> — серверный лимит Anthropic (перегрузка)'
+    : '⛔ <b>Сессия прервана</b> — исчерпан лимит подписки Anthropic'
+  const lines = [
+    head,
+    '',
+    `Топик: <b>${String(topicName).replace(/[<>&]/g, '')}</b>`,
+    `Запущена: ${hhmm(started)} · работала ${formatDuration(durationMs)}`,
+  ]
+  if (limit.resetAt instanceof Date && !isNaN(limit.resetAt)) {
+    lines.push(`Сброс лимита: <b>${hhmm(limit.resetAt)}</b> (${untilStr(limit.resetAt)})`)
+  } else if (limit.resetText) {
+    lines.push(`Сброс лимита: <b>${String(limit.resetText).replace(/[<>&]/g, '')}</b>`)
+  } else if (limit.kind === 'server') {
+    lines.push('Это временно — попробуй повторить через пару минут.')
+  } else {
+    lines.push('Время сброса не пришло в ответе — проверь в VS Code: <code>/usage</code>.')
+  }
+  lines.push('')
+  lines.push(limit.kind === 'server'
+    ? 'Повтори запрос позже — он не выполнился.'
+    : 'После сброса повтори запрос — он не выполнился.')
+  return lines.join('\n')
+}
+
 async function openStatus(bot, chat_id, threadId, ux) {
   await sleep(ux.initial_status_delay_ms || 2500)
   const opts = threadId != null ? { message_thread_id: Number(threadId) } : {}
@@ -249,6 +290,7 @@ async function handleInbound(bot, ctx, text, attachment) {
         timedOut: res.killed,
         durationMs: res.durationMs,
         errSnippet: (res.stderr || '').slice(-200),
+        limit: res.limit || null,
       }
       if (res.code === 0) {
         console.error(`tg-router: [worker ok] topic=${topic.name || 'general'} dur=${res.durationMs}ms`)
@@ -262,6 +304,16 @@ async function handleInbound(bot, ctx, text, attachment) {
       clearInterval(tickInt)
       await statusPromise
       await closeStatus(bot, chat_id, statusId, ux, outcome)
+    }
+
+    // Лимит Anthropic — отдельное понятное уведомление (сессия оборвалась +
+    // когда запущена + когда сброс лимита). Иначе пользователь видит лишь
+    // невнятное «воркер упал».
+    if (!outcome.ok && outcome.limit && outcome.limit.limited) {
+      const opts = threadId != null ? { message_thread_id: Number(threadId) } : {}
+      const msg = formatLimitNotice(outcome.limit, topic.name || 'General', startedAt, outcome.durationMs)
+      await bot.api.sendMessage(chat_id, msg, { ...opts, parse_mode: 'HTML' })
+        .catch(() => bot.api.sendMessage(chat_id, msg.replace(/<[^>]+>/g, ''), opts).catch(() => {}))
     }
 
     // Post-turn delivery (ALL topics — there is no telegram MCP plugin):

@@ -246,7 +246,50 @@ async function runClaudeWorker(opts) {
     stderr,
     killed,
     durationMs: Date.now() - startedAt,
+    limit: parseUsageLimit(stdout + '\n' + stderr),
   }
+}
+
+// Распознать причину «лимит Anthropic» в выводе claude --print.
+// Возвращает:
+//   { limited:bool, kind:'plan'|'server'|null, resetAt:Date|null, resetText:string|null, raw:string }
+//   kind='plan'   — исчерпан лимит подписки/плана (долгое ожидание, есть время сброса)
+//   kind='server' — серверный rate-limit / overloaded / 429 (временно, можно повторить)
+function parseUsageLimit(text) {
+  const out = { limited: false, kind: null, resetAt: null, resetText: null, raw: '' }
+  if (!text) return out
+  const t = String(text)
+
+  // 1) Канонический print-режим: "Claude AI usage limit reached|<epoch_seconds>"
+  let m = t.match(/Claude AI usage limit reached\|(\d{9,13})/i)
+  if (m) {
+    out.limited = true; out.kind = 'plan'
+    const n = parseInt(m[1], 10)
+    out.resetAt = new Date(n < 1e12 ? n * 1000 : n)   // секунды или мс
+    out.raw = m[0]
+    return out
+  }
+
+  // 2) План-лимит текстом: "usage limit reached ... resets at 3pm" / "limit will reset at ..."
+  if (/usage limit|plan limit|limit reached|reached your .* limit|5-hour limit|weekly limit/i.test(t)) {
+    out.limited = true; out.kind = 'plan'
+    const r = t.match(/reset[s]?(?:\s+at)?\s+([^\n.|]{3,40})/i)
+                || t.match(/try again (?:at|after)\s+([^\n.|]{3,40})/i)
+    if (r) out.resetText = r[1].trim()
+    out.raw = (t.match(/[^\n]*limit[^\n]*/i) || [''])[0].slice(0, 200)
+    return out
+  }
+
+  // 3) Серверный rate-limit / перегрузка (временно)
+  if (/\b429\b|rate limit|overloaded|too many requests|service unavailable|529/i.test(t)) {
+    out.limited = true; out.kind = 'server'
+    const r = t.match(/retry[- ]after[:\s]+(\d+)/i)
+    if (r) { out.resetAt = new Date(Date.now() + parseInt(r[1], 10) * 1000) }
+    out.raw = (t.match(/[^\n]*(429|rate limit|overloaded|too many)[^\n]*/i) || [''])[0].slice(0, 200)
+    return out
+  }
+
+  return out
 }
 
 module.exports = {
@@ -254,5 +297,6 @@ module.exports = {
   sessionJsonlPath,
   sessionExists,
   projectSlug,
+  parseUsageLimit,
   ALLOWED_TOOLS,
 }
