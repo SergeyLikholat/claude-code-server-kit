@@ -7,14 +7,19 @@
     "email": "__USER_EMAIL__"
   },
   "permissions": {
-    "_comment_mode": "defaultMode=dontAsk — VS Code/CLI-сессии не спрашивают разрешение на каждый шаг. Строже — 'default' или 'acceptEdits'.",
+    "_comment_mode": "Чтобы НЕ спрашивало на каждый шаг нужны И defaultMode=dontAsk, И allow-правила. Один dontAsk без allow Bash не разрешает. bypassPermissions не используем (ломает telegram-плагин).",
     "defaultMode": "dontAsk",
-    "allowedTools": [
-      "Bash(ls *)",
-      "Bash(cat *)",
-      "Bash(grep *)",
-      "Bash(systemctl status *)",
-      "Bash(journalctl -u *)"
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Grep(*)",
+      "Glob(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Agent(*)",
+      "mcp__*"
     ]
   },
   "hooks": {

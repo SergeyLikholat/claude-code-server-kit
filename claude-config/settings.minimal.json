@@ -7,9 +7,20 @@
     "email": "__USER_EMAIL__"
   },
   "permissions": {
-    "_comment_mode": "defaultMode=dontAsk — VS Code/CLI-сессии не спрашивают разрешение на каждый шаг (как на боевом сервере). Хочешь строже — поменяй на 'default' (спрашивать) или 'acceptEdits' (молча только правки файлов).",
+    "_comment_mode": "Чтобы НЕ спрашивало на каждый шаг: нужны И defaultMode=dontAsk, И allow-правила ниже. Один dontAsk без allow Bash НЕ разрешает. bypassPermissions НЕ используем — он ломает telegram-плагин. Хочешь строже — сократи список allow или поставь defaultMode='default'.",
     "defaultMode": "dontAsk",
-    "allowedTools": []
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Grep(*)",
+      "Glob(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Agent(*)",
+      "mcp__*"
+    ]
   },
   "hooks": {},
   "agentSubpaths": [
