@@ -7,6 +7,8 @@
     "email": "__USER_EMAIL__"
   },
   "permissions": {
+    "_comment_mode": "defaultMode=dontAsk — VS Code/CLI-сессии не спрашивают разрешение на каждый шаг (как на боевом сервере). Хочешь строже — поменяй на 'default' (спрашивать) или 'acceptEdits' (молча только правки файлов).",
+    "defaultMode": "dontAsk",
     "allowedTools": []
   },
   "hooks": {},
