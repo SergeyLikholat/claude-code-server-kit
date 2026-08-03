@@ -10,11 +10,14 @@
 const { readFileSync, statSync, existsSync } = require('fs')
 const { sessionJsonlPath } = require('./dispatch')
 const bridge = require('./bridge')
+const modelMod = require('./model')
 
 const AVAILABLE_COMMANDS = [
   '/help', '/status', '/digest', '/reset', '/rollback',
   // bridge:
   '/list', '/connect', '/disconnect',
+  // model control:
+  '/model',
 ]
 
 function isCommand(text) {
@@ -52,16 +55,39 @@ function cmdHelp(isBridge) {
     '/digest — сгенерировать дайджест (без ротации)',
     '/reset — ротировать сессию (дайджест + чистая сессия)',
     '/rollback — откатить на предыдущую сессию',
+    '/model — показать/сменить модель для этого топика',
     '/help — эта справка',
   ]
   if (isBridge) {
     lines.push('')
-    lines.push('VS Code Bridge:')
+    lines.push(`${bridge.BRIDGE_LABEL}:`)
     lines.push('/list — показать последние сессии Claude Code')
     lines.push('/connect <N|prefix> — подключить топик к выбранной сессии')
     lines.push('/disconnect — отключить топик от сессии')
   }
   return lines.join('\n')
+}
+
+// One-line model summary appended to /status so the active model is never a
+// mystery — that opacity is what let a topic burn limits on the wrong model.
+function modelStatusLine(topic, ctx) {
+  const sessionId = activeSessionId(topic, ctx)
+  if (!sessionId) return null
+  const d = modelMod.describe(sessionId, sessionJsonlPathFor(topic, ctx, sessionId))
+  const eff = d.effective || 'дефолт CLI'
+  return `• модель: ${eff} (${d.note}) — сменить: /model`
+}
+
+// JSONL path for the session a topic drives — needed to read the VS Code model.
+function sessionJsonlPathFor(topic, ctx, sessionId) {
+  let projectDir = topic.project_dir || '/root'
+  if (topic.mode === 'vscode_bridge') {
+    const chatId = ctx?.chat?.id != null ? String(ctx.chat.id) : null
+    const threadId = ctx?.message?.message_thread_id ?? null
+    const st = chatId ? bridge.getBridge(chatId, threadId) : null
+    if (st) projectDir = st.project_dir || projectDir
+  }
+  return sessionJsonlPath(projectDir, sessionId)
 }
 
 function cmdStatus(topic, ctx) {
@@ -72,24 +98,25 @@ function cmdStatus(topic, ctx) {
     const state = chatId ? bridge.getBridge(chatId, threadId) : null
     if (!state) {
       return [
-        '🔌 **VS Code Live** — статус: не подключено',
+        `🔌 **${bridge.BRIDGE_LABEL}** — статус: не подключено`,
         '',
         'Используй `/list` для списка сессий, потом `/connect <N>` для подключения.',
       ].join('\n')
     }
     const jsonl = sessionJsonlPath(state.project_dir, state.session_id)
     if (!existsSync(jsonl)) {
-      return `🔌 **VS Code Live** — подключено к \`${state.session_id.slice(0, 8)}\`, но JSONL-файл не найден. Возможно сессия была удалена. Попробуй \`/list\` и переподключи.`
+      return `🔌 **${bridge.BRIDGE_LABEL}** — подключено к \`${state.session_id.slice(0, 8)}\`, но JSONL-файл не найден. Возможно сессия была удалена. Попробуй \`/list\` и переподключи.`
     }
     const size = statSync(jsonl).size
     const turns = countLines(jsonl)
     return [
-      `🟢 **VS Code Live** — подключено`,
+      `🟢 **${bridge.BRIDGE_LABEL}** — подключено`,
       `• session: \`${state.session_id}\``,
       `• project: ${state.project_dir}`,
       `• размер: ${humanBytes(size)} · turns: ${turns}`,
       `• подключено с: ${state.connected_at}`,
-    ].join('\n')
+      modelStatusLine(topic, ctx),
+    ].filter(Boolean).join('\n')
   }
   // Standard status for non-bridge topics
   const jsonl = sessionJsonlPath(topic.project_dir, topic.session_id)
@@ -110,7 +137,8 @@ function cmdStatus(topic, ctx) {
     `• turns: ${turns}`,
     `• session_id: ${topic.session_id}`,
     `• последний digest: ${lastDigest}`,
-  ].join('\n')
+    modelStatusLine(topic, ctx),
+  ].filter(Boolean).join('\n')
 }
 
 function cmdList(topic, args) {
@@ -147,7 +175,7 @@ function cmdConnect(topic, ctx, args) {
   const chatId = String(ctx.chat.id)
   const threadId = ctx.message.message_thread_id ?? null
   bridge.setBridge(chatId, threadId, s.session_id, s.cwd)
-  const title = s.ai_title || s.project_slug || s.session_id.slice(0, 8)
+  const title = s.custom_title || s.ai_title || s.project_slug || s.session_id.slice(0, 8)
   const titleHtml = String(title).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return {
     text: [
@@ -181,6 +209,84 @@ function cmdNotImpl(name) {
   return `🚧 \`${name}\` пока не подключён. В ближайшей итерации будет.`
 }
 
+function activeSessionId(topic, ctx) {
+  if (topic.mode === 'vscode_bridge') {
+    const chatId = ctx?.chat?.id != null ? String(ctx.chat.id) : null
+    if (!chatId) return null
+    const threadId = ctx?.message?.message_thread_id ?? null
+    const state = bridge.getBridge(chatId, threadId)
+    return state ? state.session_id : null
+  }
+  return topic.session_id || null
+}
+
+// /model — inspect or pin the model for the SESSION this topic is driving.
+//   /model              → current setting + picker buttons
+//   /model <id>         → pin for this session
+//   /model auto         → let the CLI resolve (the old, drifty behavior)
+//   /model default      → drop the session pin, follow the global default
+//   /model global <id>  → change the global default for unpinned sessions
+function cmdModel(topic, ctx, args) {
+  const sub = (args[0] || '').toLowerCase()
+
+  if (sub === 'global') {
+    const target = args[1]
+    if (!target) return '⚠️ укажи модель: <code>/model global claude-opus-5</code>'
+    modelMod.setGlobalDefault(target)
+    return `🌐 Глобальный дефолт: <b>${modelMod.labelFor(target)}</b> (<code>${target}</code>)\n\nСессии без своей настройки теперь используют её.`
+  }
+
+  const sessionId = activeSessionId(topic, ctx)
+  if (!sessionId) {
+    return [
+      '⚠️ Топик не привязан к сессии — не к чему привязывать модель.',
+      '',
+      'Сначала <code>/list</code> и <code>/connect &lt;N&gt;</code>.',
+      'Сменить глобальный дефолт можно и так: <code>/model global &lt;id&gt;</code>.',
+    ].join('\n')
+  }
+  const short = sessionId.slice(0, 8)
+
+  if (sub === 'default' || sub === 'reset') {
+    modelMod.clearModel(sessionId)
+    const eff = modelMod.getModelSetting(sessionId)
+    return `↩️ Настройка сессии <code>${short}</code> снята. Действует глобальный дефолт: <b>${modelMod.labelFor(eff)}</b> (<code>${eff}</code>)`
+  }
+
+  if (sub) {
+    const target = args[0]
+    modelMod.setModel(sessionId, target)
+    const note = modelMod.MODEL_CHOICES.some(m => m.id === target)
+      ? ''
+      : '\n\n⚠️ Модель не из известного списка — если id неверный, воркер упадёт при следующем сообщении.'
+    return `✅ Сессия <code>${short}</code> → <b>${modelMod.labelFor(target)}</b> (<code>${target}</code>)${note}`
+  }
+
+  // No args — show current state and a picker.
+  const current = modelMod.getModelSetting(sessionId)
+  const isOwn = modelMod.hasOverride(sessionId)
+  const d = modelMod.describe(sessionId, sessionJsonlPathFor(topic, ctx, sessionId))
+  const lines = [
+    '<b>Модель этой сессии</b>',
+    '',
+    `• сессия: <code>${short}</code>`,
+    `• режим: <b>${modelMod.labelFor(current)}</b>`,
+    `• применяется: <code>${d.effective || 'дефолт CLI'}</code> — ${d.note}`,
+    `• источник: ${isOwn ? 'закреплено за сессией' : 'глобальный дефолт'}`,
+    `• глобальный дефолт: <code>${modelMod.getGlobalDefault()}</code>`,
+  ]
+  if (current === modelMod.FOLLOW) {
+    lines.push('', 'Режим <b>Как в VS Code</b>: беру модель последнего ответа VS Code в этой сессии. Переключил на компьютере — Telegram подхватит после первого ответа там.')
+  } else {
+    lines.push('', 'Настройка живёт на сессии — переключишь топик на другую, у неё будет своя.')
+  }
+  lines.push('', 'Выбери модель или вернись назад.')
+  if (current === modelMod.AUTO) {
+    lines.push('', '⚠️ Режим <code>auto</code> — модель выбирает CLI, она может меняться сама.')
+  }
+  return { text: lines.join('\n'), reply_markup: modelMod.buildPickerKeyboard(sessionId) }
+}
+
 // Main entry called from index.js dispatch pipeline.
 // Returns { handled, reply } — if handled, caller skips worker spawn.
 // New deps: ctx (Telegram context, needed by bridge commands for chat/thread IDs)
@@ -199,6 +305,7 @@ function runCommand(text, topic, deps = {}) {
       case '/list':       reply = cmdList(topic, args); break
       case '/connect':    reply = cmdConnect(topic, ctx, args); break
       case '/disconnect': reply = cmdDisconnect(topic, ctx); break
+      case '/model':      reply = cmdModel(topic, ctx, args); break
       default: return { handled: false }
     }
   } catch (err) {

@@ -52,7 +52,7 @@ if [ "${1:-}" = "--rollback" ]; then
   else
     RB_STATE="/root/.claude/channels/telegram"; RB_SVC="tg-router.service"
   fi
-  for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+  for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
     [ -f "$LIVE_DIR_DEF/$f.bak.$RB_TS" ] && cp "$LIVE_DIR_DEF/$f.bak.$RB_TS" "$LIVE_DIR_DEF/$f"
   done
   [ -f "$RB_STATE/routing.json.bak.$RB_TS" ] && cp "$RB_STATE/routing.json.bak.$RB_TS" "$RB_STATE/routing.json"
@@ -92,14 +92,14 @@ elif [ -f "$(dirname "$0")/bridge.js" ]; then
 else
   SRC_DIR="$(mktemp -d)"
   log "Источник: GitHub ($GH_RAW_BASE)"
-  for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+  for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
     curl -fsSL "$GH_RAW_BASE/$f" -o "$SRC_DIR/$f" || fail "Не скачался $f"
   done
 fi
 log "Источник кода: $SRC_DIR"
 
 # ── Pre-flight syntax ──────────────────────────────────────────────────────
-for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
   [ -f "$SRC_DIR/$f" ] || fail "Нет $SRC_DIR/$f"
   node -c "$SRC_DIR/$f" || fail "Битый JS: $SRC_DIR/$f"
 done
@@ -107,7 +107,7 @@ ok "Файлы роутера валидны"
 
 # ── Бэкап + раскатка кода ──────────────────────────────────────────────────
 log "Бэкап текущего кода (.bak.$TS) и раскатка"
-for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
   [ -f "$LIVE_DIR/$f" ] && cp "$LIVE_DIR/$f" "$LIVE_DIR/$f.bak.$TS"
   install -m 0644 "$SRC_DIR/$f" "$LIVE_DIR/$f"
 done
@@ -167,7 +167,7 @@ ${C_G}=== Bot-bridge установлен для $TG_USER ===${C_N}
 EOF
 else
   warn "$SVC не поднялся — авто-откат"
-  for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+  for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
     [ -f "$LIVE_DIR/$f.bak.$TS" ] && cp "$LIVE_DIR/$f.bak.$TS" "$LIVE_DIR/$f"
   done
   [ -f "$ROUTING.bak.$TS" ] && cp "$ROUTING.bak.$TS" "$ROUTING"

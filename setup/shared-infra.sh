@@ -80,8 +80,8 @@ if [ ! -d "$ROUTER_DIR" ]; then
   log "Код роутера → $ROUTER_DIR"
 else
   log "$ROUTER_DIR уже существует — обновляю код (кроме node_modules)"
-  for f in *.js package.json; do
-    cp "$KIT_DIR/tools/claude-telegram-router/$f" "$ROUTER_DIR/$f" 2>/dev/null || true
+  for f in "$KIT_DIR/tools/claude-telegram-router"/*.js "$KIT_DIR/tools/claude-telegram-router/package.json"; do
+    [ -f "$f" ] && cp "$f" "$ROUTER_DIR/$(basename "$f")" 2>/dev/null || true
   done
 fi
 ensure_node

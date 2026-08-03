@@ -77,7 +77,7 @@ elif [ -f "$(dirname "$0")/bridge.js" ]; then
 else
   SRC_DIR="$(mktemp -d)"
   log "Источник: GitHub ($GH_RAW_BASE)"
-  for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+  for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
     log "  Качаю $f"
     curl -fsSL "$GH_RAW_BASE/$f" -o "$SRC_DIR/$f" || fail "Не скачался $f"
   done
@@ -85,7 +85,7 @@ fi
 
 # Pre-flight: syntax check всех новых файлов
 log "Проверяю синтаксис новых файлов"
-for f in bridge.js commands.js index.js dispatch.js transcribe.js; do
+for f in bridge.js commands.js index.js dispatch.js transcribe.js model.js; do
   [ -f "$SRC_DIR/$f" ] || fail "Не найден $SRC_DIR/$f"
   node -c "$SRC_DIR/$f" || fail "Битый JS: $SRC_DIR/$f"
 done

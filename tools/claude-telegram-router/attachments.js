@@ -1,7 +1,7 @@
 // Download attachments from Telegram + downscale oversized images.
 // Ported from plugin server.ts resizeIfLarge() (uses ffprobe+ffmpeg).
 
-const { mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } = require('fs')
+const { mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, existsSync } = require('fs')
 const { join } = require('path')
 const { spawnSync } = require('child_process')
 const { STATE_DIR } = require('./access')
@@ -72,10 +72,55 @@ async function handlePhoto(bot, ctx) {
   return { kind: 'photo', path, file_id: best.file_id }
 }
 
+// Транскрипция голосовых/аудио. Два режима, чтобы работали обе схемы установки:
+//   1. PARAKEET_URL задан → HTTP-запрос к parakeet-server (модуль parakeet
+//      прописывает эту переменную в .env роутера автоматически);
+//   2. иначе → прямой вызов локального скрипта PARAKEET_SCRIPT
+//      (по умолчанию /opt/parakeet/transcribe.py, ставится тем же модулем).
+// Возвращает текст или null — при null upstream отдаёт Claude сам файл.
+const PARAKEET_SCRIPT = process.env.PARAKEET_SCRIPT || '/opt/parakeet/transcribe.py'
+
+function transcribeLocal(path) {
+  try {
+    const res = spawnSync('python3', [PARAKEET_SCRIPT, path],
+      { encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
+    if (res.status !== 0) {
+      process.stderr.write(`tg-router: transcribe failed (exit ${res.status}): ${(res.stderr || '').slice(-300)}\n`)
+      return null
+    }
+    const text = String(res.stdout || '').trim()
+    return text || null
+  } catch (err) {
+    process.stderr.write(`tg-router: transcribe error: ${err.message}\n`)
+    return null
+  }
+}
+
+async function transcribe(path) {
+  const { transcribeIfConfigured, PARAKEET_URL } = require('./transcribe')
+  if (PARAKEET_URL) {
+    const viaHttp = await transcribeIfConfigured(path)
+    if (viaHttp) return viaHttp
+    // сервер не ответил — пробуем локальный скрипт, если он на месте
+  }
+  if (!existsSync(PARAKEET_SCRIPT)) return null
+  return transcribeLocal(path)
+}
+
 async function handleVoice(bot, ctx) {
   const v = ctx.message.voice
   const path = await downloadToInbox(bot, v.file_id, 'oga')
-  return { kind: 'voice', path, file_id: v.file_id, mime: v.mime_type }
+  // Pre-transcribe so Claude receives plain text instead of an unprocessed file
+  // reference (saves context, no need for Claude to call download_attachment).
+  const transcript = await transcribe(path)
+  return { kind: 'voice', path, file_id: v.file_id, mime: v.mime_type, transcript }
+}
+
+async function handleAudioWithTranscript(bot, ctx) {
+  const a = ctx.message.audio
+  const path = await downloadToInbox(bot, a.file_id, 'mp3')
+  const transcript = await transcribe(path)
+  return { kind: 'audio', path, file_id: a.file_id, mime: a.mime_type, transcript }
 }
 
 async function handleDocument(bot, ctx) {
@@ -88,7 +133,8 @@ async function handleDocument(bot, ctx) {
 async function handleAudio(bot, ctx) {
   const a = ctx.message.audio
   const path = await downloadToInbox(bot, a.file_id, 'mp3')
-  return { kind: 'audio', path, file_id: a.file_id, mime: a.mime_type }
+  const transcript = await transcribe(path)
+  return { kind: 'audio', path, file_id: a.file_id, mime: a.mime_type, transcript }
 }
 
 async function handleVideo(bot, ctx) {

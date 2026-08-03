@@ -18,6 +18,15 @@ RuntimeDirectory=__RUNTIME_DIR__
 RuntimeDirectoryMode=0700
 
 Environment=NODE_ENV=production
+
+# --- необязательные переменные (дефолты выводятся из TELEGRAM_STATE_DIR) ---
+# Environment=TG_MODEL_STATE_FILE=<state>/model.json      # выбор модели по сессии
+# Environment=TG_BRIDGE_STATE_FILE=<state>/vscode_bridge.json
+# Environment=TG_ROUTING_FILES=<state>/routing.json       # какие таблицы читает /list
+# Environment=TG_SESSIONS_INCLUDE_PREFIX=                 # ограничить область /list
+# Environment=TG_SESSIONS_EXCLUDE_PREFIX=
+# Environment=TG_BRIDGE_LABEL=Беседы                      # как назван bridge-режим в текстах
+# Environment=PARAKEET_SCRIPT=/opt/parakeet/transcribe.py # локальная транскрипция
 EnvironmentFile=-__ENV_FILE__
 
 StandardOutput=journal

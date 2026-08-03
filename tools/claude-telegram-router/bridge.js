@@ -6,18 +6,54 @@
 // We extract real cwd from the first JSONL line (each session writes a header
 // record with cwd / timestamp / version).
 //
-// State persists in /root/.claude/channels/telegram/vscode_bridge.json as:
+// State persists in <STATE_DIR>/vscode_bridge.json as:
 //   { "<chat_id>:<thread_id>": { session_id, project_dir, connected_at } }
+//
+// Everything user-specific here (state file, which sessions are visible, whose
+// routing tables are consulted) resolves from env, so a second router instance
+// serving a DIFFERENT person shares no state with this one. Defaults assume a single-user install (one router, one bot).
 
 const { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } = require('fs')
 const { join, dirname } = require('path')
 const { homedir } = require('os')
+const modelMod = require('./model')
+const { STATE_DIR } = require('./access')
 
 const SESSIONS_ROOT = join(homedir(), '.claude', 'projects')
-// Per-topic delivery/bridge state. Derived from the same TELEGRAM_STATE_DIR as
-// access.js so multi-user (per-Unix-user) instances each get their own file.
-const STATE_DIR = process.env.TELEGRAM_STATE_DIR || join(homedir(), '.claude', 'channels', 'telegram')
-const STATE_FILE = join(STATE_DIR, 'vscode_bridge.json')
+const STATE_FILE = process.env.TG_BRIDGE_STATE_FILE || join(STATE_DIR, 'vscode_bridge.json')
+
+// Session visibility scope for /list. Both are CSV lists of path prefixes,
+// matched against the session cwd and its slug form.
+//   TG_SESSIONS_INCLUDE_PREFIX — whitelist; empty = "everything not excluded"
+//   TG_SESSIONS_EXCLUDE_PREFIX — blacklist; empty by default (single-user install)
+function envPrefixList(name, fallback) {
+  const raw = process.env[name]
+  const src = raw === undefined ? fallback : raw
+  return String(src).split(',').map(s => s.trim()).filter(Boolean)
+}
+
+const SESSIONS_INCLUDE = envPrefixList('TG_SESSIONS_INCLUDE_PREFIX', '')
+const SESSIONS_EXCLUDE = envPrefixList('TG_SESSIONS_EXCLUDE_PREFIX', '')
+
+// Как называется этот режим в текстах для пользователя. Если топик привязан
+// к живой VS Code-сессии — «VS Code Live»; если VS Code нет — уместнее «Беседы».
+const BRIDGE_LABEL = process.env.TG_BRIDGE_LABEL || 'VS Code Live'
+
+// Slug form of a path prefix — claude-code replaces every non-alphanumeric char
+// with '-', so a prefix match on the slug also catches sessions whose JSONL
+// header carries no cwd and only the directory name is known.
+function slugPrefix(p) {
+  return String(p).replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+function isSessionInScope(s) {
+  const cwd = String(s.cwd || '')
+  const slug = String(s.slug || '')
+  const matches = (p) => cwd.startsWith(p) || slug.startsWith(slugPrefix(p))
+  if (SESSIONS_INCLUDE.length && !SESSIONS_INCLUDE.some(matches)) return false
+  if (SESSIONS_EXCLUDE.some(matches)) return false
+  return true
+}
 
 // ---- Sessions registry scanner ----
 
@@ -41,11 +77,12 @@ function readSessionMeta(jsonlPath) {
         if (!meta.timestamp && obj.timestamp) meta.timestamp = obj.timestamp
         if (!meta.version && obj.version) meta.version = obj.version
         if (obj.type === 'ai-title' && obj.aiTitle) meta.aiTitle = obj.aiTitle
-        if (meta.cwd && meta.slug && meta.entrypoint && meta.aiTitle) break
+        if (obj.type === 'custom-title' && obj.customTitle) meta.customTitle = obj.customTitle
+        if (meta.cwd && meta.slug && meta.entrypoint && meta.aiTitle && meta.customTitle) break
       }
-      // 2) If no aiTitle found in head, scan last ~256 KB — VS Code appends
-      //    ai-title records over the session lifetime, latest one wins.
-      if (!meta.aiTitle) {
+      // 2) If no title found in head, scan last ~256 KB — VS Code appends
+      //    ai-title / custom-title records over the session lifetime, latest wins.
+      if (!meta.aiTitle || !meta.customTitle) {
         const stat = fsmod.fstatSync(fd)
         const tailSize = Math.min(262144, stat.size)
         if (tailSize > headN) {  // only worth tailing if there's content beyond head
@@ -53,18 +90,19 @@ function readSessionMeta(jsonlPath) {
           const tailStart = stat.size - tailSize
           const tailN = fsmod.readSync(fd, tailBuf, 0, tailSize, tailStart)
           const tail = tailBuf.slice(0, tailN).toString('utf8')
-          // Find latest ai-title record by scanning all matches.
+          // Find latest ai-title / custom-title records by scanning backwards.
           const lines = tail.split('\n')
           for (let i = lines.length - 1; i >= 0; i--) {
             const line = lines[i]
-            if (!line.includes('"type":"ai-title"')) continue
+            const isAi = !meta.aiTitle && line.includes('"type":"ai-title"')
+            const isCustom = !meta.customTitle && line.includes('"type":"custom-title"')
+            if (!isAi && !isCustom) continue
             try {
               const obj = JSON.parse(line)
-              if (obj.type === 'ai-title' && obj.aiTitle) {
-                meta.aiTitle = obj.aiTitle
-                break
-              }
+              if (isAi && obj.type === 'ai-title' && obj.aiTitle) meta.aiTitle = obj.aiTitle
+              if (isCustom && obj.type === 'custom-title' && obj.customTitle) meta.customTitle = obj.customTitle
             } catch {}
+            if (meta.aiTitle && meta.customTitle) break
           }
         }
       }
@@ -127,7 +165,8 @@ function scanSessions(limitOrOpts = {}) {
           cwd: meta.cwd || slugToCwdGuess(slug),
           project_slug: meta.slug,
           entrypoint: meta.entrypoint,
-          ai_title: meta.aiTitle,        // VS Code Sidebar title (e.g. "Plan n8n stylist editor refactoring")
+          ai_title: meta.aiTitle,        // VS Code Sidebar auto-title (e.g. "Plan n8n stylist editor refactoring")
+          custom_title: meta.customTitle, // manual rename from the VS Code Sidebar — wins over ai_title
           size_bytes: st.size,
           mtime_ms: st.mtimeMs,
         })
@@ -143,6 +182,10 @@ function scanSessions(limitOrOpts = {}) {
   if (excludeAgents) {
     filtered = filtered.filter(s => !isAgentSession(s))
   }
+  // Показывать только рабочие пространства ЭТОГО пользователя. При одном
+  // роутере фильтр пустой; при нескольких — задаётся через
+  // TG_SESSIONS_INCLUDE_PREFIX / TG_SESSIONS_EXCLUDE_PREFIX.
+  filtered = filtered.filter(isSessionInScope)
   return filtered.slice(0, limit)
 }
 
@@ -191,6 +234,66 @@ function humanBytes(n) {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+// Model context limits in tokens. Sonnet 4.x and Opus 4.x = 1M; Haiku 4.x = 200K.
+function getModelLimit(modelName) {
+  if (!modelName) return 1_000_000
+  const m = modelName.toLowerCase()
+  if (m.includes('haiku')) return 200_000
+  return 1_000_000
+}
+
+// Read the last assistant `usage` block from the JSONL — this is the authoritative
+// metric Claude itself reports for the conversation's working-context size.
+// Returns null if no assistant message with usage exists yet.
+function getSessionContextUsage(jsonlPath) {
+  const fs = require('fs')
+  try {
+    const stat = fs.statSync(jsonlPath)
+    // Scan last ~512KB — recent assistant messages live near the end.
+    const tailSize = Math.min(512 * 1024, stat.size)
+    const fd = fs.openSync(jsonlPath, 'r')
+    let tail
+    try {
+      const buf = Buffer.alloc(tailSize)
+      const n = fs.readSync(fd, buf, 0, tailSize, stat.size - tailSize)
+      tail = buf.slice(0, n).toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
+    const lines = tail.split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line.includes('"usage"')) continue
+      if (!line.includes('"type":"assistant"')) continue
+      try {
+        const obj = JSON.parse(line)
+        const usage = obj.message?.usage
+        if (!usage) continue
+        const input = usage.input_tokens || 0
+        const cacheRead = usage.cache_read_input_tokens || 0
+        const cacheCreate = usage.cache_creation_input_tokens || 0
+        const total = input + cacheRead + cacheCreate
+        if (total === 0) continue
+        const model = obj.message?.model
+        const limit = getModelLimit(model)
+        const percent = Math.round((total / limit) * 100)
+        return { tokens: total, limit, percent, model }
+      } catch {}
+    }
+    return null
+  } catch { return null }
+}
+
+// Visual context-usage tier — based on actual tokens reported by Anthropic API.
+// Mirrors VS Code Claude's own "context too full, /compact?" hint.
+function contextUsageTier(percent) {
+  if (percent == null)      return { emoji: '⚪', label: 'unknown', needsCompact: false }
+  if (percent < 50)         return { emoji: '🟢', label: 'lite', needsCompact: false }
+  if (percent < 70)         return { emoji: '🟡', label: 'warm', needsCompact: false }
+  if (percent < 85)         return { emoji: '🟠', label: 'high', needsCompact: false }
+  return { emoji: '🔴', label: 'critical', needsCompact: true }
+}
+
 function relTime(ms) {
   const s = Math.floor((Date.now() - ms) / 1000)
   if (s < 60) return `${s}с`
@@ -207,30 +310,27 @@ function projectShortName(cwd) {
 
 // ---- Session display name: prefer routing.json mapping, then JSONL preview ----
 
-// Routing-файлы, из которых вытаскиваем session_id уже занятых TG-топиков
-// (чтобы /list скрывал их из общего списка VS Code сессий).
-//
-// Дефолт — основной + опциональный второй бот.
-// Перекрыть можно через env TG_ROUTING_FILES (запятая-разделённый список):
-//   TG_ROUTING_FILES=/root/.claude/channels/telegram/routing.json,/path/to/other.json
-//
-// Owner-метка для отображения в /list берётся из routing.json (поле ux.owner),
-// иначе из basename каталога файла (telegram → "telegram", telegram2 → ...).
-// Без хардкода личных имён.
-const TG_ROUTING_FILES = (process.env.TG_ROUTING_FILES || [
-  '/root/.claude/channels/telegram/routing.json',
-  '/root/.claude/channels/telegram2/routing.json',
-].join(',')).split(',').filter(Boolean).map(p => ({ path: p.trim() }))
+// Routing tables consulted to label a session as "already owned by a TG topic".
+// Format: CSV of "path:owner". Each router should list only the tables whose
+// topic names its own user is allowed to see — otherwise /list leaks another
+// person's topic names.
+const TG_ROUTING_FILES = (
+  process.env.TG_ROUTING_FILES ||
+  join(homedir(), '.claude', 'channels', 'telegram', 'routing.json')
+)
+  .split(',')
+  .map(entry => entry.trim())
+  .filter(Boolean)
+  .map(entry => {
+    const idx = entry.lastIndexOf(':')
+    return idx > 0
+      ? { path: entry.slice(0, idx), owner: entry.slice(idx + 1) }
+      : { path: entry, owner: '?' }
+  })
 
 let _routingCache = null
 let _routingCacheAt = 0
 const ROUTING_CACHE_TTL_MS = 60 * 1000
-
-function ownerFromPath(p) {
-  // /root/.claude/channels/telegram/routing.json → "telegram"
-  const m = p.match(/\/channels\/([^/]+)\//)
-  return m ? m[1] : 'bot'
-}
 
 function loadAllRoutingsMap() {
   const now = Date.now()
@@ -239,13 +339,12 @@ function loadAllRoutingsMap() {
   for (const r of TG_ROUTING_FILES) {
     try {
       const data = JSON.parse(readFileSync(r.path, 'utf8'))
-      const owner = data.ux?.owner || ownerFromPath(r.path)
       if (data.general?.session_id) {
-        map[data.general.session_id] = { name: 'General', owner }
+        map[data.general.session_id] = { name: 'General', owner: r.owner }
       }
       for (const [thread, t] of Object.entries(data.topics || {})) {
         if (!t.session_id || t.session_id === '_BRIDGE_PLACEHOLDER_') continue
-        map[t.session_id] = { name: t.name || `Topic ${thread}`, owner }
+        map[t.session_id] = { name: t.name || `Topic ${thread}`, owner: r.owner }
       }
     } catch {}
   }
@@ -317,8 +416,13 @@ function sessionDisplayName(session) {
     const r = map[sessionId]
     return `${r.name} (TG/${r.owner})`
   }
-  // Priority: ai-title (matches VS Code Sidebar) > project_slug > cwd basename
+  // Priority: custom-title > ai-title > project_slug > cwd basename.
+  // custom-title first so a manual rename in the VS Code Sidebar shows up here
+  // too — otherwise the same session carries two different names in two lists.
   const emoji = pickEmoji(session)
+  if (session.custom_title) {
+    return `${emoji} ${session.custom_title}`
+  }
   if (session.ai_title) {
     return `${emoji} ${session.ai_title}`
   }
@@ -349,7 +453,7 @@ function escapeHtml(s) {
 // opts: { page: number (1-based), perPage: number, totalCount: number, indexOffset: number }
 function formatSessionsList(sessions, opts = {}) {
   if (sessions.length === 0) {
-    return 'Нет VS Code сессий в <code>~/.claude/projects/</code> (TG-сессии скрыты).'
+    return `Нет доступных сессий «${BRIDGE_LABEL}» (сессии, уже привязанные к топикам, скрыты).`
   }
   const map = loadAllRoutingsMap()
   const page = opts.page || 1
@@ -358,23 +462,35 @@ function formatSessionsList(sessions, opts = {}) {
   const indexOffset = opts.indexOffset || 0
   const totalPages = Math.max(1, Math.ceil(totalCount / perPage))
   const lines = []
-  lines.push(`<b>VS Code сессии</b> · стр. ${page}/${totalPages} · всего: ${totalCount}`)
+  lines.push(`<b>Сессии · ${BRIDGE_LABEL}</b> · стр. ${page}/${totalPages} · всего: ${totalCount}`)
   lines.push('')
+  // Each session is one <blockquote> card: title in regular font, metrics in
+  // monospace <code>. Separators between cards are plain unicode lines.
+  const SEPARATOR = '─────────'
   sessions.forEach((s, i) => {
-    const name = escapeHtml(sessionDisplayName(s))
+    const name = sessionDisplayName(s)
     const absIdx = indexOffset + i + 1
-    lines.push(`<b>${absIdx}.</b> ${name}`)
-    // Preview only when there's no ai-title and no claude-mem slug.
-    if (!s.ai_title && !s.project_slug) {
+    if (i > 0) lines.push(SEPARATOR)
+    const blockLines = []
+    blockLines.push(`${escapeHtml(`${absIdx}. ${name}`)}`)
+    if (!s.custom_title && !s.ai_title && !s.project_slug) {
       const jsonlPath = require('path').join(require('os').homedir(), '.claude', 'projects', s.slug, `${s.session_id}.jsonl`)
       const preview = readFirstUserPreview(jsonlPath, 131072)
       if (preview) {
-        lines.push(`   <i>"${escapeHtml(preview)}"</i>`)
+        blockLines.push(escapeHtml(`"${preview}"`))
       }
     }
-    // Hide cwd if /root (it's the default), otherwise show it.
-    const cwdShown = (s.cwd && s.cwd !== '/root') ? `<code>${escapeHtml(s.cwd)}</code> · ` : ''
-    lines.push(`   ${cwdShown}${humanBytes(s.size_bytes)} · ${relTime(s.mtime_ms)} назад`)
+    const cwdShown = (s.cwd && s.cwd !== '/root') ? `${s.cwd} · ` : ''
+    const jsonlPath = require('path').join(require('os').homedir(), '.claude', 'projects', s.slug, `${s.session_id}.jsonl`)
+    const usage = getSessionContextUsage(jsonlPath)
+    const tier = contextUsageTier(usage?.percent)
+    // Show the model only when the session is explicitly pinned — sessions on
+    // the global default stay quiet so the list doesn't turn into noise.
+    const modelBadge = modelMod.badgeFor(s.session_id)
+    const modelPart = modelBadge ? `🧠 ${modelBadge} · ` : ''
+    const metricsText = `${tier.emoji} ${cwdShown}${modelPart}${usage ? `${usage.percent}% · ` : ''}${humanBytes(s.size_bytes)} · ${relTime(s.mtime_ms)} назад`
+    blockLines.push(`<code>${escapeHtml(metricsText)}</code>`)
+    lines.push(`<blockquote>${blockLines.join('\n')}</blockquote>`)
   })
   lines.push('')
   lines.push(`Подключиться: <code>/connect &lt;N&gt;</code> или <code>/connect &lt;prefix&gt;</code>`)
@@ -475,9 +591,10 @@ function buildConnectedKeyboard() {
     inline_keyboard: [
       [{ text: '📥 Свежий ответ', callback_data: 'quick:pull' }],
       [
-        { text: '📋 Сменить',  callback_data: 'quick:list' },
-        { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
+        { text: '📋 Сменить', callback_data: 'quick:list' },
+        { text: '🧠 Модель',  callback_data: 'model:__show' },
       ],
+      [{ text: '⏹ Отвязать', callback_data: 'quick:disconnect' }],
     ],
   }
 }
@@ -506,6 +623,40 @@ function extractAssistantText(obj) {
     }
   }
   return out
+}
+
+// Assistant text records that are runtime artifacts, not something the user
+// should ever see in Telegram:
+//   - no-op fillers a turn emits when it has nothing to say
+//   - raw API/transport errors — closeStatus() already surfaces these as a
+//     human-readable notice, so forwarding them duplicates the message
+//   - interrupt markers
+// Skipping these is what keeps "nothing to report" turns silent instead of
+// posting 'No response requested.' into the topic.
+const INTERNAL_ARTIFACT_PATTERNS = [
+  /^no response (requested|needed)\.?$/i,
+  /^\(?\s*no response\s*\)?\.?$/i,
+  /^api error:/i,
+  /^\[?request interrupted/i,
+  /^execution error\b/i,
+  /^\(no content\)$/i,
+]
+
+function isInternalArtifact(text) {
+  const t = String(text || '').trim()
+  if (!t) return true
+  return INTERNAL_ARTIFACT_PATTERNS.some((re) => re.test(t))
+}
+
+// Distinguish artifact kinds. 'api_error' is filtered from the chat like the
+// rest, but it is *signal*, not noise — the caller has to make sure the user
+// still learns that Anthropic failed, just without the raw duplicate.
+function artifactKind(text) {
+  const t = String(text || '').trim()
+  if (!t) return 'empty'
+  if (/^api error:/i.test(t)) return 'api_error'
+  if (!isInternalArtifact(t)) return null
+  return 'noop'
 }
 
 // Find the latest assistant message with textual content in the JSONL.
@@ -552,6 +703,10 @@ function findLastAssistantMessage(jsonlPath) {
       if (obj.type !== 'assistant') continue
       const text = extractAssistantText(obj)
       if (!text) continue
+      // Keep scanning past runtime artifacts. If the turn produced nothing but
+      // artifacts we land on an older real message, whose uuid then matches
+      // last_pulled_uuid — so the caller stays silent rather than posting noise.
+      if (isInternalArtifact(text)) continue
       lastAssistantIdx = i
       lastAssistantObj = obj
       lastAssistantText = text
@@ -580,6 +735,55 @@ function findLastAssistantMessage(jsonlPath) {
   } catch (err) {
     return { uuid: null, text: null, isStreaming: false, hasActivityAfter: false, error: err.message }
   }
+}
+
+// Collect assistant text records written at/after `sinceIso` that aren't in
+// `skipUuids`, oldest-first. Used to stream in-progress narration to Telegram
+// while a bridged worker is still running.
+//
+// The timestamp gate (not a uuid cursor) is deliberate: the tail-read window
+// may not reach the turn's first record on very large sessions, and a missing
+// cursor would otherwise dump the whole window.
+function findAssistantMessagesAfter(jsonlPath, sinceIso, skipUuids) {
+  const fsmod = require('fs')
+  const out = []
+  try {
+    const stat = fsmod.statSync(jsonlPath)
+    const sizeNow = stat.size
+    const tailSize = Math.min(2 * 1024 * 1024, sizeNow)
+    const fd = fsmod.openSync(jsonlPath, 'r')
+    let tail
+    try {
+      const buf = Buffer.alloc(tailSize)
+      const n = fsmod.readSync(fd, buf, 0, tailSize, sizeNow - tailSize)
+      tail = buf.slice(0, n).toString('utf8')
+    } finally {
+      fsmod.closeSync(fd)
+    }
+    // Drop a possibly-truncated first line when we didn't read from offset 0.
+    if (sizeNow > tailSize) {
+      const nl = tail.indexOf('\n')
+      if (nl >= 0) tail = tail.slice(nl + 1)
+    }
+    for (const line of tail.split('\n')) {
+      if (!line.includes('"type":"assistant"')) continue
+      let obj
+      try { obj = JSON.parse(line) } catch { continue }   // partial trailing write
+      if (obj.type !== 'assistant') continue
+      const uuid = obj.uuid
+      if (!uuid || (skipUuids && skipUuids.has(uuid))) continue
+      const ts = obj.timestamp
+      if (!ts || ts < sinceIso) continue
+      const text = extractAssistantText(obj)
+      if (!text) continue
+      // Return artifacts too, tagged — the caller drops noise but still has to
+      // react to 'api_error'. Filtering them out here would hide the failure.
+      out.push({ uuid, text, timestamp: ts, kind: artifactKind(text) })
+    }
+  } catch (err) {
+    return out
+  }
+  return out
 }
 
 // Convert Claude-style Markdown to Telegram HTML, safely handling code blocks
@@ -653,19 +857,10 @@ function markdownToTelegramHtml(input) {
 function setLastPulledUuid(chatId, threadId, uuid) {
   const state = readState()
   const key = bridgeKey(chatId, threadId)
-  // Create the key even for non-bridge topics — the per-topic state file now
-  // also tracks "last delivered assistant message" for the daemon auto-pull
-  // (which runs for EVERY topic, not just vscode_bridge ones).
-  if (!state[key]) state[key] = {}
+  if (!state[key]) return
   state[key].last_pulled_uuid = uuid
   state[key].last_pulled_at = new Date().toISOString()
   writeState(state)
-}
-
-// Last assistant-message uuid already delivered to this topic (any topic).
-function getLastPulledUuid(chatId, threadId) {
-  const state = readState()
-  return state[bridgeKey(chatId, threadId)]?.last_pulled_uuid || null
 }
 
 // Quick-action keyboard shown under "⚪ Отключено" message.
@@ -684,13 +879,52 @@ function buildDisconnectedKeyboard() {
 // Compact "floating control panel" shown at the bottom of the bridged topic
 // after every Claude turn — gives quick access to switch session or disconnect
 // without scrolling back up to the "🟢 Подключено" message.
-function buildControlPanelKeyboard() {
+function buildModelCardKeyboard() {
   return {
-    inline_keyboard: [[
-      { text: '📋 Сменить',  callback_data: 'quick:list' },
-      { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
-    ]],
+    inline_keyboard: [
+      [{ text: '🧠 Изменить модель', callback_data: 'model:__show' }],
+      [
+        { text: '📋 Сменить',      callback_data: 'quick:list' },
+        { text: '📥 Свежий ответ', callback_data: 'quick:pull' },
+      ],
+    ],
   }
+}
+
+// Percent of context used by a session, or null when it can't be determined.
+function sessionUsagePercent(sessionId, projectDir) {
+  if (!sessionId) return null
+  try {
+    const path = join(SESSIONS_ROOT, projectSlugFor(projectDir || '/root'), `${sessionId}.jsonl`)
+    const usage = getSessionContextUsage(path)
+    return usage ? usage.percent : null
+  } catch { return null }
+}
+
+function projectSlugFor(dir) {
+  return String(dir).replace(/[/_]/g, '-')
+}
+
+// Floating panel shown after every answer. Compact is a heavy, destructive
+// action — it only earns a slot once the context is actually filling up
+// (>=70%), otherwise it just crowds the panel on every single reply.
+function buildControlPanelKeyboard(sessionId = null, projectDir = null) {
+  const percent = sessionUsagePercent(sessionId, projectDir)
+  const rows = [
+    [
+      { text: '📋 Сменить', callback_data: 'quick:list' },
+      { text: '🧠 Модель',  callback_data: 'model:__show' },
+    ],
+  ]
+  if (percent != null && percent >= 70) {
+    rows.push([
+      { text: `🗜 Compact (${percent}%)`, callback_data: 'quick:compact' },
+      { text: '⏹ Отвязать',              callback_data: 'quick:disconnect' },
+    ])
+  } else {
+    rows.push([{ text: '⏹ Отвязать', callback_data: 'quick:disconnect' }])
+  }
+  return { inline_keyboard: rows }
 }
 
 // Create a new empty bridged session — generates a fresh UUID, binds the topic
@@ -723,6 +957,54 @@ function getLastPanelMessageId(chatId, threadId) {
   return state[bridgeKey(chatId, threadId)]?.last_panel_message_id || null
 }
 
+// Split long text into chunks of at most `maxSize` chars, preferring natural
+// boundaries. For each chunk, search the tail [maxSize-window..maxSize] for a
+// boundary; the best wins by priority. If none found, fall back to hard cut.
+// Priority (highest → lowest): "\n\n", "\n", ". " "! " "? ", " ", hard cut.
+function splitForTelegram(text, maxSize) {
+  if (!text || text.length <= maxSize) return [text]
+  const out = []
+  let i = 0
+  const window = Math.min(400, Math.floor(maxSize / 4))
+  while (i < text.length) {
+    const remaining = text.length - i
+    if (remaining <= maxSize) {
+      out.push(text.slice(i))
+      break
+    }
+    const tailStart = i + maxSize - window
+    const tailEnd = i + maxSize
+    let cut = -1
+    // 1) paragraph
+    const p = text.lastIndexOf('\n\n', tailEnd)
+    if (p >= tailStart) cut = p + 2
+    // 2) newline
+    if (cut < 0) {
+      const n = text.lastIndexOf('\n', tailEnd)
+      if (n >= tailStart) cut = n + 1
+    }
+    // 3) sentence terminator followed by space/newline
+    if (cut < 0) {
+      let best = -1
+      for (const term of ['. ', '! ', '? ', '."', '!"', '?"']) {
+        const k = text.lastIndexOf(term, tailEnd)
+        if (k >= tailStart && k > best) best = k + term.length
+      }
+      if (best >= 0) cut = best
+    }
+    // 4) word boundary
+    if (cut < 0) {
+      const s = text.lastIndexOf(' ', tailEnd)
+      if (s >= tailStart) cut = s + 1
+    }
+    // 5) hard cut
+    if (cut < 0 || cut <= i) cut = tailEnd
+    out.push(text.slice(i, cut))
+    i = cut
+  }
+  return out
+}
+
 function clearLastPanelMessageId(chatId, threadId) {
   const state = readState()
   const key = bridgeKey(chatId, threadId)
@@ -732,6 +1014,7 @@ function clearLastPanelMessageId(chatId, threadId) {
 }
 
 module.exports = {
+  BRIDGE_LABEL,
   scanSessions,
   readState,
   writeState,
@@ -747,12 +1030,18 @@ module.exports = {
   buildConnectedKeyboard,
   buildDisconnectedKeyboard,
   findLastAssistantMessage,
+  findAssistantMessagesAfter,
+  isInternalArtifact,
+  artifactKind,
   setLastPulledUuid,
-  getLastPulledUuid,
   extractAssistantText,
   markdownToTelegramHtml,
+  splitForTelegram,
   buildControlPanelKeyboard,
+  buildModelCardKeyboard,
   buildFreshConnectedKeyboard,
+  contextUsageTier,
+  getSessionContextUsage,
   setLastPanelMessageId,
   getLastPanelMessageId,
   clearLastPanelMessageId,
