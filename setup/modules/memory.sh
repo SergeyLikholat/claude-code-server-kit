@@ -67,7 +67,14 @@ MK_ENV=(MEMKIT_CLAUDE_DIR="$MEMKIT_CLAUDE_DIR" MEMKIT_PROJECTS_DIR="$MEMKIT_PROJ
         MEMKIT_OBSIDIAN_DIR="$MEMKIT_OBSIDIAN_DIR" MEMKIT_INSTALL_CRON=1 MEMKIT_INSTALL_HOOKS=1
         KIT_NONINTERACTIVE=1)
 
-if grep -q -- '--non-interactive' "$MEMORY_KIT_DIR/install.sh"; then
+if grep -q -- '--yes' "$MEMORY_KIT_DIR/install.sh"; then
+  # Текущий llm-memory-kit: --yes — без вопросов, значения из MEMKIT_*; сам прописывает
+  # хуки в settings.json и ставит расписание. Obsidian — только если задан волт.
+  MK_ARGS=(--yes)
+  [ -n "$MEMKIT_OBSIDIAN_DIR" ] && MK_ARGS+=(--obsidian "$MEMKIT_OBSIDIAN_DIR")
+  kit_as_user env "${MK_ENV[@]}" bash "$MEMORY_KIT_DIR/install.sh" "${MK_ARGS[@]}" \
+    || fatal "llm-memory-kit/install.sh завершился с ошибкой"
+elif grep -q -- '--non-interactive' "$MEMORY_KIT_DIR/install.sh"; then
   kit_as_user env "${MK_ENV[@]}" bash "$MEMORY_KIT_DIR/install.sh" --non-interactive \
     || fatal "llm-memory-kit/install.sh завершился с ошибкой"
 else
