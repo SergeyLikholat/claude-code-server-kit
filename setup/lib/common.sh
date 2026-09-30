@@ -40,8 +40,21 @@ load_env() {
   fi
 }
 
+# Код возврата модуля «пропущен» (не хватает ключа/настройки) — не ошибка,
+# но и не «установлен». install.sh различает 0 / KIT_RC_SKIPPED / прочее.
+KIT_RC_SKIPPED=3
+
+# Тихий режим: KIT_NONINTERACTIVE=1 (ставит install.sh при --secrets/--non-interactive).
+# Тогда ask/ask_secret/confirm не задают вопросов даже при наличии терминала:
+# берут значение из окружения (его кладёт setup/lib/secrets.sh), иначе — дефолт.
+kit_is_noninteractive() {
+  [ "${KIT_NONINTERACTIVE:-0}" = "1" ] || [ ! -t 0 ]
+}
+
 # Запрос значения у пользователя (с дефолтом и возможностью пропуска)
 # Использование: ask "Введите имя" "default_value" "VAR_NAME"
+# Если переменная VAR_NAME уже задана и не пуста (например, из secrets.env) —
+# используется молча, без вопроса.
 ask() {
   local prompt="$1"
   local default="$2"
@@ -52,14 +65,11 @@ ask() {
     return 0
   fi
 
-  # Если нет TTY — не интерактивничаем
-  if [ ! -t 0 ]; then
-    if [ -n "$default" ]; then
-      printf -v "$var_name" '%s' "$default"
-      return 0
-    else
-      return 1
-    fi
+  # Тихий режим или нет TTY: дефолт или пустое значение, без вопроса. Код 0 в обоих случаях — вызывающие сами
+  # проверяют пустоту, а код 1 под `set -e` молча обрывал модуль (helpers, parakeet).
+  if kit_is_noninteractive; then
+    printf -v "$var_name" '%s' "$default"
+    return 0
   fi
 
   local answer
@@ -81,8 +91,9 @@ ask_secret() {
     return 0
   fi
 
-  if [ ! -t 0 ]; then
-    return 1
+  if kit_is_noninteractive; then
+    printf -v "$var_name" '%s' ""
+    return 0
   fi
 
   local answer
@@ -96,7 +107,7 @@ confirm() {
   local prompt="$1"
   local default="${2:-y}"
 
-  if [ ! -t 0 ]; then
+  if kit_is_noninteractive; then
     [ "$default" = "y" ]
     return $?
   fi
@@ -325,9 +336,9 @@ save_secrets() {
 }
 
 # Экспортировать функции для дочерних скриптов
-export -f log ok warn err fatal section ask ask_secret confirm
+export -f log ok warn err fatal section ask ask_secret confirm kit_is_noninteractive
 export -f check_requirement_or_skip install_systemd_unit install_unit_template
 export -f require_root require_ubuntu apt_installed apt_install
 export -f ensure_dir save_secrets load_env
 export -f find_claude_bin install_claude_plugin ensure_node ensure_bun create_python_venv
-export KIT_DIR RED GREEN YELLOW BLUE CYAN BOLD NC
+export KIT_DIR KIT_RC_SKIPPED RED GREEN YELLOW BLUE CYAN BOLD NC

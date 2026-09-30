@@ -70,6 +70,29 @@ EOF
     ;;
 esac
 
+# Я.Диск токеном из secrets.env (RCLONE_YANDEX_TOKEN = JSON из `rclone authorize "yandex"`):
+# OAuth-приложение и код из браузера не нужны. Остальные remote в rclone.conf сохраняются.
+if [ "$BACKEND" = "yandex" ] && [ -n "${RCLONE_YANDEX_TOKEN:-}" ]; then
+  ask "Папка на Я.Диске для бэкапа" "/server-backups/restic-main" BACKUP_TARGET_PATH
+  ensure_dir /root/.config/rclone 700
+  RCLONE_YANDEX_TOKEN="$RCLONE_YANDEX_TOKEN" python3 - <<'PY_RCLONE'
+import configparser, os
+path = "/root/.config/rclone/rclone.conf"
+cfg = configparser.RawConfigParser()
+cfg.read(path)
+if cfg.has_section("yadisk"):
+    cfg.remove_section("yadisk")
+cfg.add_section("yadisk")
+cfg.set("yadisk", "type", "yandex")
+cfg.set("yadisk", "token", os.environ["RCLONE_YANDEX_TOKEN"].strip())
+with open(path, "w") as f:
+    cfg.write(f)
+os.chmod(path, 0o600)
+PY_RCLONE
+  ok "rclone.conf: remote yadisk из RCLONE_YANDEX_TOKEN"
+  SKIP_YANDEX_OAUTH=1
+fi
+
 # Не-yandex бэкенды используют существующий rclone remote и пропускают OAuth-блок
 if [ "$BACKEND" != "yandex" ]; then
   ask "Папка в $BACKEND для бэкапа" "/server-backups/restic-main" BACKUP_TARGET_PATH
@@ -203,7 +226,7 @@ Restic-пароль (показывается ОДИН раз):
 restic НЕ имеет recovery-механизма (это часть его безопасности).
 
 EOF
-  if [ -t 0 ]; then
+  if ! kit_is_noninteractive && [ -z "${BACKUP_RESTIC_PASSWORD:-}" ]; then
     read -rp "Сохранили? Введите 'yes' для продолжения: " saved
     [ "$saved" = "yes" ] || { err "Прерывание. Перезапустите после сохранения."; exit 1; }
   fi

@@ -22,6 +22,10 @@ curl -fsSL https://raw.githubusercontent.com/SergeyLikholat/cc-multiuser-kit/mai
 
 Установит Claude Code CLI + базу из ~150 агентов/скиллов + интерактивно предложит модули. API-ключи на этом этапе не требуются.
 
+**Полная среда без вопросов** (Claude Code + память + T3 в браузере и на телефоне): заполнить
+`secrets.env` по шаблону [`secrets.example.env`](secrets.example.env) и выполнить
+`sudo bash install.sh --full --secrets secrets.env`. Подробно — [docs/FULL-STACK.md](docs/FULL-STACK.md).
+
 ---
 
 ## Что это и зачем

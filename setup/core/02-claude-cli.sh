@@ -18,6 +18,10 @@ else
   fi
 fi
 
-log "Первый запуск требует авторизации в Anthropic Console."
-log "Откройте: claude"
-log "И следуйте инструкциям на экране."
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  log "Вход в подписку: токен из secrets.env (CLAUDE_CODE_OAUTH_TOKEN) — отдельный вход не нужен."
+else
+  log "Первый запуск требует входа в подписку Claude."
+  log "Откройте: claude  (или на сервере без браузера: claude setup-token → secrets.env)"
+  log "И следуйте инструкциям на экране."
+fi

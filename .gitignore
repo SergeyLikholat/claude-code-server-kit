@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+# Ключи установщика (install.sh --secrets): пример в git, заполненный — никогда
+secrets.env
+secrets*.env
+!secrets.example.env
 *.secret
 *.key
 *.pem
@@ -34,3 +38,6 @@ notes/
 
 # Если кто-то случайно положил рядом install-state
 /var/lib/claude-code-server-kit/
+
+# Архивы готовой сборки T3 (t3-patches/package.sh) — раздаются отдельно, не через git
+t3-patches/dist/

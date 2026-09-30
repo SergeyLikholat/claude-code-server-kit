@@ -11,6 +11,15 @@
 #   sudo bash install.sh --update           # обновить установленное
 #   sudo bash install.sh --non-interactive  # без подсказок (берёт всё из .env)
 #
+# Полная среда одной командой (docs/FULL-STACK.md):
+#   sudo bash install.sh --full --secrets secrets.env
+#       core + память (llm-memory-kit) + T3 + модули, для которых в файле есть ключи.
+#       Каждый ключ проверяется вживую до установки; при полном файле — ни одного вопроса.
+#   --secrets FILE      взять ключи из файла (шаблон: secrets.example.env); годится и с --module
+#   --delete-secrets    после установки удалить FILE (копия — ~/.config/kit/secrets.env)
+#   sudo bash install.sh --apply-secrets [--secrets FILE]
+#       заменить ключи (например, продлённый токен Claude): проверка, сохранение, перезапуск T3
+#
 # V2 multi-user (несколько пользователей на одном сервере):
 #   sudo bash install.sh --shared-infra            # общая инфра (один раз)
 #   sudo bash install.sh --provision-user <name>   # завести пользователя
@@ -23,6 +32,8 @@ KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export KIT_DIR
 # shellcheck disable=SC1091
 source "$KIT_DIR/setup/lib/common.sh"
+# shellcheck disable=SC1091
+source "$KIT_DIR/setup/lib/secrets.sh"
 
 # ============================================================
 # Парсинг аргументов
@@ -32,6 +43,7 @@ MODULES=()
 NON_INTERACTIVE=false
 SKIP_GEMINI=false
 PARAKEET_VARIANT="parakeet"
+SECRETS_FILE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,6 +54,20 @@ while [ $# -gt 0 ]; do
       ;;
     --all)
       MODE="all"
+      ;;
+    --full)
+      MODE="full"
+      ;;
+    --apply-secrets)
+      MODE="apply-secrets"
+      ;;
+    --secrets)
+      shift
+      SECRETS_FILE="${1:-}"
+      [ -n "$SECRETS_FILE" ] || { err "--secrets: укажите файл"; exit 1; }
+      ;;
+    --delete-secrets)
+      export KIT_DELETE_SECRETS=1
       ;;
     --list)
       MODE="list"
@@ -65,6 +91,7 @@ while [ $# -gt 0 ]; do
       ;;
     --non-interactive)
       NON_INTERACTIVE=true
+      export KIT_NONINTERACTIVE=1
       ;;
     --skip-gemini)
       SKIP_GEMINI=true
@@ -74,7 +101,7 @@ while [ $# -gt 0 ]; do
       PARAKEET_VARIANT="$1"
       ;;
     -h|--help)
-      head -20 "$0" | grep -E '^#' | sed 's/^# *//'
+      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
       exit 0
       ;;
     *)
@@ -88,6 +115,18 @@ done
 # Если режим не задан — core
 MODE="${MODE:-core}"
 
+# Ключи: явный --secrets, иначе — сохранённые прошлой установкой (~/.config/kit/secrets.env),
+# чтобы повтор модуля или --full не спрашивал заново то, что уже известно
+if [ -n "$SECRETS_FILE" ]; then
+  kit_load_secrets "$SECRETS_FILE" || exit 1
+  export KIT_NONINTERACTIVE=1
+elif [[ " full apply-secrets modules core all update " == *" $MODE "* ]]; then
+  if [ -r "$(kit_config_dir)/secrets.env" ]; then
+    kit_load_secrets "$(kit_config_dir)/secrets.env" || exit 1
+    KIT_SECRETS_FILE=""   # это и есть хранилище — удалять нечего
+  fi
+fi
+
 # ============================================================
 # Список модулей и их описаний
 # ============================================================
@@ -97,11 +136,13 @@ declare -A MODULE_DESCRIPTIONS=(
   ["parakeet"]="Голосовая транскрипция (Parakeet или GigaAM)"
   ["helpers"]="Полезные мелочи: nanobanana, gemini-tts, openpyxl_safe, tg-md"
   ["hooks-extras"]="Дополнительные хуки и автоматизации"
+  ["memory"]="Память между сессиями (ставит llm-memory-kit: хуки + ночные сборщики)"
+  ["t3"]="T3 Code: Claude в браузере и Android-приложении, свой домен с TLS"
 )
 
 # claude-mem УБРАН из V2: память теперь per-user через obsidian-vault + context-mgr
 # (ставится автоматически в provision-user.sh). См. docs/V2-MULTIUSER.md.
-ALL_MODULES=("tg-bot" "backup" "parakeet" "helpers" "hooks-extras")
+ALL_MODULES=("tg-bot" "backup" "parakeet" "helpers" "hooks-extras" "memory" "t3")
 
 # ============================================================
 # Команды
@@ -172,6 +213,12 @@ cmd_check() {
   done
 
   echo
+  echo "Ключи и T3:"
+  [ -f "$(kit_config_dir)/secrets.env" ] && ok "ключи: $(kit_config_dir)/secrets.env" || echo "  — ключи не сохранялись (install.sh --secrets)"
+  [ -f "$(kit_config_dir)/claude.env" ] && ok "токен Claude для служб и cron: $(kit_config_dir)/claude.env" || echo "  — токена Claude для служб нет"
+  if command -v t3-update >/dev/null 2>&1; then kit_as_user t3-update status 2>/dev/null | sed 's/^/  /'; fi
+
+  echo
   echo "Бэкап (последний):"
   if [ -f /var/log/backup-main.log ]; then
     local last_done
@@ -205,6 +252,7 @@ cmd_core() {
   done
 
   mark_installed "core"
+  [ "$MODE" = "full" ] && return 0   # в --full итог печатается один раз, в конце
 
   cat <<EOF
 
@@ -226,31 +274,169 @@ ${BOLD}${GREEN}═════════════════════�
 EOF
 }
 
+# Результаты модулей за этот запуск — для итоговой таблицы
+declare -A MODULE_RESULT=()
+MODULE_ORDER=()
+
+# Запустить один модуль: 0 — установлен, KIT_RC_SKIPPED — пропущен (нет ключа), иначе — ошибка.
+# Ошибка модуля не останавливает остальные: итог покажет, что упало.
+run_module() {
+  local m="$1" script rc=0
+  script="$KIT_DIR/setup/modules/${m}.sh"
+  MODULE_ORDER+=("$m")
+  if [ ! -x "$script" ]; then
+    err "Модуль не найден: $m"
+    echo "Доступные: ${ALL_MODULES[*]}"
+    MODULE_RESULT[$m]="нет такого модуля"
+    return 0
+  fi
+  section "Модуль: $m"
+  log "${MODULE_DESCRIPTIONS[$m]:-}"
+  "$script" || rc=$?
+  case "$rc" in
+    0) mark_installed "$m"; MODULE_RESULT[$m]="установлен" ;;
+    "$KIT_RC_SKIPPED") MODULE_RESULT[$m]="пропущен (нет ключей/настроек)" ;;
+    *) MODULE_RESULT[$m]="ОШИБКА (код $rc)" ;;
+  esac
+}
+
+# С --secrets модули проверяют ключи до установки, как и --full
+validate_if_secrets() {
+  if [ -n "$SECRETS_FILE" ] && [ "${KIT_VALIDATED:-0}" != "1" ]; then
+    kit_validate_secrets partial || exit 1
+    export KIT_VALIDATED=1
+  fi
+}
+
 cmd_modules() {
   require_root
-
+  validate_if_secrets
   for m in "${MODULES[@]}"; do
-    local script="$KIT_DIR/setup/modules/${m}.sh"
-    if [ ! -x "$script" ]; then
-      err "Модуль не найден: $m"
-      echo "Доступные: ${ALL_MODULES[*]}"
-      continue
-    fi
-
-    section "Модуль: $m"
-    log "${MODULE_DESCRIPTIONS[$m]:-}"
-    if "$script"; then
-      mark_installed "$m"
-    fi
+    run_module "$m"
   done
+  [ -n "$SECRETS_FILE" ] && { kit_persist_secrets; kit_install_claude_env; kit_cleanup_secrets_source; }
+  return 0
 }
 
 cmd_all() {
   cmd_core
-  for m in "${ALL_MODULES[@]}"; do
-    MODULES=("$m")
-    cmd_modules
+  MODULES=("${ALL_MODULES[@]}")
+  cmd_modules
+}
+
+# ============================================================
+# --full: вся среда одной командой
+# ============================================================
+cmd_full() {
+  require_root
+  require_ubuntu
+  section "Полная установка: сервер → Claude Code → обвязка → память → T3"
+
+  if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && ! kit_is_noninteractive; then
+    echo "Нужен токен подписки Claude: на компьютере с Claude Code выполните  claude setup-token"
+    ask_secret "Вставьте токен (sk-ant-oat01-…)" CLAUDE_CODE_OAUTH_TOKEN
+    export CLAUDE_CODE_OAUTH_TOKEN
+  fi
+
+  # Что ставим, кроме core: память и helpers — всегда, T3 — всегда (сам скажет, если нет
+  # домена), остальное — если для него есть ключ.
+  local plan=(memory helpers)
+  [ -n "${RCLONE_YANDEX_TOKEN:-}" ] && plan+=(backup)
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && plan+=(tg-bot)
+  [ "${KIT_WITH_PARAKEET:-}" = "1" ] && plan+=(parakeet)
+  plan+=(t3)
+  log "План: core ${plan[*]}"
+
+  kit_validate_secrets full || exit 1
+  export KIT_VALIDATED=1
+
+  # Пароль бэкапа: если не задан — генерируем сейчас, чтобы он попал в сохранённые ключи
+  if [[ " ${plan[*]} " == *" backup "* ]] && [ -z "${RESTIC_PASSWORD:-}" ] && [ ! -f /root/.secrets/restic-password ]; then
+    RESTIC_PASSWORD="$(openssl rand -base64 32 | tr -d '\n')"
+    export RESTIC_PASSWORD BACKUP_RESTIC_PASSWORD="$RESTIC_PASSWORD"
+    KIT_RESTIC_GENERATED=1
+  fi
+
+  kit_persist_secrets
+  kit_install_claude_env
+  export KIT_NONINTERACTIVE=1   # дальше — без вопросов
+
+  cmd_core
+  MODULE_ORDER+=(core); MODULE_RESULT[core]="установлен"
+
+  # Если API Anthropic не дал однозначного ответа — пробный запрос через уже установленный CLI
+  if [ "${KIT_CLAUDE_CHECK_PENDING:-0}" = "1" ]; then
+    kit_check_claude_token_cli || fatal "Токен Claude не работает — исправьте и запустите --apply-secrets"
+  fi
+
+  local m
+  for m in "${plan[@]}"; do run_module "$m"; done
+
+  kit_cleanup_secrets_source
+  print_summary
+}
+
+# Итог: что встало, куда заходить, что делать дальше
+print_summary() {
+  local m failed=0 t3s="/var/lib/claude-code-server-kit/t3-summary.txt" link url apk ttl caddy https
+  section "Итог установки"
+  for m in "${MODULE_ORDER[@]}"; do
+    printf "  %-14s %s\n" "$m" "${MODULE_RESULT[$m]}"
+    [[ "${MODULE_RESULT[$m]}" == ОШИБКА* ]] && failed=1
   done
+  echo
+
+  if [ -f "$t3s" ] && [ "${MODULE_RESULT[t3]:-}" = "установлен" ]; then
+    url="$(grep '^T3_URL=' "$t3s" | cut -d= -f2-)"
+    link="$(grep '^T3_PAIR_LINK=' "$t3s" | cut -d= -f2-)"
+    ttl="$(grep '^T3_PAIR_TTL=' "$t3s" | cut -d= -f2-)"
+    apk="$(grep '^T3_APK_URL=' "$t3s" | cut -d= -f2-)"
+    caddy="$(grep '^T3_CADDY=' "$t3s" | cut -d= -f2-)"
+    https="$(grep '^T3_HTTPS_OK=' "$t3s" | cut -d= -f2-)"
+    echo -e "${BOLD}T3:${NC} $url"
+    if [ -n "$link" ]; then
+      echo "  Приглашение (одноразовое, $ttl):"
+      echo -e "  ${BOLD}$link${NC}"
+      command -v qrencode >/dev/null 2>&1 && qrencode -t ANSIUTF8 "$link"
+    fi
+    [ -n "$apk" ] && echo "  Android-приложение: $apk"
+    [ "$caddy" != "ok" ] && warn "  Прокси для домена настроить вручную — см. вывод модуля t3 выше"
+    [ "$caddy" = "ok" ] && [ "$https" != "1" ] && warn "  https пока не открывается — проверьте A-запись; журнал: journalctl -u caddy -n 50"
+    echo
+  fi
+
+  echo -e "${BOLD}Claude:${NC} вход по токену подписки (действует год)."
+  echo "  Продлить: claude setup-token → новое значение CLAUDE_CODE_OAUTH_TOKEN в"
+  echo "  $(kit_config_dir)/secrets.env → sudo bash install.sh --apply-secrets"
+  if [ "${KIT_RESTIC_GENERATED:-0}" = "1" ]; then
+    echo
+    warn "Пароль бэкапа сгенерирован: он в $(kit_config_dir)/secrets.env (RESTIC_PASSWORD)."
+    warn "  Перепишите его в менеджер паролей: без него бэкап не восстановить, а сервер может пропасть."
+  fi
+  echo
+  echo -e "${BOLD}Дальше:${NC}"
+  echo "  • открыть приглашение в браузере или приложении и начать тред;"
+  echo "  • проверить состояние: sudo bash install.sh --check; T3 — t3-update status;"
+  echo "  • подробно о слоях и модулях: docs/FULL-STACK.md"
+  [ "$failed" = 0 ] || { err "Часть модулей не встала — см. таблицу выше"; return 1; }
+}
+
+# ============================================================
+# --apply-secrets: заменить ключи на работающем сервере
+# ============================================================
+cmd_apply_secrets() {
+  require_root
+  [ -n "${KIT_SECRETS_FILE:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || \
+    fatal "Нет ключей: укажите --secrets FILE или заполните $(kit_config_dir)/secrets.env"
+  kit_validate_secrets apply || exit 1
+  kit_persist_secrets
+  kit_install_claude_env
+  if [ -f "$(kit_home)/.config/systemd/user/t3code.service" ] && command -v t3-update >/dev/null 2>&1; then
+    log "Перезапускаю T3, чтобы служба взяла новый токен"
+    kit_as_user t3-update restart || warn "T3 не перезапустился — см. t3-update status"
+  fi
+  kit_cleanup_secrets_source
+  ok "Ключи применены. Новые шеллы и ночные задачи возьмут токен сами."
 }
 
 cmd_update() {
@@ -263,11 +449,14 @@ cmd_update() {
   cmd_core
 
   if [ -f /var/lib/claude-code-server-kit/installed-modules ]; then
+    MODULES=()
     while IFS= read -r m; do
       [ "$m" = "core" ] && continue
-      MODULES=("$m")
-      cmd_modules
+      # T3 обновляется своей командой (новая сборка + откат), повтор модуля лишь перезапустил бы службу
+      [ "$m" = "t3" ] && { log "t3: обновление — t3-update <архив или ссылка>"; continue; }
+      MODULES+=("$m")
     done < /var/lib/claude-code-server-kit/installed-modules
+    cmd_modules
   fi
 }
 
@@ -289,8 +478,10 @@ mark_installed() {
 case "$MODE" in
   list)     cmd_list ;;
   check)    cmd_check ;;
-  core)     cmd_core ;;
+  core)     validate_if_secrets; cmd_core ;;
   modules)  cmd_modules ;;
+  full)     cmd_full ;;
+  apply-secrets) cmd_apply_secrets ;;
   all)      cmd_all ;;
   update)   cmd_update ;;
   shared-infra)    require_root; bash "$KIT_DIR/setup/shared-infra.sh" ;;

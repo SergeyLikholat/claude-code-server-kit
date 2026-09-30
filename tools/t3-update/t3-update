@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# t3-update — поставить готовую сборку T3 рядом с текущей, переключиться, при сбое откатиться.
+#
+#   t3-update <архив.tar.gz | https-ссылка> [--sha256 HASH]   установить и переключить
+#   t3-update install <архив|ссылка> [--sha256 HASH] [--no-restart]
+#                                                             только установить (+ переключить ссылку)
+#   t3-update rollback [версия]                               вернуть предыдущую (или указанную)
+#   t3-update restart                                         перезапустить службу с проверкой
+#   t3-update status                                          что стоит и работает ли
+#
+# Архив делает t3-patches/package.sh: внутри один каталог <версия>-sN/ с t3, client/,
+# node_modules/, resource-monitor/, PATCHED.json. Рядом может лежать <архив>.sha256.
+#
+# Раскладка (как у штатного T3 и t3-patches/lib/switch.sh):
+#   ~/.t3/runtime/versions/<версия>/t3     — версии рядом, старые не удаляются
+#   ~/.local/bin/t3                        — ссылка на активную; служба запускает её
+#   ~/.t3/runtime/.t3-patch-previous       — предыдущая версия (для отката)
+#
+# Если команда запущена из самого T3 (терминал или агент внутри службы), перезапуск
+# уходит в отдельную задачу systemd-run: иначе он убил бы и того, кто его делает.
+# Настройки: ~/.config/kit/t3.env (T3_PORT, T3_UNIT), их пишет модуль t3.
+set -euo pipefail
+
+T3HOME="${T3CODE_HOME:-$HOME/.t3}"
+VERSIONS="$T3HOME/runtime/versions"
+STATE="$T3HOME/runtime/service-state.json"
+PREV="$T3HOME/runtime/.t3-patch-previous"
+LINK="$HOME/.local/bin/t3"
+CONF="$HOME/.config/kit/t3.env"
+LOG="$HOME/.cache/kit/t3-update.log"
+# shellcheck disable=SC1090
+[ -r "$CONF" ] && . "$CONF"
+T3_PORT="${T3_PORT:-7373}"
+T3_UNIT="${T3_UNIT:-t3code.service}"
+HEALTH_TRIES="${T3_HEALTH_TRIES:-60}"   # по 2 с
+
+say() { printf '%s\n' "$*"; }
+die() { printf 't3-update: %s\n' "$*" >&2; exit 1; }
+
+current_version() {
+  [ -L "$LINK" ] || { echo ""; return 0; }
+  basename "$(dirname "$(readlink -f "$LINK")")"
+}
+
+sctl() { systemctl --user "$@"; }
+
+inside_t3() { grep -q "$T3_UNIT" /proc/self/cgroup 2>/dev/null; }
+
+# ── установка архива ─────────────────────────────────────────────────────────
+fetch() {  # $1 — путь или ссылка; кладёт путь к локальному файлу в FETCHED, сумму — в SHA
+  local src="$1"
+  if [[ "$src" =~ ^https?:// ]]; then
+    FETCHED="$(mktemp "${TMPDIR:-/tmp}/t3-bundle.XXXXXX")"
+    say "скачиваю $src" >&2
+    curl -fL --retry 3 -o "$FETCHED" "$src" || die "не удалось скачать $src"
+    if [ -z "$SHA" ] && curl -fsSL -o "$FETCHED.sha256" "$src.sha256" 2>/dev/null; then
+      SHA="$(awk '{print $1}' "$FETCHED.sha256")"
+    fi
+    rm -f "$FETCHED.sha256"
+  else
+    [ -r "$src" ] || die "нет файла $src"
+    FETCHED="$src"
+    if [ -z "$SHA" ] && [ -r "$src.sha256" ]; then SHA="$(awk '{print $1}' "$src.sha256")"; fi
+  fi
+}
+
+install_bundle() {  # $1 — архив; печатает имя установленной версии
+  local src="$1" file tmp top name
+  fetch "$src"; file="$FETCHED"
+  if [ -n "$SHA" ]; then
+    echo "$SHA  $file" | sha256sum -c --quiet - >/dev/null 2>&1 \
+      || die "контрольная сумма архива не совпала (ожидалась $SHA) — архив битый или подменён"
+    say "контрольная сумма совпала" >&2
+  else
+    say "контрольной суммы нет — проверка целостности пропущена" >&2
+  fi
+
+  # Только относительные пути внутри одного каталога — никаких /abs и ..
+  if tar -tzf "$file" | grep -qE '^/|(^|/)\.\.(/|$)'; then die "в архиве недопустимые пути"; fi
+  top="$(tar -tzf "$file" | cut -d/ -f1 | sort -u)"
+  [ "$(printf '%s\n' "$top" | wc -l)" = 1 ] || die "в архиве должен быть ровно один каталог версии"
+  name="$top"
+  [[ "$name" =~ ^[0-9A-Za-z._-]+$ ]] || die "странное имя версии в архиве: $name"
+
+  mkdir -p "$VERSIONS"
+  if [ -f "$VERSIONS/$name/.install-complete" ]; then
+    say "версия $name уже установлена — только переключение" >&2
+  else
+    tmp="$(mktemp -d "$VERSIONS/.incoming.XXXXXX")"
+    tar --no-same-owner -xzf "$file" -C "$tmp"
+    [ -x "$tmp/$name/t3" ] || { rm -rf "$tmp"; die "в архиве нет исполняемого $name/t3"; }
+    "$tmp/$name/t3" --version >/dev/null 2>&1 || { rm -rf "$tmp"; die "бинарник $name/t3 не запускается на этом сервере (архитектура?)"; }
+    rm -rf "${VERSIONS:?}/$name"
+    mv "$tmp/$name" "$VERSIONS/$name"
+    rmdir "$tmp"
+    printf '%s\n' "$name" > "$VERSIONS/$name/.install-complete"
+    say "установлено: $VERSIONS/$name" >&2
+  fi
+  if [[ "$src" =~ ^https?:// ]]; then rm -f "$file"; fi
+  echo "$name"
+}
+
+# ── переключение ссылки ──────────────────────────────────────────────────────
+link_to() {  # $1 — версия
+  local target="$1" cur
+  [ -x "$VERSIONS/$target/t3" ] || die "нет $VERSIONS/$target/t3"
+  cur="$(current_version)"
+  mkdir -p "$(dirname "$LINK")"
+  ln -sfn "$VERSIONS/$target/t3" "$LINK.new" && mv -Tf "$LINK.new" "$LINK"
+  [ -n "$cur" ] && [ "$cur" != "$target" ] && echo "$cur" > "$PREV"
+  if [ -f "$STATE" ]; then
+    python3 - "$STATE" "$target" <<'PY'
+import json, os, sys
+path, target = sys.argv[1], sys.argv[2]
+state = json.load(open(path)); state["activeVersion"] = target
+tmp = path + ".tmp"; open(tmp, "w").write(json.dumps(state, indent=2) + "\n"); os.replace(tmp, path)
+PY
+  fi
+  say "ссылка: ${cur:-—} → $target"
+}
+
+# ── перезапуск с проверкой и откатом ─────────────────────────────────────────
+healthy() {  # $1 — ожидаемая версия
+  local pid exe code
+  pid="$(sctl show -p MainPID --value "$T3_UNIT" 2>/dev/null || echo 0)"
+  [ "${pid:-0}" -gt 0 ] 2>/dev/null || return 1
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [ "$exe" = "$VERSIONS/$1/t3" ] || return 1
+  code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$T3_PORT/" 2>/dev/null || true)"
+  [ -n "$code" ] && [ "$code" != "000" ]
+}
+
+restart_checked() {  # $1 — ожидаемая версия, $2 — куда откатываться (может быть пусто)
+  local want="$1" back="${2:-}"
+  say "$(date '+%F %T') перезапуск $T3_UNIT на $want"
+  sctl restart "$T3_UNIT" || true
+  for _ in $(seq 1 "$HEALTH_TRIES"); do
+    sleep 2
+    if healthy "$want"; then say "$(date '+%T') ok: работает $want, порт $T3_PORT отвечает"; return 0; fi
+  done
+  say "$(date '+%T') ОШИБКА: $want не поднялась за $((HEALTH_TRIES * 2)) с"
+  if [ -n "$back" ] && [ "$back" != "$want" ] && [ -x "$VERSIONS/$back/t3" ]; then
+    say "откат на $back"
+    link_to "$back"
+    echo "$want" > "$PREV"
+    sctl restart "$T3_UNIT" || true
+    for _ in $(seq 1 "$HEALTH_TRIES"); do
+      sleep 2
+      if healthy "$back"; then say "$(date '+%T') откат выполнен: работает $back"; return 1; fi
+    done
+    say "$(date '+%T') откат тоже не поднялся — смотрите: journalctl --user -u $T3_UNIT -n 100"
+  fi
+  return 1
+}
+
+schedule_restart() {  # $1 — версия, $2 — откат
+  mkdir -p "$(dirname "$LOG")"
+  if inside_t3; then
+    systemd-run --user --quiet --collect --unit="t3-update-$(date +%s)" \
+      /usr/bin/env HOME="$HOME" T3CODE_HOME="$T3HOME" /bin/bash -c \
+      "sleep 3; exec '$(readlink -f "$0")' _restart-checked '$1' '$2' >>'$LOG' 2>&1"
+    say "перезапуск запланирован через 3 с (команда запущена из T3). Журнал: $LOG"
+    say "открытые сессии T3 оборвутся — треды и история на месте"
+  else
+    restart_checked "$1" "$2" 2>&1 | tee -a "$LOG"   # pipefail: сбой = ненулевой код
+  fi
+}
+
+# ── команды ──────────────────────────────────────────────────────────────────
+SHA=""; NO_RESTART=0; FETCHED=""
+parse_opts() {
+  ARGS=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --sha256) shift; SHA="${1:-}" ;;
+      --no-restart) NO_RESTART=1 ;;
+      *) ARGS+=("$1") ;;
+    esac
+    shift
+  done
+}
+
+cmd_install() {
+  parse_opts "$@"
+  [ "${#ARGS[@]}" -ge 1 ] || die "укажи архив или ссылку"
+  local before name
+  before="$(current_version)"
+  name="$(install_bundle "${ARGS[0]}")"
+  link_to "$name"
+  if [ "$NO_RESTART" = 1 ]; then say "служба не перезапускалась (--no-restart)"; return 0; fi
+  if ! sctl cat "$T3_UNIT" >/dev/null 2>&1; then say "служба $T3_UNIT не найдена — перезапуск пропущен"; return 0; fi
+  schedule_restart "$name" "$before"
+}
+
+cmd_rollback() {
+  local target="${1:-}" cur
+  cur="$(current_version)"
+  [ -n "$target" ] || target="$(cat "$PREV" 2>/dev/null || true)"
+  [ -n "$target" ] || die "не знаю, на что откатываться: укажи версию (ls $VERSIONS)"
+  link_to "$target"
+  schedule_restart "$target" "$cur"
+}
+
+cmd_status() {
+  local cur; cur="$(current_version)"
+  say "активная версия: ${cur:-нет}"
+  say "предыдущая:      $(cat "$PREV" 2>/dev/null || echo —)"
+  local v all=""
+  for v in "$VERSIONS"/*/; do [ -d "$v" ] && all="$all$(basename "$v") "; done
+  say "все версии:      ${all:-—}"
+  [ -n "$cur" ] && [ -f "$VERSIONS/$cur/PATCHED.json" ] && \
+    say "патчи:           $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("base"), "+", len(d.get("patches") or []), "патчей")' "$VERSIONS/$cur/PATCHED.json")"
+  local st; st="$(sctl is-active "$T3_UNIT" 2>/dev/null || true)"
+  say "служба:          ${st:-нет связи с systemd --user}"
+  if [ -n "$cur" ] && healthy "$cur"; then say "порт $T3_PORT:       отвечает"; else say "порт $T3_PORT:       не отвечает"; fi
+}
+
+case "${1:-}" in
+  install)          shift; cmd_install "$@" ;;
+  rollback)         shift; cmd_rollback "$@" ;;
+  restart)          c="$(current_version)"; [ -n "$c" ] || die "T3 не установлен"; schedule_restart "$c" "" ;;
+  status)           cmd_status ;;
+  _restart-checked) shift; restart_checked "$@" ;;
+  ""|-h|--help)     sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)                cmd_install "$@" ;;
+esac
