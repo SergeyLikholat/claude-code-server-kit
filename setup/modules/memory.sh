@@ -8,7 +8,7 @@
 #
 # Настройки (secrets.env или окружение), все не обязательны:
 #   MEMORY_KIT_REPO          откуда клонировать (по умолчанию публичный репозиторий)
-#   MEMORY_KIT_REF           ветка или тег (main)
+#   MEMORY_KIT_REF           ветка или тег (master — основная ветка llm-memory-kit)
 #   MEMORY_KIT_DIR           куда (~/llm-memory-kit пользователя среды)
 #   MEMORY_KIT_OBSIDIAN_DIR  папка Obsidian-хранилища — включает вики поверх памяти
 #   MEMORY_KIT_TZ            часовой пояс ночных задач (часовой пояс сервера)
@@ -26,7 +26,7 @@ MK_HOME="$(kit_home)"
 [ -n "$MK_HOME" ] || fatal "Пользователь $MK_USER не найден"
 MK_GROUP="$(id -gn "$MK_USER")"
 MEMORY_KIT_REPO="${MEMORY_KIT_REPO:-https://github.com/SergeyLikholat/llm-memory-kit.git}"
-MEMORY_KIT_REF="${MEMORY_KIT_REF:-main}"
+MEMORY_KIT_REF="${MEMORY_KIT_REF:-master}"
 MEMORY_KIT_DIR="${MEMORY_KIT_DIR:-$MK_HOME/llm-memory-kit}"
 MK_TZ="${MEMORY_KIT_TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}"
 MK_CLAUDE_BIN="$(find_claude_bin 2>/dev/null || echo "$MK_HOME/.local/bin/claude")"
