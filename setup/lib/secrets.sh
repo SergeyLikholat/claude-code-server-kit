@@ -13,7 +13,7 @@
 # Все ключи, которые понимает kit. Остальные строки файла — предупреждение и пропуск
 # (защита от опечаток вроде CLAUDE_OAUTH_TOKEN).
 KIT_SECRET_KEYS=(
-  CLAUDE_CODE_OAUTH_TOKEN USER_NAME USER_EMAIL
+  CLAUDE_CODE_OAUTH_TOKEN KIT_CLAUDE_LOGIN_LATER USER_NAME USER_EMAIL
   T3_DOMAIN ACME_EMAIL T3_TARBALL T3_TARBALL_SHA256 T3_APK T3_PORT
   TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
   GEMINI_API_KEY
@@ -422,8 +422,11 @@ kit_validate_secrets() {
     warn "KIT_SKIP_VALIDATION=1 — живые проверки пропущены, ошибки всплывут при установке"
     return 0
   fi
-  if [ "$mode" = "full" ] || [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  # KIT_CLAUDE_LOGIN_LATER=1 — без токена: человек войдёт сам (claude auth login в терминале T3)
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || { [ "$mode" = "full" ] && [ "${KIT_CLAUDE_LOGIN_LATER:-0}" != "1" ]; }; then
     kit_check_claude_token || fails=$((fails + 1))
+  elif [ "$mode" = "full" ]; then
+    warn "Токен Claude не задан (KIT_CLAUDE_LOGIN_LATER=1): вход после установки — claude auth login"
   fi
   # Домен и архив T3 нужны только при установке; при замене ключей (apply) T3 уже стоит
   if [ "$mode" != "apply" ] && [ -n "${T3_DOMAIN:-}${T3_TARBALL:-}" ]; then

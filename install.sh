@@ -332,7 +332,7 @@ cmd_full() {
   require_ubuntu
   section "Полная установка: сервер → Claude Code → обвязка → память → T3"
 
-  if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && ! kit_is_noninteractive; then
+  if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "${KIT_CLAUDE_LOGIN_LATER:-0}" != "1" ] && ! kit_is_noninteractive; then
     echo "Нужен токен подписки Claude: на компьютере с Claude Code выполните  claude setup-token"
     ask_secret "Вставьте токен (sk-ant-oat01-…)" CLAUDE_CODE_OAUTH_TOKEN
     export CLAUDE_CODE_OAUTH_TOKEN
@@ -405,9 +405,14 @@ print_summary() {
     echo
   fi
 
-  echo -e "${BOLD}Claude:${NC} вход по токену подписки (действует год)."
-  echo "  Продлить: claude setup-token → новое значение CLAUDE_CODE_OAUTH_TOKEN в"
-  echo "  $(kit_config_dir)/secrets.env → sudo bash install.sh --apply-secrets"
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo -e "${BOLD}Claude:${NC} вход по токену подписки (действует год)."
+    echo "  Продлить: claude setup-token → новое значение CLAUDE_CODE_OAUTH_TOKEN в"
+    echo "  $(kit_config_dir)/secrets.env → sudo bash install.sh --apply-secrets"
+  else
+    echo -e "${BOLD}Claude:${NC} вход в подписку ещё не сделан. В терминале T3 (или по SSH):"
+    echo "  claude auth login --claudeai   → открыть ссылку, войти на claude.ai, вставить код"
+  fi
   if [ "${KIT_RESTIC_GENERATED:-0}" = "1" ]; then
     echo
     warn "Пароль бэкапа сгенерирован: он в $(kit_config_dir)/secrets.env (RESTIC_PASSWORD)."
