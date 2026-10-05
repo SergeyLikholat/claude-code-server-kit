@@ -1,0 +1,110 @@
+From be4f77221e5ceb5b8c6bdeef0a7d1526bd622943 Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sun, 4 Oct 2026 01:18:42 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=81=D0=B2=D0=BE=D1=8F=20?=
+ =?UTF-8?q?=D1=80=D0=B5=D0=B4=D0=B0=D0=BA=D1=86=D0=B8=D1=8F=20=E2=80=94=20?=
+ =?UTF-8?q?=C2=ABT3=20Biz=C2=BB=20=D0=B2=20=D1=88=D0=B0=D0=BF=D0=BA=D0=B5,?=
+ =?UTF-8?q?=20=D0=B1=D0=B5=D0=B7=20=D0=B7=D0=BD=D0=B0=D1=87=D0=BA=D0=B0=20?=
+ =?UTF-8?q?Alpha?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/mobile/src/components/BrandMark.tsx      | 15 +++++++------
+ .../src/components/CompactBrandTitle.tsx      | 21 +++++++++++--------
+ apps/mobile/src/features/home/HomeHeader.tsx  | 16 +++++++-------
+ 3 files changed, 30 insertions(+), 22 deletions(-)
+
+diff --git a/apps/mobile/src/components/BrandMark.tsx b/apps/mobile/src/components/BrandMark.tsx
+index c8f1d43855..8fdfc1c819 100644
+--- a/apps/mobile/src/components/BrandMark.tsx
++++ b/apps/mobile/src/components/BrandMark.tsx
+@@ -32,12 +32,15 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
+       />
+       <View className="gap-1">
+         <View className="flex-row items-center gap-2">
+-          <Text className="text-lg font-t3-bold tracking-[-0.4px] text-foreground">T3 Code</Text>
+-          <View className="rounded-full bg-subtle px-2 py-1">
+-            <Text className="text-3xs font-t3-bold tracking-[1.1px] uppercase text-foreground-muted">
+-              {stageLabel}
+-            </Text>
+-          </View>
++          {/* t3-patch: «T3 Biz», без значка стадии (Alpha) */}
++          <Text className="text-lg font-t3-bold tracking-[-0.4px] text-foreground">T3 Biz</Text>
++          {stageLabel !== "Alpha" ? (
++            <View className="rounded-full bg-subtle px-2 py-1">
++              <Text className="text-3xs font-t3-bold tracking-[1.1px] uppercase text-foreground-muted">
++                {stageLabel}
++              </Text>
++            </View>
++          ) : null}
+         </View>
+         {!compact ? (
+           <Text className="text-xs font-medium text-foreground-muted">
+diff --git a/apps/mobile/src/components/CompactBrandTitle.tsx b/apps/mobile/src/components/CompactBrandTitle.tsx
+index a6e2a7fd21..30bf136c11 100644
+--- a/apps/mobile/src/components/CompactBrandTitle.tsx
++++ b/apps/mobile/src/components/CompactBrandTitle.tsx
+@@ -41,16 +41,19 @@ export function CompactBrandTitle(
+         allowFontScaling={props.allowFontScaling}
+         className="font-t3-medium text-[21px] tracking-[-0.5px] text-foreground-muted"
+       >
+-        Code
++        Biz
+       </Text>
+-      <View className="rounded-full bg-subtle px-1.5 py-0.5">
+-        <Text
+-          allowFontScaling={props.allowFontScaling}
+-          className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
+-        >
+-          {stageLabel}
+-        </Text>
+-      </View>
++      {/* t3-patch: «T3 Biz», без значка стадии (Alpha) */}
++      {stageLabel !== "Alpha" ? (
++        <View className="rounded-full bg-subtle px-1.5 py-0.5">
++          <Text
++            allowFontScaling={props.allowFontScaling}
++            className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
++          >
++            {stageLabel}
++          </Text>
++        </View>
++      ) : null}
+     </View>
+   );
+ }
+diff --git a/apps/mobile/src/features/home/HomeHeader.tsx b/apps/mobile/src/features/home/HomeHeader.tsx
+index aa721d35fe..9dd29eeab3 100644
+--- a/apps/mobile/src/features/home/HomeHeader.tsx
++++ b/apps/mobile/src/features/home/HomeHeader.tsx
+@@ -249,16 +249,18 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
+               onPress={props.onOpenEnvironments}
+               brand={
+                 <View className="flex-row items-center gap-2">
+-                  {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
++                  {/* t3-patch: своя редакция — «T3 Biz», без значка стадии (Alpha) */}
+                   <T3Wordmark colorClassName="accent-icon" height={15} />
+                   <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
+-                    Code
++                    Biz
+                   </RNText>
+-                  <View className="rounded-full bg-subtle px-2 py-0.75">
+-                    <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
+-                      {stageLabel}
+-                    </RNText>
+-                  </View>
++                  {stageLabel !== "Alpha" ? (
++                    <View className="rounded-full bg-subtle px-2 py-0.75">
++                      <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
++                        {stageLabel}
++                      </RNText>
++                    </View>
++                  ) : null}
+                 </View>
+               }
+             />
+-- 
+2.43.0
+

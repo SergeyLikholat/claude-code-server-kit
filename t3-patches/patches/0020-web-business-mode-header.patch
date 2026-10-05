@@ -1,0 +1,338 @@
+From f17e782f067ba0173b91d1cc91df9b887f53fe0e Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sat, 3 Oct 2026 21:17:07 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20T3=20=D0=B4=D0=BB=D1=8F=20=D0=B1?=
+ =?UTF-8?q?=D0=B8=D0=B7=D0=BD=D0=B5=D1=81=D0=B0=20=E2=80=94=20Git,=20VS=20?=
+ =?UTF-8?q?Code,=20=D1=81=D0=BA=D1=80=D0=B8=D0=BF=D1=82=D1=8B=20=D0=B8=20?=
+ =?UTF-8?q?=D1=82=D0=B5=D1=80=D0=BC=D0=B8=D0=BD=D0=B0=D0=BB=20=D1=83=D0=B1?=
+ =?UTF-8?q?=D1=80=D0=B0=D0=BD=D1=8B=20=D0=B2=20=C2=AB=E2=8B=AF=C2=BB=20?=
+ =?UTF-8?q?=D0=B8=20=C2=AB=D0=A0=D0=B5=D0=B6=D0=B8=D0=BC=20=D1=80=D0=B0?=
+ =?UTF-8?q?=D0=B7=D1=80=D0=B0=D0=B1=D0=BE=D1=82=D1=87=D0=B8=D0=BA=D0=B0?=
+ =?UTF-8?q?=C2=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/ChatView.tsx          |   9 +-
+ apps/web/src/components/chat/ChatHeader.tsx   |  76 +++++++-----
+ .../components/chat/PanelLayoutControls.tsx   |  11 +-
+ .../src/components/sergey/businessMode.tsx    | 109 ++++++++++++++++++
+ 4 files changed, 174 insertions(+), 31 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/businessMode.tsx
+
+diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
+index 38f773cf03..20ef375698 100644
+--- a/apps/web/src/components/ChatView.tsx
++++ b/apps/web/src/components/ChatView.tsx
+@@ -518,6 +518,7 @@ import {
+   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+   recallableComposerPrompt,
+ } from "./chat/composerPromptHistory";
++import { useT3patchDevMode } from "./sergey/businessMode"; // t3-patch
+ 
+ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+ const EMPTY_QUEUED_MESSAGES: QueuedComposerMessage[] = [];
+@@ -1775,6 +1776,7 @@ export default function ChatView(props: ChatViewProps) {
+   const feedbackUploadsInFlightRef = useRef(new Set<string>());
+   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
+ 
++  const t3patchDevMode = useT3patchDevMode(); // t3-patch: бизнес-режим (sergey/businessMode.tsx)
+   const terminalUiState = useTerminalUiStateStore((state) =>
+     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
+   );
+@@ -9097,6 +9099,8 @@ export default function ChatView(props: ChatViewProps) {
+ 
+   const panelToggleControls = (
+     <PanelLayoutControls
++      showTerminalControl={t3patchDevMode} // t3-patch: в бизнес-режиме терминал — в меню «⋯»
++      t3patchFilesIcon={!t3patchDevMode}
+       terminalAvailable={activeProject !== null}
+       terminalOpen={terminalUiState.terminalOpen}
+       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+@@ -9392,6 +9396,9 @@ export default function ChatView(props: ChatViewProps) {
+             onAddProjectScript={saveProjectScript}
+             onUpdateProjectScript={updateProjectScript}
+             onDeleteProjectScript={deleteProjectScript}
++            t3patchTerminalAvailable={activeProject !== null}
++            t3patchTerminalOpen={terminalUiState.terminalOpen}
++            t3patchOnToggleTerminal={toggleTerminalVisibility}
+           />
+         </WorkspacePageHeader>
+ 
+@@ -9738,7 +9745,7 @@ export default function ChatView(props: ChatViewProps) {
+                                 ref={branchToolbarRef}
+                                 environmentId={activeThread.environmentId}
+                                 threadId={activeThread.id}
+-                                showGitControls={isGitRepo}
++                                showGitControls={isGitRepo && t3patchDevMode} // t3-patch
+                                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                                 onEnvModeChange={onEnvModeChange}
+                                 startFromOrigin={startFromOrigin}
+diff --git a/apps/web/src/components/chat/ChatHeader.tsx b/apps/web/src/components/chat/ChatHeader.tsx
+index fbebc323a9..ff8a8002f1 100644
+--- a/apps/web/src/components/chat/ChatHeader.tsx
++++ b/apps/web/src/components/chat/ChatHeader.tsx
+@@ -47,6 +47,7 @@ import {
+   WorkspaceBreadcrumbSeparator,
+ } from "../WorkspaceBreadcrumb";
+ import { cn } from "~/lib/utils";
++import { T3patchBusinessHeaderActions, useT3patchDevMode } from "../sergey/businessMode"; // t3-patch
+ 
+ interface ChatHeaderProps {
+   activeThreadEnvironmentId: EnvironmentId;
+@@ -73,6 +74,10 @@ interface ChatHeaderProps {
+     input: NewProjectScriptInput,
+   ) => Promise<ProjectScriptActionResult>;
+   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
++  // t3-patch: терминал для меню «⋯» бизнес-режима (sergey/businessMode.tsx)
++  t3patchTerminalAvailable?: boolean;
++  t3patchTerminalOpen?: boolean;
++  t3patchOnToggleTerminal?: () => void;
+ }
+ 
+ /**
+@@ -139,7 +144,11 @@ export const ChatHeader = memo(function ChatHeader({
+   onAddProjectScript,
+   onUpdateProjectScript,
+   onDeleteProjectScript,
++  t3patchTerminalAvailable = false,
++  t3patchTerminalOpen = false,
++  t3patchOnToggleTerminal,
+ }: ChatHeaderProps) {
++  const t3patchDevMode = useT3patchDevMode(); // t3-patch
+   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
+     usePanelAnimationSettings();
+   const headerActionsRef = useRef<HTMLDivElement | null>(null);
+@@ -409,34 +418,45 @@ export const ChatHeader = memo(function ChatHeader({
+           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
+         )}
+       >
+-        {activeProjectScripts && (
+-          <ProjectScriptsControl
+-            scripts={activeProjectScripts}
+-            fileScripts={fileScripts}
+-            keybindings={keybindings}
+-            preferredScriptId={preferredScriptId}
+-            onRunScript={onRunProjectScript}
+-            onAddScript={onAddProjectScript}
+-            onUpdateScript={onUpdateProjectScript}
+-            onDeleteScript={onDeleteProjectScript}
+-          />
+-        )}
+-        {showOpenInPicker && (
+-          <OpenInPicker
+-            environmentId={activeThreadEnvironmentId}
+-            keybindings={keybindings}
+-            availableEditors={availableEditors}
+-            openInCwd={openInCwd}
+-          />
+-        )}
+-        {activeProjectName && (
+-          <GitActionsControl
+-            gitCwd={gitCwd}
+-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+-            onOpenPullRequest={onOpenPullRequest}
+-            {...(draftId ? { draftId } : {})}
+-          />
+-        )}
++        {/* t3-patch: бизнес-режим — без Git, VS Code и скриптов; они в «Режиме разработчика» */}
++        {t3patchDevMode ? (
++          <>
++            {activeProjectScripts && (
++              <ProjectScriptsControl
++                scripts={activeProjectScripts}
++                fileScripts={fileScripts}
++                keybindings={keybindings}
++                preferredScriptId={preferredScriptId}
++                onRunScript={onRunProjectScript}
++                onAddScript={onAddProjectScript}
++                onUpdateScript={onUpdateProjectScript}
++                onDeleteScript={onDeleteProjectScript}
++              />
++            )}
++            {showOpenInPicker && (
++              <OpenInPicker
++                environmentId={activeThreadEnvironmentId}
++                keybindings={keybindings}
++                availableEditors={availableEditors}
++                openInCwd={openInCwd}
++              />
++            )}
++            {activeProjectName && (
++              <GitActionsControl
++                gitCwd={gitCwd}
++                activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
++                onOpenPullRequest={onOpenPullRequest}
++                {...(draftId ? { draftId } : {})}
++              />
++            )}
++          </>
++        ) : null}
++        <T3patchBusinessHeaderActions
++          onNewThread={!t3patchDevMode && activeProject ? onNewThreadInProject : null}
++          terminalAvailable={t3patchTerminalAvailable}
++          terminalOpen={t3patchTerminalOpen}
++          onToggleTerminal={() => t3patchOnToggleTerminal?.()}
++        />
+       </div>
+     </div>
+   );
+diff --git a/apps/web/src/components/chat/PanelLayoutControls.tsx b/apps/web/src/components/chat/PanelLayoutControls.tsx
+index 8e8e640ee8..5718f2a078 100644
+--- a/apps/web/src/components/chat/PanelLayoutControls.tsx
++++ b/apps/web/src/components/chat/PanelLayoutControls.tsx
+@@ -1,4 +1,4 @@
+-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
++import { FolderOpenIcon, Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+ import { memo } from "react";
+ 
+ import { Toggle } from "../ui/toggle";
+@@ -7,6 +7,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+ interface PanelLayoutControlsProps {
+   showTerminalControl?: boolean;
+   terminalAvailable: boolean;
++  /** t3-patch: бизнес-режим — правая панель это прежде всего проводник, значок папки. */
++  t3patchFilesIcon?: boolean;
+   terminalOpen: boolean;
+   terminalShortcutLabel: string | null;
+   rightPanelAvailable: boolean;
+@@ -21,6 +23,7 @@ interface PanelLayoutControlsProps {
+ 
+ export const PanelLayoutControls = memo(function PanelLayoutControls({
+   showTerminalControl = true,
++  t3patchFilesIcon = false,
+   terminalAvailable,
+   terminalOpen,
+   terminalShortcutLabel,
+@@ -74,7 +77,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
+             size="sm"
+             disabled={!rightPanelAvailable}
+           >
+-            <PanelRightIcon className="size-4" />
++            {t3patchFilesIcon ? (
++              <FolderOpenIcon className="size-4" />
++            ) : (
++              <PanelRightIcon className="size-4" />
++            )}
+             {liveAgentCount > 0 ? (
+               <span
+                 aria-hidden
+diff --git a/apps/web/src/components/sergey/businessMode.tsx b/apps/web/src/components/sergey/businessMode.tsx
+new file mode 100644
+index 0000000000..68988b87ee
+--- /dev/null
++++ b/apps/web/src/components/sergey/businessMode.tsx
+@@ -0,0 +1,109 @@
++/**
++ * t3-patch: T3 для бизнеса — инструменты разработчика убраны с глаз.
++ *
++ * По умолчанию шапка треда показывает только то, что нужно в работе с документами: проект и
++ * тред, «Новый тред», проводник (правая панель) и меню «⋯». Git (ветки, коммит, PR), «Открыть
++ * в VS Code», скрипты проекта, переключатель терминала и выбор ветки под полем ввода скрыты.
++ * В «⋯» — терминал и переключатель «Режим разработчика», который возвращает штатную шапку.
++ * Режим хранится на устройстве (localStorage), горячие клавиши работают в обоих режимах.
++ */
++import { EllipsisIcon, PlusIcon } from "lucide-react";
++import { useSyncExternalStore } from "react";
++
++import { Button } from "../ui/button";
++import { Menu, MenuCheckboxItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
++
++const STORAGE_KEY = "t3patch.devMode";
++const listeners = new Set<() => void>();
++
++function readDevMode(): boolean {
++  try {
++    return window.localStorage.getItem(STORAGE_KEY) === "1";
++  } catch {
++    return false;
++  }
++}
++
++export function t3patchSetDevMode(enabled: boolean): void {
++  try {
++    if (enabled) window.localStorage.setItem(STORAGE_KEY, "1");
++    else window.localStorage.removeItem(STORAGE_KEY);
++  } catch {
++    // приватный режим браузера: режим просто не запомнится
++  }
++  for (const listener of listeners) listener();
++}
++
++function subscribe(listener: () => void): () => void {
++  listeners.add(listener);
++  const onStorage = (event: StorageEvent) => {
++    if (event.key === STORAGE_KEY) listener();
++  };
++  window.addEventListener("storage", onStorage);
++  return () => {
++    listeners.delete(listener);
++    window.removeEventListener("storage", onStorage);
++  };
++}
++
++/** Включён ли «Режим разработчика» (штатная шапка с Git, VS Code, терминалом). */
++export function useT3patchDevMode(): boolean {
++  return useSyncExternalStore(subscribe, readDevMode, () => false);
++}
++
++/** Кнопки шапки треда: «Новый тред» и меню «⋯» (терминал, режим разработчика). */
++export function T3patchBusinessHeaderActions(props: {
++  readonly onNewThread: (() => void) | null;
++  readonly terminalAvailable: boolean;
++  readonly terminalOpen: boolean;
++  readonly onToggleTerminal: () => void;
++}) {
++  const devMode = useT3patchDevMode();
++  return (
++    <>
++      {props.onNewThread ? (
++        <Button
++          variant="outline"
++          size="xs"
++          className="gap-1"
++          aria-label="Новый тред"
++          onClick={props.onNewThread}
++        >
++          <PlusIcon className="size-3.5" />
++          <span className="hidden @xl/header-actions:inline">Новый тред</span>
++        </Button>
++      ) : null}
++      <Menu>
++        <MenuTrigger
++          render={<Button variant="ghost" size="icon-xs" aria-label="Ещё" />}
++          className="text-muted-foreground hover:text-foreground"
++        >
++          <EllipsisIcon className="size-4" />
++        </MenuTrigger>
++        <MenuPopup align="end" className="w-72">
++          <MenuCheckboxItem
++            variant="switch"
++            checked={props.terminalOpen}
++            disabled={!props.terminalAvailable}
++            onCheckedChange={() => props.onToggleTerminal()}
++          >
++            Терминал
++          </MenuCheckboxItem>
++          <MenuSeparator />
++          <MenuCheckboxItem
++            variant="switch"
++            checked={devMode}
++            onCheckedChange={(checked) => t3patchSetDevMode(checked)}
++          >
++            <span className="flex flex-col gap-0.5">
++              <span>Режим разработчика</span>
++              <span className="text-xs text-muted-foreground">
++                Git и ветки, VS Code, скрипты, терминал в шапке
++              </span>
++            </span>
++          </MenuCheckboxItem>
++        </MenuPopup>
++      </Menu>
++    </>
++  );
++}
+-- 
+2.43.0
+

@@ -1,0 +1,77 @@
+From f2dd04012f0f89d127449276b7aa15c6410066e3 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 23:18:19 +0300
+Subject: [PATCH] =?UTF-8?q?feat(i18n):=20=D1=80=D1=83=D1=81=D0=B8=D1=84?=
+ =?UTF-8?q?=D0=B8=D0=BA=D0=B0=D1=86=D0=B8=D1=8F=20=D0=B2=D0=B5=D0=B1-?=
+ =?UTF-8?q?=D0=BA=D0=BB=D0=B8=D0=B5=D0=BD=D1=82=D0=B0=20=D0=BF=D0=BB=D0=B0?=
+ =?UTF-8?q?=D0=B3=D0=B8=D0=BD=D0=BE=D0=BC=20=D1=81=D0=B1=D0=BE=D1=80=D0=BA?=
+ =?UTF-8?q?=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Одна строка в vite.config.ts подключает Babel-плагин русификации в уже
+существующий вызов @rolldown/plugin-babel. Плагин и словарь лежат вне
+исходников — в t3-patches/i18n/, путь передаёт build.sh через
+T3PATCH_I18N_DIR. Без переменной и в тестах (VITEST) сборка штатная.
+---
+ apps/web/t3patch-i18n/index.mjs | 17 +++++++++++++++++
+ apps/web/vite.config.ts         |  4 ++++
+ 2 files changed, 21 insertions(+)
+ create mode 100644 apps/web/t3patch-i18n/index.mjs
+
+diff --git a/apps/web/t3patch-i18n/index.mjs b/apps/web/t3patch-i18n/index.mjs
+new file mode 100644
+index 0000000000..e66dbefd28
+--- /dev/null
++++ b/apps/web/t3patch-i18n/index.mjs
+@@ -0,0 +1,17 @@
++// t3-patch: подключение русификации к сборке веб-клиента.
++//
++// Плагин и словарь живут вне исходников T3 — в каталоге патчей
++// (T3PATCH_I18N_DIR, его выставляет build.sh). Без переменной, в тестах
++// (VITEST — тесты разработчиков проверяют английские надписи) и при сборке
++// с --no-i18n плагин не подключается, и сборка остаётся штатной.
++import { existsSync, readFileSync } from "node:fs";
++import { join } from "node:path";
++import { pathToFileURL } from "node:url";
++
++export async function t3patchRuBabelPlugins() {
++  const dir = process.env.T3PATCH_I18N_DIR;
++  if (!dir || process.env.VITEST || !existsSync(join(dir, "plugin.mjs"))) return [];
++  const { default: plugin } = await import(pathToFileURL(join(dir, "plugin.mjs")).href);
++  const dict = JSON.parse(readFileSync(join(dir, "ru.json"), "utf8"));
++  return [[plugin, { dict }]];
++}
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index 1d710f273c..fa6c9b5e59 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -2,6 +2,7 @@ import * as NodeZlib from "node:zlib";
+ 
+ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+ import babel from "@rolldown/plugin-babel";
++import { t3patchRuBabelPlugins } from "./t3patch-i18n/index.mjs"; // t3-patch: русификация
+ import { tanstackRouter } from "@tanstack/router-plugin/vite";
+ import compression from "compression";
+ import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
+@@ -153,6 +154,8 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
+   .filter((entry) => entry.length > 0);
+ const allowedHosts = [".ts.net", ...configuredAllowedHosts];
+ 
++const t3patchRuPlugins = await t3patchRuBabelPlugins(); // t3-patch
++
+ export default defineConfig(() => {
+   return {
+     assetsInclude: ["**/*.wasm"],
+@@ -179,6 +182,7 @@ export default defineConfig(() => {
+         // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
+         parserOpts: { plugins: ["typescript", "jsx"] },
+         presets: [reactCompilerPreset()],
++        plugins: t3patchRuPlugins, // t3-patch
+       }),
+       tailwindPlugins(bundledDev),
+     ],
+-- 
+2.43.0
+

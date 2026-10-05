@@ -1,0 +1,289 @@
+From 5a6eff85656cad05b256e0cc88dba462485523db Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 22:24:50 +0300
+Subject: [PATCH 7/7] =?UTF-8?q?feat(files):=20=D0=BB=D0=B8=D1=81=D1=82=20E?=
+ =?UTF-8?q?xcel=20=D1=81=D0=B5=D1=82=D0=BA=D0=BE=D0=B9=20=D0=BA=D0=B0?=
+ =?UTF-8?q?=D0=BA=20=D0=B2=20Excel,=20=D0=B1=D0=B5=D0=B7=20=D0=BB=D0=B8?=
+ =?UTF-8?q?=D0=BC=D0=B8=D1=82=D0=B0=20100=C3=9730?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Штатный просмотрщик CSV обрезал лист до 100 строк и 30 столбцов и считал
+первую строку заголовком. Своя сетка: буквы столбцов и номера строк как в
+Excel (пустые строки сохраняются), закреплённые заголовки, строка сверху
+с полным текстом выбранной ячейки, подгрузка строк порциями по 300.
+---
+ .../src/components/sergey/OfficePreview.tsx   |  15 +--
+ apps/web/src/components/sergey/SheetGrid.tsx  | 119 ++++++++++++++++++
+ apps/web/src/components/sergey/layout.test.ts |  36 ++++++
+ apps/web/src/components/sergey/officeFiles.ts |  25 ++--
+ 4 files changed, 176 insertions(+), 19 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/SheetGrid.tsx
+ create mode 100644 apps/web/src/components/sergey/layout.test.ts
+
+diff --git a/apps/web/src/components/sergey/OfficePreview.tsx b/apps/web/src/components/sergey/OfficePreview.tsx
+index d3412e4104..3c5331912e 100644
+--- a/apps/web/src/components/sergey/OfficePreview.tsx
++++ b/apps/web/src/components/sergey/OfficePreview.tsx
+@@ -1,10 +1,10 @@
+ import { useEffect, useState } from "react";
+ 
+-import { DelimitedTablePreview } from "~/components/files/DelimitedTablePreview";
+ import { Spinner } from "~/components/ui/spinner";
+ import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
+ 
+ import { fetchT3PatchFileInfo } from "./fileActions";
++import { SheetGrid } from "./SheetGrid";
+ import {
+   OFFICE_PREVIEW_MAX_BYTES,
+   officeKind,
+@@ -142,17 +142,12 @@ export function OfficePreview(props: { readonly cwd: string; readonly relativePa
+       </div>
+       {sheet?.truncated ? (
+         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
+-          Показаны первые {sheet.csv.split("\n").length.toLocaleString("ru-RU")} строк из{" "}
+-          {sheet.totalRows.toLocaleString("ru-RU")}. Полностью — в скачанном файле.
++          В листе {sheet.totalRows.toLocaleString("ru-RU")} строк, в просмотре — первые{" "}
++          {sheet.rows.length.toLocaleString("ru-RU")}. Полностью — в скачанном файле.
+         </div>
+       ) : null}
+-      {sheet && sheet.csv ? (
+-        <DelimitedTablePreview
+-          key={`${props.relativePath}:${sheet.name}`}
+-          name={sheet.name}
+-          text={sheet.csv}
+-          delimiter=","
+-        />
++      {sheet && sheet.rows.length > 0 ? (
++        <SheetGrid key={`${props.relativePath}:${sheet.name}`} sheet={sheet} />
+       ) : (
+         <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-muted-foreground">
+           Лист пустой.
+diff --git a/apps/web/src/components/sergey/SheetGrid.tsx b/apps/web/src/components/sergey/SheetGrid.tsx
+new file mode 100644
+index 0000000000..8494445f58
+--- /dev/null
++++ b/apps/web/src/components/sergey/SheetGrid.tsx
+@@ -0,0 +1,119 @@
++/* oxlint-disable react/no-array-index-key -- строки и столбцы листа имеют постоянные позиции */
++/**
++ * t3-patch: лист Excel в виде сетки — буквы столбцов и номера строк как в Excel,
++ * закреплённые заголовки, без штатного лимита 100×30. Длинный текст не растягивает
++ * строку: нажатие на ячейку показывает её целиком в строке сверху (как строка
++ * формул). Строки подгружаются порциями, чтобы телефон не тормозил.
++ */
++import { useMemo, useState } from "react";
++
++import type { SheetPreview } from "./officeFiles";
++
++const ROWS_STEP = 300;
++const MAX_COLUMNS = 200;
++
++export function columnLetter(index: number): string {
++  let n = index + 1;
++  let out = "";
++  while (n > 0) {
++    const rest = (n - 1) % 26;
++    out = String.fromCharCode(65 + rest) + out;
++    n = Math.floor((n - 1) / 26);
++  }
++  return out;
++}
++
++export function SheetGrid(props: { readonly sheet: SheetPreview }) {
++  const { sheet } = props;
++  const [visible, setVisible] = useState(ROWS_STEP);
++  const [selected, setSelected] = useState<{ row: number; column: number } | null>(null);
++  const columnCount = useMemo(
++    () =>
++      Math.min(
++        MAX_COLUMNS,
++        sheet.rows.reduce((max, row) => Math.max(max, row.length), 0),
++      ),
++    [sheet.rows],
++  );
++  const shownRows = sheet.rows.slice(0, visible);
++  const address = selected
++    ? `${columnLetter(sheet.firstColumn + selected.column)}${sheet.firstRow + selected.row + 1}`
++    : null;
++  const selectedText = selected ? (sheet.rows[selected.row]?.[selected.column] ?? "") : "";
++
++  return (
++    <div className="flex min-h-0 flex-1 flex-col">
++      <div className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border/60 px-2 py-1 text-xs">
++        <span className="w-14 shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-center font-mono text-muted-foreground">
++          {address ?? "—"}
++        </span>
++        <span className="max-h-24 min-w-0 flex-1 overflow-auto break-words whitespace-pre-wrap select-text">
++          {address ? (
++            selectedText || <span className="text-muted-foreground">пусто</span>
++          ) : (
++            <span className="text-muted-foreground">
++              Нажми на ячейку, чтобы увидеть текст целиком
++            </span>
++          )}
++        </span>
++      </div>
++      <div className="min-h-0 flex-1 overflow-auto">
++        <table className="border-separate border-spacing-0 text-xs">
++          <thead className="sticky top-0 z-20">
++            <tr>
++              <th className="sticky left-0 z-30 border-r border-b border-border bg-muted px-1.5 py-1" />
++              {Array.from({ length: columnCount }, (_, column) => (
++                <th
++                  key={column}
++                  scope="col"
++                  className="min-w-12 border-r border-b border-border bg-muted px-2 py-1 text-center font-medium text-muted-foreground"
++                >
++                  {columnLetter(sheet.firstColumn + column)}
++                </th>
++              ))}
++            </tr>
++          </thead>
++          <tbody>
++            {shownRows.map((row, rowIndex) => (
++              <tr key={rowIndex}>
++                <th
++                  scope="row"
++                  className="sticky left-0 z-10 border-r border-b border-border bg-muted px-1.5 py-1 text-right font-normal text-muted-foreground tabular-nums"
++                >
++                  {sheet.firstRow + rowIndex + 1}
++                </th>
++                {Array.from({ length: columnCount }, (_, column) => {
++                  const text = row[column] ?? "";
++                  const isSelected = selected?.row === rowIndex && selected.column === column;
++                  return (
++                    <td
++                      key={column}
++                      onClick={() => setSelected({ row: rowIndex, column })}
++                      className={`max-w-64 cursor-cell overflow-hidden border-r border-b border-border/50 px-2 py-1 text-ellipsis whitespace-nowrap tabular-nums ${
++                        isSelected
++                          ? "bg-primary/15 outline outline-1 -outline-offset-1 outline-primary"
++                          : ""
++                      }`}
++                    >
++                      {text}
++                    </td>
++                  );
++                })}
++              </tr>
++            ))}
++          </tbody>
++        </table>
++        {sheet.rows.length > visible ? (
++          <button
++            type="button"
++            onClick={() => setVisible((count) => count + ROWS_STEP)}
++            className="m-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
++          >
++            Показать ещё {Math.min(ROWS_STEP, sheet.rows.length - visible)} строк (показано{" "}
++            {visible} из {sheet.rows.length})
++          </button>
++        ) : null}
++      </div>
++    </div>
++  );
++}
+diff --git a/apps/web/src/components/sergey/layout.test.ts b/apps/web/src/components/sergey/layout.test.ts
+new file mode 100644
+index 0000000000..10b698a54c
+--- /dev/null
++++ b/apps/web/src/components/sergey/layout.test.ts
+@@ -0,0 +1,36 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import { explorerWidthPx } from "./ResizableExplorerPane";
++import { columnLetter } from "./SheetGrid";
++
++describe("буквы столбцов как в Excel", () => {
++  it("A…Z, затем AA, AZ, BA, ZZ, AAA", () => {
++    expect([0, 1, 25, 26, 51, 52, 701, 702].map(columnLetter)).toEqual([
++      "A",
++      "B",
++      "Z",
++      "AA",
++      "AZ",
++      "BA",
++      "ZZ",
++      "AAA",
++    ]);
++  });
++});
++
++describe("ширина дерева файлов", () => {
++  it("по умолчанию — штатные 46%, но не больше 22rem", () => {
++    expect(explorerWidthPx(390, null)).toBe(179);
++    expect(explorerWidthPx(1200, null)).toBe(352);
++  });
++
++  it("документу всегда остаётся не меньше 140 px, дереву не меньше 120", () => {
++    expect(explorerWidthPx(390, 0.99)).toBe(250);
++    expect(explorerWidthPx(390, 0.01)).toBe(120);
++  });
++
++  it("доля сохраняется между разными ширинами экрана", () => {
++    expect(explorerWidthPx(400, 0.5)).toBe(200);
++    expect(explorerWidthPx(1000, 0.5)).toBe(500);
++  });
++});
+diff --git a/apps/web/src/components/sergey/officeFiles.ts b/apps/web/src/components/sergey/officeFiles.ts
+index 903ca52d1d..3711d6b092 100644
+--- a/apps/web/src/components/sergey/officeFiles.ts
++++ b/apps/web/src/components/sergey/officeFiles.ts
+@@ -58,7 +58,10 @@ interface SheetJs {
+     Sheets: Record<string, Record<string, unknown>>;
+   };
+   utils: {
+-    sheet_to_csv(sheet: Record<string, unknown>, options?: { blankrows?: boolean }): string;
++    sheet_to_json(
++      sheet: Record<string, unknown>,
++      options: { header: 1; raw: false; defval: string; blankrows: boolean },
++    ): unknown[][];
+     decode_range(ref: string): { s: { r: number; c: number }; e: { r: number; c: number } };
+     encode_range(range: { s: { r: number; c: number }; e: { r: number; c: number } }): string;
+   };
+@@ -70,7 +73,11 @@ interface Mammoth {
+ 
+ export interface SheetPreview {
+   readonly name: string;
+-  readonly csv: string;
++  /** Ячейки как текст, в том виде, как их показывает Excel. */
++  readonly rows: string[][];
++  /** Первая строка и столбец листа (0 = строка 1 / столбец A) — нумерация как в Excel. */
++  readonly firstRow: number;
++  readonly firstColumn: number;
+   readonly totalRows: number;
+   readonly truncated: boolean;
+ }
+@@ -82,7 +89,8 @@ export async function readSheets(data: ArrayBuffer): Promise<SheetPreview[]> {
+   return book.SheetNames.map((name) => {
+     const sheet = book.Sheets[name] ?? {};
+     const ref = typeof sheet["!ref"] === "string" ? sheet["!ref"] : null;
+-    if (!ref) return { name, csv: "", totalRows: 0, truncated: false };
++    if (!ref)
++      return { name, rows: [], firstRow: 0, firstColumn: 0, totalRows: 0, truncated: false };
+     const range = XLSX.utils.decode_range(ref);
+     const totalRows = range.e.r - range.s.r + 1;
+     const truncated = totalRows > SHEET_PREVIEW_MAX_ROWS;
+@@ -95,12 +103,11 @@ export async function readSheets(data: ArrayBuffer): Promise<SheetPreview[]> {
+           }),
+         }
+       : sheet;
+-    return {
+-      name,
+-      csv: XLSX.utils.sheet_to_csv(limited, { blankrows: false }),
+-      totalRows,
+-      truncated,
+-    };
++    // Пустые строки не выбрасываем: номера строк должны совпадать с Excel.
++    const rows = XLSX.utils
++      .sheet_to_json(limited, { header: 1, raw: false, defval: "", blankrows: true })
++      .map((row) => row.map((cell) => (cell == null ? "" : String(cell))));
++    return { name, rows, firstRow: range.s.r, firstColumn: range.s.c, totalRows, truncated };
+   });
+ }
+ 
+-- 
+2.43.0
+

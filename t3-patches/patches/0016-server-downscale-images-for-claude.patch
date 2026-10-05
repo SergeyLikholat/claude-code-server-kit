@@ -1,0 +1,218 @@
+From 774e94dbbee080c1d487ecae00d447e120c7e868 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sat, 26 Sep 2026 23:19:43 +0300
+Subject: [PATCH] =?UTF-8?q?fix(server):=20=D1=83=D0=BC=D0=B5=D0=BD=D1=8C?=
+ =?UTF-8?q?=D1=88=D0=B0=D1=82=D1=8C=20=D0=BA=D0=B0=D1=80=D1=82=D0=B8=D0=BD?=
+ =?UTF-8?q?=D0=BA=D0=B8=20=D0=BF=D0=B5=D1=80=D0=B5=D0=B4=20=D0=BE=D1=82?=
+ =?UTF-8?q?=D0=BF=D1=80=D0=B0=D0=B2=D0=BA=D0=BE=D0=B9=20=D0=B2=20Claude?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Когда картинок в запросе больше 20, каждая должна быть не больше
+2000×2000. Скриншот телефона 1440×3200 выше, и с 21-й картинки в треде
+Claude их отвергал («an image in the conversation could not be processed
+and was removed»). Теперь длинная сторона ужимается до 1568 px (ffmpeg,
+формат прежний) — до этого размера Claude всё равно сжимает сам. Файл на
+диске не меняется; при ошибке уходит оригинал.
+---
+ .../src/provider/Layers/ClaudeAdapter.ts      |  7 +-
+ apps/server/src/sergey/imageDownscale.test.ts | 56 +++++++++++
+ apps/server/src/sergey/imageDownscale.ts      | 94 +++++++++++++++++++
+ 3 files changed, 156 insertions(+), 1 deletion(-)
+ create mode 100644 apps/server/src/sergey/imageDownscale.test.ts
+ create mode 100644 apps/server/src/sergey/imageDownscale.ts
+
+diff --git a/apps/server/src/provider/Layers/ClaudeAdapter.ts b/apps/server/src/provider/Layers/ClaudeAdapter.ts
+index 3afde2b39a..38350d5bf6 100644
+--- a/apps/server/src/provider/Layers/ClaudeAdapter.ts
++++ b/apps/server/src/provider/Layers/ClaudeAdapter.ts
+@@ -86,6 +86,7 @@ import * as Stream from "effect/Stream";
+ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+ 
+ import { resolveAttachmentPath } from "../../attachmentStore.ts";
++import { t3patchDownscaleImage } from "../../sergey/imageDownscale.ts"; // t3-patch
+ import { ServerConfig } from "../../config.ts";
+ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+ import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+@@ -1561,10 +1562,14 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
+       ),
+     );
+ 
++    // t3-patch: длинная сторона ≤ 1568 px — иначе с 21-й картинки в треде Claude их отвергает
++    const sentBytes = yield* Effect.promise(() =>
++      t3patchDownscaleImage(bytes, attachment.mimeType),
++    );
+     sdkContent.push(
+       buildClaudeImageContentBlock({
+         mimeType: attachment.mimeType,
+-        bytes,
++        bytes: sentBytes,
+       }),
+     );
+   }
+diff --git a/apps/server/src/sergey/imageDownscale.test.ts b/apps/server/src/sergey/imageDownscale.test.ts
+new file mode 100644
+index 0000000000..520f536bc5
+--- /dev/null
++++ b/apps/server/src/sergey/imageDownscale.test.ts
+@@ -0,0 +1,56 @@
++// @effect-diagnostics nodeBuiltinImport:off
++import { readFileSync } from "node:fs";
++
++import { readImageDimensions } from "@t3tools/shared/imageDimensions";
++import { describe, expect, it } from "vite-plus/test";
++
++import { t3patchDownscaleImage, t3patchTargetSize } from "./imageDownscale.ts";
++
++describe("уменьшение картинок перед отправкой в Claude", () => {
++  it("длинная сторона до 1568, пропорции и чётность сохраняются", () => {
++    expect(t3patchTargetSize(1440, 3200)).toEqual({ width: 706, height: 1568 });
++    expect(t3patchTargetSize(3200, 1440)).toEqual({ width: 1568, height: 706 });
++    expect(t3patchTargetSize(1568, 900)).toBeNull();
++    expect(t3patchTargetSize(456, 58)).toBeNull();
++  });
++
++  it("скриншот телефона 1440×3200 уходит в Claude как JPEG 706×1568", async () => {
++    // Сгенерированный ffmpeg кадр нужного размера — тот же путь, что у настоящего скриншота.
++    const { spawnSync } = await import("node:child_process");
++    const made = spawnSync(
++      "ffmpeg",
++      [
++        "-loglevel",
++        "error",
++        "-f",
++        "lavfi",
++        "-i",
++        "testsrc=size=1440x3200",
++        "-frames:v",
++        "1",
++        "-f",
++        "image2pipe",
++        "-c:v",
++        "mjpeg",
++        "pipe:1",
++      ],
++      { maxBuffer: 50 * 1024 * 1024 },
++    );
++    const original = new Uint8Array(made.stdout);
++    expect(readImageDimensions(original)).toEqual({ width: 1440, height: 3200 });
++    const sent = await t3patchDownscaleImage(original, "image/jpeg");
++    expect(readImageDimensions(sent)).toEqual({ width: 706, height: 1568 });
++    expect(sent[0]).toBe(0xff); // по-прежнему JPEG
++    expect(sent[1]).toBe(0xd8);
++  });
++
++  it("маленькие картинки, gif и мусор — без изменений", async () => {
++    const png = new Uint8Array(
++      readFileSync(new URL("../../../web/public/favicon-32x32.png", import.meta.url)),
++    );
++    expect(await t3patchDownscaleImage(png, "image/png")).toBe(png);
++    const junk = new Uint8Array([1, 2, 3]);
++    expect(await t3patchDownscaleImage(junk, "image/jpeg")).toBe(junk);
++    expect(await t3patchDownscaleImage(junk, "image/gif")).toBe(junk);
++  });
++});
+diff --git a/apps/server/src/sergey/imageDownscale.ts b/apps/server/src/sergey/imageDownscale.ts
+new file mode 100644
+index 0000000000..ead532c264
+--- /dev/null
++++ b/apps/server/src/sergey/imageDownscale.ts
+@@ -0,0 +1,94 @@
++// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics globalTimers:off
++/**
++ * t3-patch: уменьшение картинок перед отправкой в Claude.
++ *
++ * Каждый ход модель получает всю переписку треда вместе с картинками. Пока картинок в
++ * запросе не больше 20, каждая может быть до 8000 px; когда их больше, предел — 2000×2000.
++ * Скриншот телефона (1440×3200) выше 2000 px, поэтому с 21-й картинки в треде Claude
++ * отвергал их: «an image in the conversation could not be processed and was removed».
++ *
++ * Здесь длинная сторона ужимается до 1568 px — до этого размера Claude всё равно сам
++ * сжимает картинки перед чтением, так что видимое модели качество не теряется, а лимит
++ * в 2000 px соблюдается с запасом. То же решение в Telegram-роутере (attachments.js).
++ * Файл на диске не трогаем: в интерфейсе остаётся оригинал. При любой ошибке уходит оригинал.
++ */
++import { spawn } from "node:child_process";
++
++import { readImageDimensions } from "@t3tools/shared/imageDimensions";
++
++export const T3PATCH_IMAGE_MAX_DIM = 1568;
++const FFMPEG_TIMEOUT_MS = 20_000;
++
++/** Кодировщик ffmpeg под тот же формат — media_type в запросе к Claude остаётся прежним. */
++const ENCODERS: Record<string, readonly string[]> = {
++  "image/jpeg": ["-c:v", "mjpeg", "-q:v", "3"],
++  "image/png": ["-c:v", "png"],
++  "image/webp": ["-c:v", "libwebp", "-quality", "85"],
++};
++
++/** Новые размеры с сохранением пропорций или null, если уменьшать не нужно. */
++export function t3patchTargetSize(
++  width: number,
++  height: number,
++  maxDim = T3PATCH_IMAGE_MAX_DIM,
++): { readonly width: number; readonly height: number } | null {
++  const longest = Math.max(width, height);
++  if (longest <= maxDim) return null;
++  const scale = maxDim / longest;
++  // Чётные размеры — mjpeg с цветовой субдискретизацией не любит нечётные.
++  const even = (value: number) => Math.max(2, Math.round((value * scale) / 2) * 2);
++  return { width: even(width), height: even(height) };
++}
++
++function runFfmpeg(input: Uint8Array, args: readonly string[]): Promise<Uint8Array | null> {
++  return new Promise((resolve) => {
++    const child = spawn("ffmpeg", ["-hide_banner", "-loglevel", "error", ...args], {
++      stdio: ["pipe", "pipe", "ignore"],
++    });
++    const chunks: Buffer[] = [];
++    const timer = setTimeout(() => {
++      child.kill("SIGKILL");
++      resolve(null);
++    }, FFMPEG_TIMEOUT_MS);
++    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
++    child.on("error", () => {
++      clearTimeout(timer);
++      resolve(null);
++    });
++    child.on("close", (code) => {
++      clearTimeout(timer);
++      resolve(code === 0 && chunks.length > 0 ? new Uint8Array(Buffer.concat(chunks)) : null);
++    });
++    child.stdin.on("error", () => {
++      // ffmpeg закрыл вход раньше времени — результат решит код выхода
++    });
++    child.stdin.end(Buffer.from(input));
++  });
++}
++
++/** Уменьшенная копия картинки для Claude; исходные байты, если уменьшать не нужно или нельзя. */
++export async function t3patchDownscaleImage(
++  bytes: Uint8Array,
++  mimeType: string,
++): Promise<Uint8Array> {
++  const encoder = ENCODERS[mimeType];
++  if (!encoder) return bytes; // gif (анимация) и прочее — как есть
++  const dimensions = readImageDimensions(bytes);
++  if (!dimensions) return bytes;
++  const target = t3patchTargetSize(dimensions.width, dimensions.height);
++  if (!target) return bytes;
++  const resized = await runFfmpeg(bytes, [
++    "-i",
++    "pipe:0",
++    "-vf",
++    `scale=${target.width}:${target.height}:flags=lanczos`,
++    "-frames:v",
++    "1",
++    ...encoder,
++    "-f",
++    "image2pipe",
++    "pipe:1",
++  ]);
++  return resized ?? bytes;
++}
+-- 
+2.43.0
+

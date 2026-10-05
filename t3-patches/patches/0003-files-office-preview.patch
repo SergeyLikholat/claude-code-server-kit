@@ -1,0 +1,393 @@
+From 4d85ba6a40af3c20376644e43bd1f3a3411884af Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 20:34:43 +0300
+Subject: [PATCH 3/7] =?UTF-8?q?feat(files):=20=D0=BF=D1=80=D0=BE=D1=81?=
+ =?UTF-8?q?=D0=BC=D0=BE=D1=82=D1=80=20xlsx/xls/ods=20=D0=B8=20docx?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Листы — штатной таблицей DelimitedTablePreview (через CSV), docx — HTML
+из mammoth через белый список тегов. Библиотеки SheetJS и mammoth не
+зависимости проекта: build.sh патча кладёт их в client/t3patch-vendor/,
+грузятся лениво. До 20 МБ, до 5000 строк на лист, кнопка «Скачать».
+---
+ .../src/components/files/FilePreviewPanel.tsx |   4 +
+ .../src/components/sergey/OfficePreview.tsx   | 148 ++++++++++++++
+ apps/web/src/components/sergey/officeFiles.ts | 187 ++++++++++++++++++
+ 3 files changed, 339 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/OfficePreview.tsx
+ create mode 100644 apps/web/src/components/sergey/officeFiles.ts
+
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index 37228d69ce..4595b959e6 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -76,6 +76,8 @@ import {
+   FileSurfaceLoading,
+ } from "./fileSurfaceChrome";
+ import SourceFilePreview from "./ReadOnlySourcePreview";
++import { OfficePreview } from "~/components/sergey/OfficePreview";
++import { officeKind } from "~/components/sergey/officeFiles";
+ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
+ import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
+@@ -1219,6 +1221,8 @@ export default function FilePreviewPanel({
+               title={relativePath}
+               workspaceMutationId={workspaceMutationId}
+             />
++          ) : relativePath && !isHostFile && officeKind(relativePath) ? (
++            <OfficePreview key={relativePath} cwd={cwd} relativePath={relativePath} /> // t3-patch
+           ) : relativePath && file.error && file.data === null ? (
+             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+               {file.error}
+diff --git a/apps/web/src/components/sergey/OfficePreview.tsx b/apps/web/src/components/sergey/OfficePreview.tsx
+new file mode 100644
+index 0000000000..7178d57b0b
+--- /dev/null
++++ b/apps/web/src/components/sergey/OfficePreview.tsx
+@@ -0,0 +1,148 @@
++import { useEffect, useState } from "react";
++
++import { DelimitedTablePreview } from "~/components/files/DelimitedTablePreview";
++import { Spinner } from "~/components/ui/spinner";
++import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
++
++import { fetchT3PatchFileInfo } from "./fileActions";
++import {
++  OFFICE_PREVIEW_MAX_BYTES,
++  officeKind,
++  readDocHtml,
++  readSheets,
++  type SheetPreview,
++} from "./officeFiles";
++
++type State =
++  | { readonly status: "loading" }
++  | { readonly status: "error"; readonly message: string; readonly downloadUrl: string | null }
++  | { readonly status: "sheets"; readonly sheets: SheetPreview[]; readonly downloadUrl: string }
++  | { readonly status: "doc"; readonly html: string; readonly downloadUrl: string };
++
++const formatMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
++
++/** t3-patch: просмотр xlsx/xls/ods (листы таблицей) и docx (текст с разметкой). */
++export function OfficePreview(props: { readonly cwd: string; readonly relativePath: string }) {
++  const [state, setState] = useState<State>({ status: "loading" });
++  const [sheetIndex, setSheetIndex] = useState(0);
++
++  useEffect(() => {
++    let cancelled = false;
++    setState({ status: "loading" });
++    setSheetIndex(0);
++    void (async () => {
++      let downloadUrl: string | null = null;
++      try {
++        const info = await fetchT3PatchFileInfo(props.cwd, props.relativePath);
++        downloadUrl = info.downloadUrl;
++        if (!downloadUrl) throw new Error("Это папка, а не файл.");
++        if (info.size > OFFICE_PREVIEW_MAX_BYTES) {
++          throw new Error(
++            `Файл ${formatMb(info.size)} — больше ${formatMb(OFFICE_PREVIEW_MAX_BYTES)}, просмотр отключён. Скачай его.`,
++          );
++        }
++        const response = await fetch(resolvePrimaryEnvironmentHttpUrl(downloadUrl));
++        if (!response.ok) throw new Error(`Сервер ответил ${response.status}`);
++        const data = await response.arrayBuffer();
++        const kind = officeKind(props.relativePath);
++        const next: State =
++          kind === "doc"
++            ? { status: "doc", html: await readDocHtml(data), downloadUrl }
++            : { status: "sheets", sheets: await readSheets(data), downloadUrl };
++        if (!cancelled) setState(next);
++      } catch (error) {
++        if (!cancelled) {
++          setState({
++            status: "error",
++            message: error instanceof Error ? error.message : String(error),
++            downloadUrl,
++          });
++        }
++      }
++    })();
++    return () => {
++      cancelled = true;
++    };
++  }, [props.cwd, props.relativePath]);
++
++  const downloadLink = (url: string | null) =>
++    url ? (
++      <a
++        href={resolvePrimaryEnvironmentHttpUrl(url)}
++        download=""
++        className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
++      >
++        Скачать
++      </a>
++    ) : null;
++
++  if (state.status === "loading") {
++    return (
++      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
++        <Spinner className="size-5" />
++      </div>
++    );
++  }
++  if (state.status === "error") {
++    return (
++      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs leading-relaxed">
++        <span className="text-destructive">{state.message}</span>
++        {downloadLink(state.downloadUrl)}
++      </div>
++    );
++  }
++  if (state.status === "doc") {
++    return (
++      <div className="flex min-h-0 flex-1 flex-col">
++        <div className="flex shrink-0 justify-end border-b border-border/60 px-2 py-1">
++          {downloadLink(state.downloadUrl)}
++        </div>
++        <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
++          {/* HTML прошёл sanitizeDocHtml: белый список тегов, без скриптов и javascript:-ссылок */}
++          <div className="chat-markdown" dangerouslySetInnerHTML={{ __html: state.html }} />
++        </div>
++      </div>
++    );
++  }
++  const sheet = state.sheets[Math.min(sheetIndex, state.sheets.length - 1)];
++  return (
++    <div className="flex min-h-0 flex-1 flex-col">
++      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border/60 px-2 py-1">
++        {state.sheets.map((item, index) => (
++          <button
++            key={item.name}
++            type="button"
++            onClick={() => setSheetIndex(index)}
++            className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${
++              index === sheetIndex
++                ? "bg-accent text-foreground"
++                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
++            }`}
++          >
++            {item.name}
++          </button>
++        ))}
++        <span className="flex-1" />
++        {downloadLink(state.downloadUrl)}
++      </div>
++      {sheet?.truncated ? (
++        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
++          Показаны первые {sheet.csv.split("\n").length.toLocaleString("ru-RU")} строк из{" "}
++          {sheet.totalRows.toLocaleString("ru-RU")}. Полностью — в скачанном файле.
++        </div>
++      ) : null}
++      {sheet && sheet.csv ? (
++        <DelimitedTablePreview
++          key={`${props.relativePath}:${sheet.name}`}
++          name={sheet.name}
++          text={sheet.csv}
++          delimiter=","
++        />
++      ) : (
++        <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-muted-foreground">
++          Лист пустой.
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/apps/web/src/components/sergey/officeFiles.ts b/apps/web/src/components/sergey/officeFiles.ts
+new file mode 100644
+index 0000000000..5484c2a165
+--- /dev/null
++++ b/apps/web/src/components/sergey/officeFiles.ts
+@@ -0,0 +1,187 @@
++/**
++ * t3-patch: чтение xlsx и docx в браузере.
++ *
++ * Библиотеки не зависимости проекта, а готовые браузерные сборки, которые
++ * build.sh патча кладёт в client/t3patch-vendor/ (SheetJS, mammoth). Так патч
++ * не трогает package.json и pnpm-lock.yaml — главный источник конфликтов при
++ * переносе на новую версию T3. Грузятся лениво, только при открытии файла.
++ */
++import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
++
++export const OFFICE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
++export const SHEET_PREVIEW_MAX_ROWS = 5000;
++
++const SHEET_EXTENSIONS = [".xlsx", ".xlsm", ".xls", ".ods"];
++const DOC_EXTENSIONS = [".docx"];
++
++export type OfficeKind = "sheet" | "doc";
++
++export function officeKind(path: string): OfficeKind | null {
++  const lower = path.toLowerCase();
++  if (SHEET_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "sheet";
++  if (DOC_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "doc";
++  return null;
++}
++
++const scriptLoads = new Map<string, Promise<void>>();
++
++function loadVendorScript(file: string): Promise<void> {
++  const cached = scriptLoads.get(file);
++  if (cached) return cached;
++  const load = new Promise<void>((resolve, reject) => {
++    const script = document.createElement("script");
++    script.src = resolvePrimaryEnvironmentHttpUrl(`/t3patch-vendor/${file}`);
++    script.async = true;
++    // Внутри SheetJS есть не-ASCII строка-проба, по которой он выбирает декодер UTF-8.
++    // Прочитанный в другой кодировке скрипт ломает кириллицу в ячейках — кодировку задаём явно.
++    script.charset = "utf-8";
++    script.onload = () => resolve();
++    script.onerror = () => {
++      scriptLoads.delete(file);
++      reject(new Error(`Не загрузилась библиотека ${file}`));
++    };
++    document.head.append(script);
++  });
++  scriptLoads.set(file, load);
++  return load;
++}
++
++interface SheetJs {
++  read(
++    data: ArrayBuffer,
++    options: { type: "array"; dense?: boolean },
++  ): {
++    SheetNames: string[];
++    Sheets: Record<string, Record<string, unknown>>;
++  };
++  utils: {
++    sheet_to_csv(sheet: Record<string, unknown>, options?: { blankrows?: boolean }): string;
++    decode_range(ref: string): { s: { r: number; c: number }; e: { r: number; c: number } };
++    encode_range(range: { s: { r: number; c: number }; e: { r: number; c: number } }): string;
++  };
++}
++
++interface Mammoth {
++  convertToHtml(input: { arrayBuffer: ArrayBuffer }): Promise<{ value: string }>;
++}
++
++export interface SheetPreview {
++  readonly name: string;
++  readonly csv: string;
++  readonly totalRows: number;
++  readonly truncated: boolean;
++}
++
++export async function readSheets(data: ArrayBuffer): Promise<SheetPreview[]> {
++  await loadVendorScript("xlsx.full.min.js");
++  const XLSX = (globalThis as unknown as { XLSX: SheetJs }).XLSX;
++  const book = XLSX.read(data, { type: "array" });
++  return book.SheetNames.map((name) => {
++    const sheet = book.Sheets[name] ?? {};
++    const ref = typeof sheet["!ref"] === "string" ? sheet["!ref"] : null;
++    if (!ref) return { name, csv: "", totalRows: 0, truncated: false };
++    const range = XLSX.utils.decode_range(ref);
++    const totalRows = range.e.r - range.s.r + 1;
++    const truncated = totalRows > SHEET_PREVIEW_MAX_ROWS;
++    const limited = truncated
++      ? {
++          ...sheet,
++          "!ref": XLSX.utils.encode_range({
++            s: range.s,
++            e: { r: range.s.r + SHEET_PREVIEW_MAX_ROWS - 1, c: range.e.c },
++          }),
++        }
++      : sheet;
++    return {
++      name,
++      csv: XLSX.utils.sheet_to_csv(limited, { blankrows: false }),
++      totalRows,
++      truncated,
++    };
++  });
++}
++
++export async function readDocHtml(data: ArrayBuffer): Promise<string> {
++  await loadVendorScript("mammoth.browser.min.js");
++  const mammoth = (globalThis as unknown as { mammoth: Mammoth }).mammoth;
++  const result = await mammoth.convertToHtml({ arrayBuffer: data });
++  return sanitizeDocHtml(result.value);
++}
++
++const ALLOWED_TAGS = new Set([
++  "P",
++  "H1",
++  "H2",
++  "H3",
++  "H4",
++  "H5",
++  "H6",
++  "STRONG",
++  "B",
++  "EM",
++  "I",
++  "U",
++  "S",
++  "SUP",
++  "SUB",
++  "UL",
++  "OL",
++  "LI",
++  "TABLE",
++  "THEAD",
++  "TBODY",
++  "TR",
++  "TD",
++  "TH",
++  "BR",
++  "A",
++  "IMG",
++  "BLOCKQUOTE",
++]);
++
++/**
++ * Белый список тегов и атрибутов для HTML из mammoth. Документ — чужие данные:
++ * ссылка вида javascript: или обработчик события не должны дойти до страницы.
++ * Разбор идёт в инертном документе DOMParser — скрипты там не выполняются.
++ */
++export function sanitizeDocHtml(html: string): string {
++  const source = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
++  const out = document.implementation.createHTMLDocument("");
++  const copy = (node: Node, target: Node) => {
++    for (const child of Array.from(node.childNodes)) {
++      if (child.nodeType === Node.TEXT_NODE) {
++        target.appendChild(out.createTextNode(child.textContent ?? ""));
++        continue;
++      }
++      if (!(child instanceof Element)) continue;
++      if (["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"].includes(child.tagName)) continue;
++      if (!ALLOWED_TAGS.has(child.tagName)) {
++        copy(child, target); // тег выбрасываем, текст оставляем
++        continue;
++      }
++      const element = out.createElement(child.tagName.toLowerCase());
++      if (child.tagName === "A") {
++        const href = child.getAttribute("href") ?? "";
++        if (/^(https?:|mailto:)/i.test(href)) {
++          element.setAttribute("href", href);
++          element.setAttribute("target", "_blank");
++          element.setAttribute("rel", "noopener noreferrer");
++        }
++      }
++      if (child.tagName === "IMG") {
++        const src = child.getAttribute("src") ?? "";
++        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(src)) continue;
++        element.setAttribute("src", src);
++        element.setAttribute("alt", child.getAttribute("alt") ?? "");
++      }
++      for (const name of ["colspan", "rowspan"]) {
++        const value = child.getAttribute(name);
++        if (value && /^\d{1,3}$/.test(value)) element.setAttribute(name, value);
++      }
++      target.appendChild(element);
++      copy(child, element);
++    }
++  };
++  copy(source.body, out.body);
++  return out.body.innerHTML;
++}
+-- 
+2.43.0
+

@@ -1,0 +1,180 @@
+From 49eed55b3fe717757f80f8b893479408614d95cc Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sun, 4 Oct 2026 01:15:17 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20=D0=BC=D0=B5=D0=BD=D1=8E=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=20=D0=BF=D1=83=D1=81=D1=82=D0=BE=D0=BC=20=D0=BC=D0=B5?=
+ =?UTF-8?q?=D1=81=D1=82=D0=B5=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE=D0=B4=D0=BD?=
+ =?UTF-8?q?=D0=B8=D0=BA=D0=B0=20(=D0=BA=D0=BE=D1=80=D0=B5=D0=BD=D1=8C=20?=
+ =?UTF-8?q?=D0=BF=D1=80=D0=BE=D0=B5=D0=BA=D1=82=D0=B0)=20=D0=B8=20=C2=AB?=
+ =?UTF-8?q?=D0=9E=D0=B1=D0=BD=D0=BE=D0=B2=D0=B8=D1=82=D1=8C=20=D1=81=D0=B5?=
+ =?UTF-8?q?=D0=B9=D1=87=D0=B0=D1=81=C2=BB=20=D0=B4=D0=BB=D1=8F=20CLI=20?=
+ =?UTF-8?q?=D0=BF=D1=80=D1=8F=D0=BC=D0=BE=20=D0=B2=20=D1=81=D0=BF=D0=B8?=
+ =?UTF-8?q?=D1=81=D0=BA=D0=B5=20=D0=BF=D1=80=D0=BE=D0=B2=D0=B0=D0=B9=D0=B4?=
+ =?UTF-8?q?=D0=B5=D1=80=D0=BE=D0=B2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/components/files/FileBrowserPanel.tsx |  2 +
+ apps/web/src/components/sergey/fileActions.ts | 11 ++++
+ .../components/sergey/useT3patchRootMenu.ts   | 55 +++++++++++++++++++
+ .../components/sergey/useT3patchTouchMenu.ts  |  9 ++-
+ .../settings/ProviderSettingsPanel.tsx        |  7 ++-
+ 5 files changed, 80 insertions(+), 4 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/useT3patchRootMenu.ts
+
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index d674ee6a11..a07f6965ae 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -21,6 +21,7 @@ import { readLocalApi } from "~/localApi";
+ import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
+ import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
+ import { useT3patchTouchMenu } from "~/components/sergey/useT3patchTouchMenu"; // t3-patch
++import { useT3patchRootMenu } from "~/components/sergey/useT3patchRootMenu"; // t3-patch
+ import { useT3patchExplorerFontSize } from "~/components/sergey/explorerFontSize"; // t3-patch
+ import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
+ import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
+@@ -488,6 +489,7 @@ export default function FileBrowserPanel({
+   useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
+   useT3patchExplorerDrop(panelRef, { environmentId, cwd, refresh }); // t3-patch
+   useT3patchTouchMenu(panelRef); // t3-patch: долгое нажатие на телефоне → меню
++  useT3patchRootMenu(panelRef, { environmentId, cwd, refresh }); // t3-patch: меню на пустом месте
+ 
+   return (
+     <div
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index d7ddc2b428..f38786e83f 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -62,6 +62,17 @@ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; labe
+   ];
+ }
+ 
++/** Меню корня проекта (пустое место дерева): только то, что относится к папке. */
++export function t3patchRootMenuItems(): Array<{ id: string; label: string }> {
++  return [
++    ...(t3patchSharedFileCount() > 0
++      ? [{ id: MENU_UPLOAD_SHARED, label: `Загрузить сюда полученные (${t3patchSharedFileCount()})` }]
++      : []),
++    { id: MENU_UPLOAD, label: "Загрузить сюда…" },
++    { id: MENU_MKDIR, label: "Новая папка…" },
++  ];
++}
++
+ const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+ const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+ 
+diff --git a/apps/web/src/components/sergey/useT3patchRootMenu.ts b/apps/web/src/components/sergey/useT3patchRootMenu.ts
+new file mode 100644
+index 0000000000..f93d6f966c
+--- /dev/null
++++ b/apps/web/src/components/sergey/useT3patchRootMenu.ts
+@@ -0,0 +1,55 @@
++/**
++ * t3-patch: меню проводника на пустом месте дерева — для корня проекта.
++ *
++ * Меню «Загрузить сюда», «Новая папка» открывалось только на строке папки. В пустом проекте
++ * строк нет, и загрузить первый файл было нельзя. Теперь правая кнопка (или долгое нажатие на
++ * телефоне — useT3patchTouchMenu шлёт тот же contextmenu) на свободном месте дерева открывает
++ * меню корня: загрузка, новая папка, полученные через «Поделиться».
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { type RefObject, useEffect, useRef } from "react";
++
++import { readLocalApi } from "~/localApi";
++import { handleT3PatchFileMenu, t3patchRootMenuItems } from "./fileActions";
++
++const TREE_TAG = "file-tree-container";
++
++function isEmptyTreeArea(event: Event): boolean {
++  let insideTree = false;
++  for (const node of event.composedPath()) {
++    if (!(node instanceof HTMLElement)) continue;
++    if (node.hasAttribute("data-item-path")) return false; // строка — у неё своё меню
++    if (node.tagName.toLowerCase() === TREE_TAG) insideTree = true;
++  }
++  return insideTree;
++}
++
++export function useT3patchRootMenu(
++  panelRef: RefObject<HTMLElement | null>,
++  input: {
++    readonly environmentId: EnvironmentId;
++    readonly cwd: string;
++    readonly refresh: () => void;
++  },
++): void {
++  const inputRef = useRef(input);
++  inputRef.current = input;
++  useEffect(() => {
++    const panel = panelRef.current;
++    if (!panel) return;
++    const onContextMenu = (event: MouseEvent) => {
++      if (event.defaultPrevented || !isEmptyTreeArea(event)) return;
++      const api = readLocalApi();
++      if (!api) return;
++      event.preventDefault();
++      const { environmentId, cwd, refresh } = inputRef.current;
++      void api.contextMenu
++        .show(t3patchRootMenuItems(), { x: event.clientX, y: event.clientY })
++        .then((clicked) =>
++          handleT3PatchFileMenu(clicked, { cwd, relativePath: "", environmentId, refresh }),
++        );
++    };
++    panel.addEventListener("contextmenu", onContextMenu);
++    return () => panel.removeEventListener("contextmenu", onContextMenu);
++  }, [panelRef]);
++}
+diff --git a/apps/web/src/components/sergey/useT3patchTouchMenu.ts b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+index 542800a116..94137e8527 100644
+--- a/apps/web/src/components/sergey/useT3patchTouchMenu.ts
++++ b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+@@ -11,11 +11,16 @@ import { type RefObject, useEffect } from "react";
+ const HOLD_MS = 500;
+ const MOVE_TOLERANCE_PX = 10;
+ 
++// Строка дерева, а если палец на пустом месте дерева — само дерево (меню корня проекта,
++// useT3patchRootMenu).
+ function rowFromEvent(event: Event): HTMLElement | null {
++  let tree: HTMLElement | null = null;
+   for (const node of event.composedPath()) {
+-    if (node instanceof HTMLElement && node.hasAttribute("data-item-path")) return node;
++    if (!(node instanceof HTMLElement)) continue;
++    if (node.hasAttribute("data-item-path")) return node;
++    if (!tree && node.tagName.toLowerCase() === "file-tree-container") tree = node;
+   }
+-  return null;
++  return tree;
+ }
+ 
+ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): void {
+diff --git a/apps/web/src/components/settings/ProviderSettingsPanel.tsx b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
+index f1966fe454..0d5eaa4b04 100644
+--- a/apps/web/src/components/settings/ProviderSettingsPanel.tsx
++++ b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
+@@ -973,15 +973,18 @@ export function EnvironmentProviderSettings({
+             modelOrder,
+           })
+         }
++        // t3-patch: «Обновить» и в списке провайдеров, а не только в открытой карточке — иначе во
++        // всплывашке «Update available» была лишь команда для терминала (на телефоне до
++        // режима редактирования не добраться).
+         onRunUpdate={
+-          mode === "editor" && showInlineUpdateButton && updateCandidate
++          showInlineUpdateButton && updateCandidate
+             ? () => {
+                 if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
+               }
+             : undefined
+         }
+         isUpdating={
+-          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
++          showInlineUpdateButton ? isInstanceUpdateRunning : undefined
+         }
+       />
+     );
+-- 
+2.43.0
+

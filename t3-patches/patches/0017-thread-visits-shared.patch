@@ -1,0 +1,721 @@
+From 89da77d94dc1e7dea436ef950e017069d04920e4 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 27 Sep 2026 13:24:59 +0300
+Subject: [PATCH] =?UTF-8?q?feat:=20=D0=B2=D1=80=D0=B5=D0=BC=D1=8F=20=D0=BE?=
+ =?UTF-8?q?=D1=82=D0=BA=D1=80=D1=8B=D1=82=D0=B8=D1=8F=20=D1=82=D1=80=D0=B5?=
+ =?UTF-8?q?=D0=B4=D0=BE=D0=B2=20=D0=BD=D0=B0=20=D1=81=D0=B5=D1=80=D0=B2?=
+ =?UTF-8?q?=D0=B5=D1=80=D0=B5=20=E2=80=94=20=C2=AB=D0=97=D0=B0=D0=B2=D0=B5?=
+ =?UTF-8?q?=D1=80=D1=88=D0=B5=D0=BD=D0=BE=C2=BB=20=D0=B3=D0=B0=D1=81=D0=BD?=
+ =?UTF-8?q?=D0=B5=D1=82=20=D0=B2=D0=BE=20=D0=B2=D1=81=D0=B5=D1=85=20=D0=BA?=
+ =?UTF-8?q?=D0=BB=D0=B8=D0=B5=D0=BD=D1=82=D0=B0=D1=85?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/server/src/auth/RpcAuthorization.ts      |   2 +
+ apps/server/src/sergey/threadVisits.test.ts   |  89 +++++++++++
+ apps/server/src/sergey/threadVisits.ts        | 138 ++++++++++++++++++
+ apps/server/src/ws.ts                         |  30 ++++
+ .../components/sergey/ThreadVisitsSync.tsx    |  94 ++++++++++++
+ .../sergey/threadVisitsSync.test.ts           |  80 ++++++++++
+ .../sergey/threadVisitsSyncLogic.ts           | 102 +++++++++++++
+ apps/web/src/routes/__root.tsx                |   2 +
+ packages/client-runtime/src/rpc/client.ts     |   1 +
+ packages/client-runtime/src/state/server.ts   |  10 ++
+ packages/contracts/src/rpc.ts                 |  21 +++
+ 11 files changed, 569 insertions(+)
+ create mode 100644 apps/server/src/sergey/threadVisits.test.ts
+ create mode 100644 apps/server/src/sergey/threadVisits.ts
+ create mode 100644 apps/web/src/components/sergey/ThreadVisitsSync.tsx
+ create mode 100644 apps/web/src/components/sergey/threadVisitsSync.test.ts
+ create mode 100644 apps/web/src/components/sergey/threadVisitsSyncLogic.ts
+
+diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
+index 36371713a7..6285a52eba 100644
+--- a/apps/server/src/auth/RpcAuthorization.ts
++++ b/apps/server/src/auth/RpcAuthorization.ts
+@@ -61,6 +61,8 @@ export const RPC_REQUIRED_SCOPES = {
+   [WS_METHODS.serverRefreshUsageRates]: AuthOrchestrationReadScope,
+   [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
+   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
++  [WS_METHODS.t3patchMarkThreadVisited]: AuthOrchestrationReadScope, // t3-patch
++  [WS_METHODS.t3patchSubscribeThreadVisits]: AuthOrchestrationReadScope, // t3-patch
+   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
+   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
+   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
+diff --git a/apps/server/src/sergey/threadVisits.test.ts b/apps/server/src/sergey/threadVisits.test.ts
+new file mode 100644
+index 0000000000..2868399251
+--- /dev/null
++++ b/apps/server/src/sergey/threadVisits.test.ts
+@@ -0,0 +1,89 @@
++// @effect-diagnostics nodeBuiltinImport:off
++import { mkdtemp, readFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++
++import { afterEach, describe, expect, it } from "vite-plus/test";
++
++import {
++  t3patchApplyThreadVisit,
++  t3patchGetThreadVisits,
++  t3patchMarkThreadVisited,
++  t3patchOnThreadVisits,
++  t3patchParseThreadVisits,
++  t3patchResetThreadVisitsForTest,
++  t3patchSubscribeThreadVisits,
++} from "./threadVisits.ts";
++
++afterEach(() => t3patchResetThreadVisitsForTest());
++
++describe("время открытия тредов на сервере", () => {
++  it("разбирает файл и отбрасывает мусор", () => {
++    expect(t3patchParseThreadVisits('{"a":"2026-09-27T10:00:00.000Z","b":"вчера","c":5}')).toEqual({
++      a: "2026-09-27T10:00:00.000Z",
++    });
++    expect(t3patchParseThreadVisits("не json")).toEqual({});
++    expect(t3patchParseThreadVisits("[]")).toEqual({});
++  });
++
++  it("последняя запись побеждает, даже если время раньше (пометить непрочитанным)", () => {
++    const later = t3patchApplyThreadVisit({}, "t", "2026-09-27T10:05:00.000Z");
++    expect(t3patchApplyThreadVisit(later, "t", "2026-09-27T10:04:59.999Z")).toEqual({
++      t: "2026-09-27T10:04:59.999Z",
++    });
++  });
++
++  it("при переполнении оставляет самые свежие", () => {
++    let map = {};
++    for (let i = 0; i < 5; i++) {
++      map = t3patchApplyThreadVisit(map, `t${i}`, `2026-09-2${i}T00:00:00.000Z`, 3);
++    }
++    expect(Object.keys(map).toSorted()).toEqual(["t2", "t3", "t4"]);
++  });
++
++  it("сохраняет в файл, переживает перезапуск и оповещает подписчиков", async () => {
++    const dir = await mkdtemp(join(tmpdir(), "t3patch-visits-"));
++    const seen: Array<Record<string, string>> = [];
++    const off = t3patchOnThreadVisits((visits) => seen.push({ ...visits }));
++    await t3patchMarkThreadVisited(dir, "thread-1", "2026-09-27T10:00:00.000Z");
++    await t3patchMarkThreadVisited(dir, "thread-1", "не время");
++    off();
++    expect(seen).toEqual([{ "thread-1": "2026-09-27T10:00:00.000Z" }]);
++    const file = JSON.parse(await readFile(join(dir, "t3patch-thread-visits.json"), "utf8"));
++    expect(file).toEqual({ "thread-1": "2026-09-27T10:00:00.000Z" });
++    t3patchResetThreadVisitsForTest();
++    expect(await t3patchGetThreadVisits(dir)).toEqual({ "thread-1": "2026-09-27T10:00:00.000Z" });
++  });
++});
++
++describe("время открытия тредов: гонки", () => {
++  it("две отметки сразу после запуска сервера не теряют друг друга", async () => {
++    const dir = await mkdtemp(join(tmpdir(), "t3patch-visits-"));
++    await Promise.all([
++      t3patchMarkThreadVisited(dir, "a", "2026-09-27T10:00:00.000Z"),
++      t3patchMarkThreadVisited(dir, "b", "2026-09-27T10:01:00.000Z"),
++    ]);
++    expect(await t3patchGetThreadVisits(dir)).toEqual({
++      a: "2026-09-27T10:00:00.000Z",
++      b: "2026-09-27T10:01:00.000Z",
++    });
++    t3patchResetThreadVisitsForTest();
++    expect(await t3patchGetThreadVisits(dir)).toEqual({
++      a: "2026-09-27T10:00:00.000Z",
++      b: "2026-09-27T10:01:00.000Z",
++    });
++  });
++
++  it("подписка отдаёт снимок первым, затем изменения по порядку", async () => {
++    const dir = await mkdtemp(join(tmpdir(), "t3patch-visits-"));
++    await t3patchMarkThreadVisited(dir, "a", "2026-09-27T10:00:00.000Z");
++    const seen: Array<Record<string, string>> = [];
++    const pending = t3patchSubscribeThreadVisits(dir, (visits) => seen.push({ ...visits }));
++    const marking = t3patchMarkThreadVisited(dir, "a", "2026-09-27T11:00:00.000Z");
++    const off = await pending;
++    await marking;
++    off();
++    expect(seen.at(-1)).toEqual({ a: "2026-09-27T11:00:00.000Z" });
++    expect(seen[0]).toEqual({ a: "2026-09-27T10:00:00.000Z" });
++  });
++});
+diff --git a/apps/server/src/sergey/threadVisits.ts b/apps/server/src/sergey/threadVisits.ts
+new file mode 100644
+index 0000000000..4048f57c53
+--- /dev/null
++++ b/apps/server/src/sergey/threadVisits.ts
+@@ -0,0 +1,138 @@
++// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics globalConsole:off
++/**
++ * t3-patch: время последнего открытия тредов — общее для всех клиентов.
++ *
++ * Штатно «тред открывали тогда-то» хранит каждый клиент у себя (браузер — в localStorage,
++ * приложение — на телефоне), поэтому статус «Завершено/Готово» расходился: открыл тред в
++ * браузере, а в приложении он всё ещё «Готово». Здесь одна карта threadId → ISO-время на весь
++ * сервер, в файле `<stateDir>/t3patch-thread-visits.json`, и рассылка изменений подписчикам.
++ *
++ * Запись — «последняя побеждает»: «пометить непрочитанным» ставит время чуть раньше завершения
++ * хода и должно перекрыть более позднюю отметку. Карта ограничена MAX_ENTRIES самыми свежими.
++ */
++import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
++import { join } from "node:path";
++
++export type T3patchThreadVisits = Readonly<Record<string, string>>;
++
++const FILE_NAME = "t3patch-thread-visits.json";
++export const T3PATCH_THREAD_VISITS_MAX_ENTRIES = 2000;
++
++let visits: Record<string, string> | null = null;
++let loadedFrom: string | null = null;
++let writeChain: Promise<void> = Promise.resolve();
++const listeners = new Set<(visits: T3patchThreadVisits) => void>();
++
++/** Разобрать содержимое файла: только пары строка → корректное время. */
++export function t3patchParseThreadVisits(text: string): Record<string, string> {
++  try {
++    const parsed: unknown = JSON.parse(text);
++    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
++    const result: Record<string, string> = {};
++    for (const [threadId, value] of Object.entries(parsed)) {
++      if (typeof value === "string" && Number.isFinite(Date.parse(value))) result[threadId] = value;
++    }
++    return result;
++  } catch {
++    return {};
++  }
++}
++
++/** Новая карта с отметкой; при переполнении отбрасываются самые старые. */
++export function t3patchApplyThreadVisit(
++  current: T3patchThreadVisits,
++  threadId: string,
++  visitedAt: string,
++  maxEntries = T3PATCH_THREAD_VISITS_MAX_ENTRIES,
++): Record<string, string> {
++  const next: Record<string, string> = { ...current, [threadId]: visitedAt };
++  const ids = Object.keys(next);
++  if (ids.length <= maxEntries) return next;
++  const newest = ids
++    .toSorted((a, b) => Date.parse(next[b]!) - Date.parse(next[a]!))
++    .slice(0, maxEntries);
++  return Object.fromEntries(newest.map((id) => [id, next[id]!]));
++}
++
++let loading: Promise<Record<string, string>> | null = null;
++
++/** Загрузить карту один раз; параллельные вызовы ждут одну и ту же загрузку. */
++function load(stateDir: string): Promise<Record<string, string>> {
++  if (visits !== null && loadedFrom === stateDir) return Promise.resolve(visits);
++  if (loading !== null && loadedFrom === stateDir) return loading;
++  loadedFrom = stateDir;
++  loading = readFile(join(stateDir, FILE_NAME), "utf8")
++    .catch(() => "{}") // файла ещё нет — начинаем с пустой карты
++    .then((text) => {
++      visits = t3patchParseThreadVisits(text);
++      loading = null;
++      return visits;
++    });
++  return loading;
++}
++
++function persist(stateDir: string, snapshot: T3patchThreadVisits): Promise<void> {
++  const path = join(stateDir, FILE_NAME);
++  writeChain = writeChain
++    .then(async () => {
++      await mkdir(stateDir, { recursive: true });
++      const tmp = `${path}.${process.pid}.tmp`;
++      await writeFile(tmp, `${JSON.stringify(snapshot)}\n`, "utf8");
++      await rename(tmp, path);
++    })
++    .catch((error: unknown) => {
++      console.warn("t3patch: не удалось сохранить время открытия тредов", error);
++    });
++  return writeChain;
++}
++
++export async function t3patchGetThreadVisits(stateDir: string): Promise<T3patchThreadVisits> {
++  return load(stateDir);
++}
++
++/**
++ * Подписаться и сразу получить текущую карту — синхронно, одним шагом, чтобы между снимком
++ * и подпиской не проскочило изменение (иначе клиент получил бы старый снимок после нового).
++ */
++export async function t3patchSubscribeThreadVisits(
++  stateDir: string,
++  listener: (visits: T3patchThreadVisits) => void,
++): Promise<() => void> {
++  await load(stateDir);
++  listeners.add(listener);
++  listener(visits ?? {});
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++export async function t3patchMarkThreadVisited(
++  stateDir: string,
++  threadId: string,
++  visitedAt: string,
++): Promise<void> {
++  if (!threadId || !Number.isFinite(Date.parse(visitedAt))) return;
++  // После await читаем карту заново: её могла обновить параллельная отметка.
++  await load(stateDir);
++  const current = visits ?? {};
++  if (current[threadId] === visitedAt) return;
++  visits = t3patchApplyThreadVisit(current, threadId, visitedAt);
++  const snapshot = visits;
++  for (const listener of listeners) listener(snapshot);
++  await persist(stateDir, snapshot);
++}
++
++export function t3patchOnThreadVisits(listener: (visits: T3patchThreadVisits) => void): () => void {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++/** Только для тестов: забыть загруженную карту. */
++export function t3patchResetThreadVisitsForTest(): void {
++  visits = null;
++  loadedFrom = null;
++  loading = null;
++}
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index 707df77809..0700eb81d5 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -17,6 +17,11 @@ import * as Ref from "effect/Ref";
+ import * as Schedule from "effect/Schedule";
+ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
++import {
++  t3patchMarkThreadVisited,
++  t3patchSubscribeThreadVisits,
++  type T3patchThreadVisits,
++} from "./sergey/threadVisits.ts"; // t3-patch
+ import {
+   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+   AuthAccessStreamError,
+@@ -3634,6 +3639,31 @@ const makeWsRpcLayer = (
+             }),
+             { "rpc.aggregate": "auth" },
+           ),
++        // t3-patch: время открытия тредов, общее для браузера и приложения (sergey/threadVisits.ts)
++        [WS_METHODS.t3patchMarkThreadVisited]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.t3patchMarkThreadVisited,
++            Effect.promise(() =>
++              t3patchMarkThreadVisited(config.stateDir, input.threadId, input.visitedAt),
++            ).pipe(Effect.as({})),
++            { "rpc.aggregate": "server" },
++          ),
++        [WS_METHODS.t3patchSubscribeThreadVisits]: (_input) =>
++          observeRpcStream(
++            WS_METHODS.t3patchSubscribeThreadVisits,
++            Stream.callback<T3patchThreadVisits>((queue) =>
++              Effect.gen(function* () {
++                // снимок и подписка — одним шагом: изменения не теряются и не обгоняют снимок
++                const unsubscribe = yield* Effect.promise(() =>
++                  t3patchSubscribeThreadVisits(config.stateDir, (visits) => {
++                    Queue.offerUnsafe(queue, visits);
++                  }),
++                );
++                yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
++              }),
++            ),
++            { "rpc.aggregate": "server" },
++          ),
+         [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
+           observeRpcStream(
+             WS_METHODS.subscribeBackgroundPolicy,
+diff --git a/apps/web/src/components/sergey/ThreadVisitsSync.tsx b/apps/web/src/components/sergey/ThreadVisitsSync.tsx
+new file mode 100644
+index 0000000000..e7653ed1e9
+--- /dev/null
++++ b/apps/web/src/components/sergey/ThreadVisitsSync.tsx
+@@ -0,0 +1,94 @@
++/**
++ * t3-patch: держит время открытия тредов браузера в согласии с сервером, чтобы «Завершено»
++ * гасло везде, где тред прочитали (в браузере, в приложении, на другом компьютере).
++ * Логика слияния — threadVisitsSyncLogic.ts. Сервер без патча 0017 подписку не знает:
++ * подписка падает, отметки остаются только в этом браузере — как было штатно.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { useCallback, useEffect, useRef } from "react";
++
++import { useEnvironments } from "../../state/environments";
++import { useEnvironmentQuery } from "../../state/query";
++import { serverEnvironment } from "../../state/server";
++import { useAtomCommand } from "../../state/use-atom-command";
++import { useUiStateStore } from "../../uiStateStore";
++import {
++  t3patchLocalChanges,
++  t3patchMergeServerVisits,
++  t3patchUnsentToRetry,
++  t3patchWithoutThreads,
++} from "./threadVisitsSyncLogic";
++
++function EnvironmentThreadVisitsSync(props: { readonly environmentId: EnvironmentId }) {
++  const { environmentId } = props;
++  const serverVisits = useEnvironmentQuery(
++    serverEnvironment.t3patchThreadVisits({ environmentId, input: {} }),
++  ).data;
++  const mark = useAtomCommand(serverEnvironment.t3patchMarkThreadVisited, {
++    reportFailure: false,
++    reportDefect: false,
++  });
++  // Что сервер уже знает: чтобы не отправлять ему его же значения обратно.
++  const known = useRef<Record<string, string>>({});
++  // Отметки, которые не дошли (нет связи): отправляются снова со следующим снимком сервера.
++  const unsent = useRef<Record<string, string>>({});
++  const synced = useRef(false);
++
++  const push = useCallback(
++    (threadId: string, visitedAt: string) => {
++      known.current[threadId] = visitedAt;
++      void mark({ environmentId, input: { threadId, visitedAt } }).then((result) => {
++        if (result._tag === "Success") {
++          if (unsent.current[threadId] === visitedAt) delete unsent.current[threadId];
++        } else {
++          unsent.current[threadId] = visitedAt;
++        }
++      });
++    },
++    [environmentId, mark],
++  );
++
++  useEffect(() => {
++    if (serverVisits === null) return;
++    const firstSnapshot = !synced.current;
++    synced.current = true;
++    const local = useUiStateStore.getState().threadLastVisitedAtById;
++    const retry = t3patchUnsentToRetry({ unsent: unsent.current, local, environmentId });
++    const server = t3patchWithoutThreads(serverVisits, retry);
++    known.current = { ...server };
++    const merge = t3patchMergeServerVisits({ local, environmentId, server, firstSnapshot });
++    if (merge.local !== null) useUiStateStore.setState({ threadLastVisitedAtById: merge.local });
++    for (const [threadId, visitedAt] of [...merge.push, ...retry]) push(threadId, visitedAt);
++  }, [environmentId, push, serverVisits]);
++
++  useEffect(
++    () =>
++      useUiStateStore.subscribe((state, previous) => {
++        if (!synced.current) return; // до первого снимка всё отправит слияние
++        const changes = t3patchLocalChanges({
++          next: state.threadLastVisitedAtById,
++          previous: previous.threadLastVisitedAtById,
++          environmentId,
++          known: known.current,
++        });
++        for (const [threadId, visitedAt] of changes) push(threadId, visitedAt);
++      }),
++    [environmentId, push],
++  );
++
++  return null;
++}
++
++export function T3patchThreadVisitsSync() {
++  const { environments } = useEnvironments();
++  return (
++    <>
++      {environments.map((environment) => (
++        <EnvironmentThreadVisitsSync
++          key={environment.environmentId}
++          environmentId={environment.environmentId}
++        />
++      ))}
++    </>
++  );
++}
+diff --git a/apps/web/src/components/sergey/threadVisitsSync.test.ts b/apps/web/src/components/sergey/threadVisitsSync.test.ts
+new file mode 100644
+index 0000000000..426dd93d50
+--- /dev/null
++++ b/apps/web/src/components/sergey/threadVisitsSync.test.ts
+@@ -0,0 +1,80 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import {
++  t3patchLocalChanges,
++  t3patchMergeServerVisits,
++  t3patchUnsentToRetry,
++  t3patchWithoutThreads,
++} from "./threadVisitsSyncLogic";
++
++const T1 = "2026-09-27T10:00:00.000Z";
++const T2 = "2026-09-27T11:00:00.000Z";
++
++describe("синхронизация времени открытия тредов", () => {
++  it("первый снимок: побеждает более позднее, неизвестное серверу уходит на сервер", () => {
++    const result = t3patchMergeServerVisits({
++      local: { "env:a": T2, "env:b": T1, "env:c": T1, "other:z": T1 },
++      environmentId: "env",
++      server: { a: T1, b: T2 },
++      firstSnapshot: true,
++    });
++    expect(result.local).toEqual({ "env:a": T2, "env:b": T2, "env:c": T1, "other:z": T1 });
++    expect(result.push).toEqual([
++      ["a", T2],
++      ["c", T1],
++    ]);
++  });
++
++  it("дальше сервер — источник правды, даже если время раньше (непрочитано)", () => {
++    const result = t3patchMergeServerVisits({
++      local: { "env:a": T2 },
++      environmentId: "env",
++      server: { a: T1 },
++      firstSnapshot: false,
++    });
++    expect(result.local).toEqual({ "env:a": T1 });
++    expect(result.push).toEqual([]);
++  });
++
++  it("совпадение — без изменений", () => {
++    const result = t3patchMergeServerVisits({
++      local: { "env:a": T1 },
++      environmentId: "env",
++      server: { a: T1 },
++      firstSnapshot: false,
++    });
++    expect(result).toEqual({ local: null, push: [] });
++  });
++
++  it("локальные изменения: только своё окружение и только то, чего сервер не знает", () => {
++    expect(
++      t3patchLocalChanges({
++        previous: { "env:a": T1, "env:b": T1 },
++        next: { "env:a": T2, "env:b": T2, "other:z": T2 },
++        environmentId: "env",
++        known: { b: T2 },
++      }),
++    ).toEqual([["a", T2]]);
++  });
++});
++
++describe("недошедшие отметки", () => {
++  it("отправляются снова, пока в браузере то же значение, и не затираются сервером", () => {
++    const retry = t3patchUnsentToRetry({
++      unsent: { a: T2, b: T2 },
++      local: { "env:a": T2, "env:b": T1 },
++      environmentId: "env",
++    });
++    expect(retry).toEqual([["a", T2]]);
++    const server = t3patchWithoutThreads({ a: T1, c: T1 }, retry);
++    expect(server).toEqual({ c: T1 });
++    expect(
++      t3patchMergeServerVisits({
++        local: { "env:a": T2 },
++        environmentId: "env",
++        server,
++        firstSnapshot: false,
++      }).local,
++    ).toEqual({ "env:a": T2, "env:c": T1 });
++  });
++});
+diff --git a/apps/web/src/components/sergey/threadVisitsSyncLogic.ts b/apps/web/src/components/sergey/threadVisitsSyncLogic.ts
+new file mode 100644
+index 0000000000..5560d42df9
+--- /dev/null
++++ b/apps/web/src/components/sergey/threadVisitsSyncLogic.ts
+@@ -0,0 +1,102 @@
++/**
++ * t3-patch: слияние времени открытия тредов браузера с серверным (сервер: sergey/threadVisits.ts).
++ *
++ * Браузер держит отметки в uiStateStore под ключом `<environmentId>:<threadId>`, сервер — по
++ * threadId внутри своего окружения. Правила:
++ * - первый снимок с сервера: побеждает более позднее время, а то, что браузер знал раньше
++ *   сервера, отправляется на сервер — так не теряются отметки, сделанные до патча;
++ * - дальше сервер — источник правды: его значение ставится как есть, даже если оно раньше
++ *   (так до браузера доходит «пометить непрочитанным» с другого устройства);
++ * - изменение в браузере, которого сервер ещё не знает, отправляется на сервер.
++ * Чистые функции — их проверяют тесты.
++ */
++export type T3patchVisitMap = Readonly<Record<string, string>>;
++
++export const t3patchVisitKey = (environmentId: string, threadId: string) =>
++  `${environmentId}:${threadId}`;
++
++const ms = (value: string | undefined) => (value === undefined ? NaN : Date.parse(value));
++
++export interface T3patchServerMerge {
++  /** Новые отметки браузера или null, если менять нечего. */
++  readonly local: Record<string, string> | null;
++  /** Что отправить на сервер: [threadId, visitedAt]. */
++  readonly push: ReadonlyArray<readonly [string, string]>;
++}
++
++export function t3patchMergeServerVisits(input: {
++  readonly local: T3patchVisitMap;
++  readonly environmentId: string;
++  readonly server: T3patchVisitMap;
++  readonly firstSnapshot: boolean;
++}): T3patchServerMerge {
++  const { local, environmentId, server, firstSnapshot } = input;
++  const prefix = `${environmentId}:`;
++  let next: Record<string, string> | null = null;
++  const push: Array<readonly [string, string]> = [];
++  for (const [threadId, serverValue] of Object.entries(server)) {
++    const key = t3patchVisitKey(environmentId, threadId);
++    const localValue = local[key];
++    if (localValue === serverValue) continue;
++    if (firstSnapshot && ms(localValue) > ms(serverValue)) {
++      push.push([threadId, localValue!]);
++      continue;
++    }
++    next ??= { ...local };
++    next[key] = serverValue;
++  }
++  if (firstSnapshot) {
++    for (const [key, localValue] of Object.entries(local)) {
++      if (!key.startsWith(prefix)) continue;
++      const threadId = key.slice(prefix.length);
++      if (!(threadId in server) && Number.isFinite(ms(localValue)))
++        push.push([threadId, localValue]);
++    }
++  }
++  return { local: next, push };
++}
++
++/** Отметки окружения, изменившиеся в браузере и ещё не известные серверу. */
++export function t3patchLocalChanges(input: {
++  readonly next: T3patchVisitMap;
++  readonly previous: T3patchVisitMap;
++  readonly environmentId: string;
++  readonly known: T3patchVisitMap;
++}): Array<readonly [string, string]> {
++  const { next, previous, environmentId, known } = input;
++  if (next === previous) return [];
++  const prefix = `${environmentId}:`;
++  const changes: Array<readonly [string, string]> = [];
++  for (const [key, value] of Object.entries(next)) {
++    if (!key.startsWith(prefix) || previous[key] === value) continue;
++    const threadId = key.slice(prefix.length);
++    if (known[threadId] === value) continue;
++    changes.push([threadId, value]);
++  }
++  return changes;
++}
++
++/**
++ * Недошедшие отметки, которые всё ещё актуальны (в браузере то же значение): их отправить
++ * снова, а серверное значение для них не применять — сервер о них ещё не знает.
++ */
++export function t3patchUnsentToRetry(input: {
++  readonly unsent: T3patchVisitMap;
++  readonly local: T3patchVisitMap;
++  readonly environmentId: string;
++}): Array<readonly [string, string]> {
++  return Object.entries(input.unsent).filter(
++    ([threadId, value]) => input.local[t3patchVisitKey(input.environmentId, threadId)] === value,
++  );
++}
++
++/** Карта сервера без указанных тредов. */
++export function t3patchWithoutThreads(
++  server: T3patchVisitMap,
++  threads: ReadonlyArray<readonly [string, string]>,
++): T3patchVisitMap {
++  if (threads.length === 0) return server;
++  const next: Record<string, string> = { ...server };
++  for (const [threadId] of threads) delete next[threadId];
++  return next;
++}
+diff --git a/apps/web/src/routes/__root.tsx b/apps/web/src/routes/__root.tsx
+index 42e40842a7..8ad37b6511 100644
+--- a/apps/web/src/routes/__root.tsx
++++ b/apps/web/src/routes/__root.tsx
+@@ -1,4 +1,5 @@
+ import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
++import { T3patchThreadVisitsSync } from "../components/sergey/ThreadVisitsSync"; // t3-patch
+ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+ import {
+@@ -233,6 +234,7 @@ function RootRouteView() {
+           ) : null}
+           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
++          {primaryEnvironmentAuthenticated ? <T3patchThreadVisitsSync /> : null}
+           {appShell}
+           {/* Above the router: a theme draft is judged by walking the app, so the
+               editor has to survive navigation away from settings. */}
+diff --git a/packages/client-runtime/src/rpc/client.ts b/packages/client-runtime/src/rpc/client.ts
+index e80a2f0f4b..eb0ca26dd4 100644
+--- a/packages/client-runtime/src/rpc/client.ts
++++ b/packages/client-runtime/src/rpc/client.ts
+@@ -53,6 +53,7 @@ export type EnvironmentSubscriptionRpcTag =
+   | typeof WS_METHODS.subscribeDiscoveredLocalServers
+   | typeof WS_METHODS.subscribeDeviceState
+   | typeof WS_METHODS.subscribeResourceTelemetry
++  | typeof WS_METHODS.t3patchSubscribeThreadVisits // t3-patch
+   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
+   | typeof WS_METHODS.previewAutomationConnect
+   | typeof WS_METHODS.subscribeVcsStatus
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index 18127076ff..e0dc7651ce 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -1030,6 +1030,16 @@ export function createServerEnvironmentAtoms<R, E>(
+       label: "environment-data:server:process-resource-history",
+       tag: WS_METHODS.serverGetProcessResourceHistory,
+     }),
++    // t3-patch: время открытия тредов, общее для всех клиентов (сервер: sergey/threadVisits.ts)
++    t3patchThreadVisits: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
++      label: "environment-data:server:t3patch-thread-visits",
++      tag: WS_METHODS.t3patchSubscribeThreadVisits,
++      idleTtlMs: 0,
++    }),
++    t3patchMarkThreadVisited: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-mark-thread-visited",
++      tag: WS_METHODS.t3patchMarkThreadVisited,
++    }),
+     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+       label: "environment-data:server:resource-telemetry",
+       tag: WS_METHODS.subscribeResourceTelemetry,
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 9096dd6e27..50b9f2c891 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -434,6 +434,9 @@ export const WS_METHODS = {
+   subscribeAuthAccess: "subscribeAuthAccess",
+   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
+   subscribeResourceTelemetry: "subscribeResourceTelemetry",
++  // t3-patch: время открытия тредов — общее для браузера и приложения
++  t3patchMarkThreadVisited: "t3patch.markThreadVisited",
++  t3patchSubscribeThreadVisits: "t3patch.subscribeThreadVisits",
+ } as const;
+ 
+ const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
+@@ -1357,7 +1360,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
+   stream: true,
+ });
+ 
++// t3-patch: время последнего открытия треда (threadId → ISO-время) хранит сервер, чтобы статус
++// «Завершено/Готово» совпадал в браузере и в приложении. Запись — «последняя побеждает»:
++// так работает и «пометить непрочитанным», которое сдвигает время назад.
++const WsT3patchMarkThreadVisitedRpc = Rpc.make(WS_METHODS.t3patchMarkThreadVisited, {
++  payload: Schema.Struct({ threadId: Schema.String, visitedAt: Schema.String }),
++  success: Schema.Struct({}),
++  error: EnvironmentAuthorizationError,
++});
++
++const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeThreadVisits, {
++  payload: Schema.Struct({}),
++  success: Schema.Record(Schema.String, Schema.String),
++  error: EnvironmentAuthorizationError,
++  stream: true,
++});
++
+ export const WsRpcGroup = RpcGroup.make(
++  WsT3patchMarkThreadVisitedRpc,
++  WsT3patchSubscribeThreadVisitsRpc,
+   WsServerProbeRpc,
+   WsServerGetConfigRpc,
+   WsServerRefreshProvidersRpc,
+-- 
+2.43.0
+

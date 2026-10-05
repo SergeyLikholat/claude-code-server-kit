@@ -1,0 +1,480 @@
+From 3d08da2a22b60119478e1716f2d2be1573de4e02 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 20:29:25 +0300
+Subject: [PATCH 2/7] =?UTF-8?q?feat(files):=20=D0=BA=D0=BE=D0=BF=D0=B8?=
+ =?UTF-8?q?=D1=80=D0=BE=D0=B2=D0=B0=D1=82=D1=8C=20=D0=BF=D1=83=D1=82=D1=8C?=
+ =?UTF-8?q?=20=D0=B8=20=D0=BF=D0=BE=D0=BB=D0=BD=D1=8B=D0=B9=20=D0=BF=D1=83?=
+ =?UTF-8?q?=D1=82=D1=8C,=20=D1=81=D0=BA=D0=B0=D1=87=D0=B0=D1=82=D1=8C=20?=
+ =?UTF-8?q?=D0=BB=D1=8E=D0=B1=D0=BE=D0=B9=20=D1=84=D0=B0=D0=B9=D0=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Серверный маршрут /api/t3patch/file-info отдаёт полный и настоящий путь
+(bind-монтирования раскрываются по /proc/self/mountinfo), размер, дату и
+подписанную ссылку /api/t3patch/file/<токен>/<имя> на скачивание.
+В меню дерева файлов — три новых пункта.
+---
+ apps/server/src/http.ts                       |   2 +-
+ apps/server/src/sergey/fileAccess.test.ts     |  64 ++++++
+ apps/server/src/sergey/fileAccess.ts          | 197 ++++++++++++++++++
+ apps/server/src/server.ts                     |   3 +
+ .../src/components/files/FileBrowserPanel.tsx |   3 +
+ apps/web/src/components/sergey/fileActions.ts | 112 ++++++++++
+ 6 files changed, 380 insertions(+), 1 deletion(-)
+ create mode 100644 apps/server/src/sergey/fileAccess.test.ts
+ create mode 100644 apps/server/src/sergey/fileAccess.ts
+ create mode 100644 apps/web/src/components/sergey/fileActions.ts
+
+diff --git a/apps/server/src/http.ts b/apps/server/src/http.ts
+index c564201785..0fb1aa5afb 100644
+--- a/apps/server/src/http.ts
++++ b/apps/server/src/http.ts
+@@ -268,7 +268,7 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
+   return redirectUrl.toString();
+ }
+ 
+-const authenticateRawRouteWithScope = (
++export const authenticateRawRouteWithScope = (
+   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
+ ) =>
+   Effect.gen(function* () {
+diff --git a/apps/server/src/sergey/fileAccess.test.ts b/apps/server/src/sergey/fileAccess.test.ts
+new file mode 100644
+index 0000000000..862498ea94
+--- /dev/null
++++ b/apps/server/src/sergey/fileAccess.test.ts
+@@ -0,0 +1,64 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import {
++  issueFileToken,
++  parseMountInfo,
++  resolveBindMounts,
++  verifyFileToken,
++} from "./fileAccess.ts";
++
++const MOUNTINFO = [
++  "26 1 252:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw",
++  "600 26 252:2 /root/Obsidian /root/projects/tk-vector/!Obsidian ro,relatime shared:1 - ext4 /dev/vda2 rw",
++  "601 26 252:2 /root/My\\040Docs /root/projects/x/docs ro,relatime shared:1 - ext4 /dev/vda2 rw",
++  "30 26 0:25 / /proc rw,nosuid - proc proc rw",
++].join("\n");
++
++describe("ссылки на скачивание", () => {
++  it("свой токен проходит и возвращает путь", () => {
++    const token = issueFileToken("/root/projects/a/b.xlsx", 1_000);
++    expect(verifyFileToken(token, 2_000)).toBe("/root/projects/a/b.xlsx");
++  });
++
++  it("просроченный токен отклоняется", () => {
++    const token = issueFileToken("/root/projects/a/b.xlsx", 1_000);
++    expect(verifyFileToken(token, 1_000 + 60 * 60 * 1000 + 1)).toBeNull();
++  });
++
++  it("подменённый путь в токене отклоняется", () => {
++    const [, sig] = issueFileToken("/root/projects/a/b.xlsx").split(".");
++    const forged = Buffer.from(
++      JSON.stringify({ p: "/etc/shadow", e: Date.now() + 10_000 }),
++    ).toString("base64url");
++    expect(verifyFileToken(`${forged}.${sig}`)).toBeNull();
++    expect(verifyFileToken("мусор")).toBeNull();
++    expect(verifyFileToken("")).toBeNull();
++  });
++});
++
++describe("настоящий путь через bind-монтирования", () => {
++  const mounts = parseMountInfo(MOUNTINFO);
++
++  it("окно !Obsidian раскрывается в /root/Obsidian", () => {
++    expect(
++      resolveBindMounts("/root/projects/tk-vector/!Obsidian/3. Проекты/ГПР.xlsx", mounts),
++    ).toBe("/root/Obsidian/3. Проекты/ГПР.xlsx");
++    expect(resolveBindMounts("/root/projects/tk-vector/!Obsidian", mounts)).toBe("/root/Obsidian");
++  });
++
++  it("обычный путь проекта не меняется", () => {
++    expect(resolveBindMounts("/root/projects/tk-vector/notes/a.md", mounts)).toBe(
++      "/root/projects/tk-vector/notes/a.md",
++    );
++  });
++
++  it("похожее имя папки не считается окном", () => {
++    expect(resolveBindMounts("/root/projects/tk-vector/!Obsidian2/a.md", mounts)).toBe(
++      "/root/projects/tk-vector/!Obsidian2/a.md",
++    );
++  });
++
++  it("экранированные пробелы в mountinfo раскодируются", () => {
++    expect(resolveBindMounts("/root/projects/x/docs/f.pdf", mounts)).toBe("/root/My Docs/f.pdf");
++  });
++});
+diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
+new file mode 100644
+index 0000000000..7d3083bd1d
+--- /dev/null
++++ b/apps/server/src/sergey/fileAccess.ts
+@@ -0,0 +1,197 @@
++// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics globalDate:off
++/**
++ * t3-patch: сведения о файле и скачивание любого файла из проекта.
++ *
++ * Штатно проводник умеет читать только текст до 1 МБ, а по подписанным ссылкам
++ * /api/assets отдаёт лишь картинки, pdf, html и аудио. Здесь два маршрута:
++ *
++ *   POST /api/t3patch/file-info  { cwd, relativePath }
++ *     → полный и настоящий путь, размер, дата, ссылка на скачивание.
++ *       «Настоящий» путь раскрывает bind-монтирования (окна вроде
++ *       `!Obsidian` → `/root/Obsidian/...`) по /proc/self/mountinfo.
++ *   GET  /api/t3patch/file/<токен>/<имя>
++ *     → сам файл как вложение. Токен подписан ключом процесса и живёт час,
++ *       поэтому ссылку можно открыть в браузере без заголовков авторизации.
++ *
++ * Границы те же, что у штатного чтения файлов: путь проверяется
++ * WorkspacePaths, а настоящий путь файла обязан лежать внутри настоящего
++ * корня проекта — симлинк наружу не пройдёт.
++ */
++import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
++import { readFile, realpath, stat } from "node:fs/promises";
++import * as NodePath from "node:path";
++
++import { AuthOrchestrationReadScope } from "@t3tools/contracts";
++import * as Effect from "effect/Effect";
++import * as Option from "effect/Option";
++import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
++
++import { assetFileResponse, authenticateRawRouteWithScope } from "../http.ts";
++import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
++
++export const T3PATCH_FILE_INFO_PATH = "/api/t3patch/file-info";
++export const T3PATCH_FILE_ROUTE_PREFIX = "/api/t3patch/file";
++const TOKEN_TTL_MS = 60 * 60 * 1000;
++// Ключ живёт до перезапуска сервера: ссылки на скачивание короткоживущие, хранить его незачем.
++const SIGNING_KEY = randomBytes(32);
++
++const base64Url = (value: Buffer | string) => Buffer.from(value).toString("base64url");
++const signature = (payload: string) =>
++  createHmac("sha256", SIGNING_KEY).update(payload).digest("base64url");
++
++export function issueFileToken(absolutePath: string, now = Date.now()): string {
++  const payload = base64Url(JSON.stringify({ p: absolutePath, e: now + TOKEN_TTL_MS }));
++  return `${payload}.${signature(payload)}`;
++}
++
++export function verifyFileToken(token: string, now = Date.now()): string | null {
++  const [payload, sig] = token.split(".");
++  if (!payload || !sig) return null;
++  const expected = Buffer.from(signature(payload));
++  const actual = Buffer.from(sig);
++  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
++  try {
++    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
++      p?: unknown;
++      e?: unknown;
++    };
++    if (typeof claims.p !== "string" || typeof claims.e !== "number" || claims.e < now) {
++      return null;
++    }
++    return claims.p;
++  } catch {
++    return null;
++  }
++}
++
++/** Разбор /proc/self/mountinfo: точка монтирования, корень внутри ФС, устройство. */
++interface MountEntry {
++  readonly device: string;
++  readonly root: string;
++  readonly mountPoint: string;
++}
++
++const unescapeMountField = (value: string) =>
++  value.replace(/\\([0-7]{3})/g, (_, octal: string) =>
++    String.fromCharCode(Number.parseInt(octal, 8)),
++  );
++
++export function parseMountInfo(text: string): MountEntry[] {
++  return text
++    .split("\n")
++    .map((line) => line.split(" "))
++    .filter((fields) => fields.length > 4)
++    .map((fields) => ({
++      device: fields[2]!,
++      root: unescapeMountField(fields[3]!),
++      mountPoint: unescapeMountField(fields[4]!),
++    }));
++}
++
++const isWithin = (parent: string, child: string) =>
++  child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
++
++/**
++ * Настоящий путь с раскрытыми bind-монтированиями. Для
++ * `/root/projects/x/!Obsidian/a.xlsx`, если туда смонтирован `/root/Obsidian`,
++ * вернёт `/root/Obsidian/a.xlsx`. Если раскрывать нечего — путь без изменений.
++ */
++export function resolveBindMounts(absolutePath: string, mounts: readonly MountEntry[]): string {
++  const owner = mounts
++    .filter((mount) => isWithin(mount.mountPoint, absolutePath))
++    .toSorted((left, right) => right.mountPoint.length - left.mountPoint.length)[0];
++  if (!owner || owner.root === "/") return absolutePath;
++  // Где эта же файловая система видна целиком: монтирование того же устройства с корнем «/».
++  const whole = mounts.find((mount) => mount.device === owner.device && mount.root === "/");
++  if (!whole) return absolutePath;
++  const rest = NodePath.relative(owner.mountPoint, absolutePath);
++  return NodePath.join(whole.mountPoint, owner.root, rest);
++}
++
++async function readMounts(): Promise<MountEntry[]> {
++  try {
++    return parseMountInfo(await readFile("/proc/self/mountinfo", "utf8"));
++  } catch {
++    return [];
++  }
++}
++
++const json = (body: unknown, status = 200) =>
++  HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
++
++export const t3patchFileInfoRouteLayer = HttpRouter.add(
++  "POST",
++  T3PATCH_FILE_INFO_PATH,
++  Effect.gen(function* () {
++    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
++    const request = yield* HttpServerRequest.HttpServerRequest;
++    const body = (yield* request.json.pipe(Effect.orElseSucceed(() => null))) as {
++      cwd?: unknown;
++      relativePath?: unknown;
++    } | null;
++    if (typeof body?.cwd !== "string" || typeof body.relativePath !== "string") {
++      return json({ error: "Нужны cwd и relativePath." }, 400);
++    }
++    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
++    const resolved = yield* Effect.gen(function* () {
++      const root = yield* workspacePaths.normalizeWorkspaceRoot(body.cwd as string);
++      const target = yield* workspacePaths.resolveRelativePathWithinRoot({
++        workspaceRoot: root,
++        relativePath: body.relativePath as string,
++      });
++      return { root, target };
++    }).pipe(Effect.orElseSucceed(() => null));
++    if (!resolved) return json({ error: "Путь вне проекта." }, 400);
++
++    const info = yield* Effect.tryPromise(async () => {
++      const [realRoot, realTarget] = await Promise.all([
++        realpath(resolved.root),
++        realpath(resolved.target.absolutePath),
++      ]);
++      if (!isWithin(realRoot, realTarget)) return null;
++      const stats = await stat(realTarget);
++      const mounts = await readMounts();
++      return {
++        absolutePath: resolved.target.absolutePath,
++        realPath: resolveBindMounts(realTarget, mounts),
++        relativePath: resolved.target.relativePath,
++        isDirectory: stats.isDirectory(),
++        size: stats.size,
++        mtimeMs: stats.mtimeMs,
++        downloadUrl: stats.isFile()
++          ? `${T3PATCH_FILE_ROUTE_PREFIX}/${issueFileToken(realTarget)}/${encodeURIComponent(
++              NodePath.basename(realTarget),
++            )}`
++          : null,
++      };
++    }).pipe(Effect.orElseSucceed(() => null));
++    if (!info) return json({ error: "Файл не найден или вне проекта." }, 404);
++    return json(info);
++  }),
++);
++
++export const t3patchFileRouteLayer = HttpRouter.add(
++  "GET",
++  `${T3PATCH_FILE_ROUTE_PREFIX}/*`,
++  Effect.gen(function* () {
++    const request = yield* HttpServerRequest.HttpServerRequest;
++    const url = HttpServerRequest.toURL(request);
++    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
++    const suffix = url.value.pathname.slice(`${T3PATCH_FILE_ROUTE_PREFIX}/`.length);
++    const token = suffix.split("/")[0] ?? "";
++    const filePath = verifyFileToken(token);
++    if (!filePath) return HttpServerResponse.text("Ссылка устарела или неверна.", { status: 404 });
++    const isFile = yield* Effect.tryPromise(async () => (await stat(filePath)).isFile()).pipe(
++      Effect.orElseSucceed(() => false),
++    );
++    if (!isFile) return HttpServerResponse.text("Файл не найден.", { status: 404 });
++    return yield* assetFileResponse({
++      path: filePath,
++      download: true,
++      fileName: NodePath.basename(filePath),
++    }).pipe(
++      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
++    );
++  }),
++);
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index e0aeecb3f7..27767f359b 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -30,6 +30,7 @@ import {
+   browserApiCorsLayer,
+   httpCompressionLayer,
+ } from "./http.ts";
++import { t3patchFileInfoRouteLayer, t3patchFileRouteLayer } from "./sergey/fileAccess.ts";
+ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+ import { fixPath } from "./os-jank.ts";
+ import { websocketRpcRouteLayer } from "./ws.ts";
+@@ -575,6 +576,8 @@ export const makeRoutesLayer = Layer.mergeAll(
+     otlpTracesProxyRouteLayer,
+     assetRouteLayer,
+     attachmentUploadRouteLayer,
++    t3patchFileInfoRouteLayer, // t3-patch
++    t3patchFileRouteLayer, // t3-patch
+     deviceHubProxyRouteLayer,
+     staticAndDevRouteLayer,
+     websocketRpcRouteLayer,
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 750fa3c7d1..fa48064ce4 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -18,6 +18,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+ import { useTheme } from "~/hooks/useTheme";
+ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+ import { readLocalApi } from "~/localApi";
++import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
+ import { T3_PIERRE_ICONS } from "~/pierre-icons";
+ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+ 
+@@ -179,9 +180,11 @@ export default function FileBrowserPanel({
+         [
+           { id: "copy-mention", label: "Copy mention" },
+           { id: "add-to-chat", label: "Add to chat" },
++          ...t3patchFileMenuItems(item.path), // t3-patch
+         ],
+         position,
+       );
++      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath })) return; // t3-patch
+       if (clicked === "copy-mention") {
+         try {
+           await writeTextToClipboard(mention);
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+new file mode 100644
+index 0000000000..275011851b
+--- /dev/null
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -0,0 +1,112 @@
++/**
++ * t3-patch: пункты контекстного меню дерева файлов — копировать путь,
++ * копировать полный (настоящий) путь, скачать.
++ *
++ * Полный путь и ссылку на скачивание даёт серверный маршрут t3-patch
++ * /api/t3patch/file-info (apps/server/src/sergey/fileAccess.ts). Окна вроде
++ * `!Obsidian/...` сервер раскрывает в настоящий путь `/root/Obsidian/...`.
++ */
++import { toastManager } from "~/components/ui/toast";
++import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
++import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
++
++export interface T3PatchFileInfo {
++  readonly absolutePath: string;
++  readonly realPath: string;
++  readonly relativePath: string;
++  readonly isDirectory: boolean;
++  readonly size: number;
++  readonly mtimeMs: number;
++  readonly downloadUrl: string | null;
++}
++
++const MENU_COPY_PATH = "t3patch-copy-path";
++const MENU_COPY_REAL_PATH = "t3patch-copy-real-path";
++const MENU_DOWNLOAD = "t3patch-download";
++
++/** Пункты, которые патч добавляет в меню дерева. `path` — как в дереве, у папок со слешем в конце. */
++export function t3patchFileMenuItems(treePath: string): Array<{ id: string; label: string }> {
++  const isDirectory = treePath.endsWith("/");
++  return [
++    { id: MENU_COPY_PATH, label: "Копировать путь" },
++    { id: MENU_COPY_REAL_PATH, label: "Копировать полный путь" },
++    ...(isDirectory ? [] : [{ id: MENU_DOWNLOAD, label: "Скачать" }]),
++  ];
++}
++
++export async function fetchT3PatchFileInfo(
++  cwd: string,
++  relativePath: string,
++): Promise<T3PatchFileInfo> {
++  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/t3patch/file-info"), {
++    method: "POST",
++    credentials: "include",
++    headers: { "Content-Type": "application/json" },
++    body: JSON.stringify({ cwd, relativePath }),
++  });
++  const body = (await response.json().catch(() => null)) as
++    | (T3PatchFileInfo & { error?: string })
++    | null;
++  if (!response.ok || !body || body.error) {
++    throw new Error(body?.error ?? `Сервер ответил ${response.status}`);
++  }
++  return body;
++}
++
++async function copyWithToast(text: string, title: string) {
++  try {
++    await writeTextToClipboard(text);
++    toastManager.add({ type: "success", title, description: text });
++  } catch {
++    // Буфер обмена недоступен (нет фокуса, запрет браузера) — показать путь, чтобы скопировать руками.
++    toastManager.add({
++      type: "warning",
++      title: "Не удалось скопировать — путь ниже",
++      description: text,
++    });
++  }
++}
++
++function startDownload(url: string) {
++  const link = document.createElement("a");
++  link.href = resolvePrimaryEnvironmentHttpUrl(url);
++  link.rel = "noopener";
++  link.download = "";
++  document.body.append(link);
++  link.click();
++  link.remove();
++}
++
++/** Обработать пункт меню патча. Возвращает false, если пункт не наш. */
++export async function handleT3PatchFileMenu(
++  clicked: string | null | undefined,
++  input: { readonly cwd: string; readonly relativePath: string },
++): Promise<boolean> {
++  if (clicked !== MENU_COPY_PATH && clicked !== MENU_COPY_REAL_PATH && clicked !== MENU_DOWNLOAD) {
++    return false;
++  }
++  if (clicked === MENU_COPY_PATH) {
++    await copyWithToast(input.relativePath, "Путь скопирован");
++    return true;
++  }
++  try {
++    const info = await fetchT3PatchFileInfo(input.cwd, input.relativePath);
++    if (clicked === MENU_COPY_REAL_PATH) {
++      await copyWithToast(info.realPath, "Полный путь скопирован");
++    } else if (info.downloadUrl) {
++      startDownload(info.downloadUrl);
++      toastManager.add({
++        type: "success",
++        title: "Скачивание началось",
++        description: info.realPath,
++      });
++    }
++  } catch (error) {
++    toastManager.add({
++      type: "error",
++      title: clicked === MENU_DOWNLOAD ? "Не удалось скачать" : "Не удалось получить путь",
++      description: error instanceof Error ? error.message : String(error),
++    });
++  }
++  return true;
++}
+-- 
+2.43.0
+

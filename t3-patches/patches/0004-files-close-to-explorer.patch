@@ -1,0 +1,145 @@
+From 100797aff480a52903cf654836298f67c98c8a6d Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 21:51:20 +0300
+Subject: [PATCH 4/7] =?UTF-8?q?feat(files):=20=D0=BA=D0=BD=D0=BE=D0=BF?=
+ =?UTF-8?q?=D0=BA=D0=B0=20=C2=AB=D0=97=D0=B0=D0=BA=D1=80=D1=8B=D1=82=D1=8C?=
+ =?UTF-8?q?=20=D1=84=D0=B0=D0=B9=D0=BB=C2=BB=20=D0=B2=D0=BE=D0=B7=D0=B2?=
+ =?UTF-8?q?=D1=80=D0=B0=D1=89=D0=B0=D0=B5=D1=82=20=D0=BA=20=D0=B4=D0=B5?=
+ =?UTF-8?q?=D1=80=D0=B5=D0=B2=D1=83=20=D0=BF=D1=80=D0=BE=D0=B5=D0=BA=D1=82?=
+ =?UTF-8?q?=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Штатно openFile удаляет вкладку «только дерево», и после закрытия документа
+вернуться к дереву без документа было нельзя. Кнопка в шапке документа
+закрывает вкладку файла и открывает вместо неё дерево.
+---
+ .../src/components/files/FilePreviewPanel.tsx |  4 +++
+ .../src/components/sergey/CloseFileAction.tsx | 27 ++++++++++++++
+ .../src/components/sergey/closeFile.test.ts   | 35 +++++++++++++++++++
+ apps/web/src/components/sergey/closeFile.ts   | 14 ++++++++
+ 4 files changed, 80 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/CloseFileAction.tsx
+ create mode 100644 apps/web/src/components/sergey/closeFile.test.ts
+ create mode 100644 apps/web/src/components/sergey/closeFile.ts
+
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index 4595b959e6..c9e3b1516c 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -76,6 +76,7 @@ import {
+   FileSurfaceLoading,
+ } from "./fileSurfaceChrome";
+ import SourceFilePreview from "./ReadOnlySourcePreview";
++import { CloseFileAction } from "~/components/sergey/CloseFileAction";
+ import { OfficePreview } from "~/components/sergey/OfficePreview";
+ import { officeKind } from "~/components/sergey/officeFiles";
+ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+@@ -1156,6 +1157,9 @@ export default function FilePreviewPanel({
+               <FolderTree className="size-3.5" />
+             </FileSurfaceAction>
+           ) : null}
++          {relativePath !== null ? ( // t3-patch
++            <CloseFileAction threadRef={threadRef} relativePath={relativePath} />
++          ) : null}
+         </div>
+       ) : null}
+       {relativePath &&
+diff --git a/apps/web/src/components/sergey/CloseFileAction.tsx b/apps/web/src/components/sergey/CloseFileAction.tsx
+new file mode 100644
+index 0000000000..a74137f927
+--- /dev/null
++++ b/apps/web/src/components/sergey/CloseFileAction.tsx
+@@ -0,0 +1,27 @@
++/**
++ * t3-patch: кнопка «Закрыть файл» в шапке открытого документа.
++ *
++ * Штатно каждый открытый файл — вкладка правой панели, а вкладку «только
++ * дерево» (`files`) openFile удаляет при открытии первого файла. Вернуться
++ * к дереву без документа можно было только закрыв панель целиком. Кнопка
++ * закрывает вкладку файла и открывает вместо неё дерево.
++ */
++import type { ScopedThreadRef } from "@t3tools/contracts";
++import { XIcon } from "lucide-react";
++
++import { FileSurfaceAction } from "~/components/files/fileSurfaceChrome";
++import { closeFileToExplorer } from "./closeFile";
++
++export function CloseFileAction(props: {
++  readonly threadRef: ScopedThreadRef;
++  readonly relativePath: string;
++}) {
++  return (
++    <FileSurfaceAction
++      label="Закрыть файл"
++      onPress={() => closeFileToExplorer(props.threadRef, props.relativePath)}
++    >
++      <XIcon className="size-3.5" />
++    </FileSurfaceAction>
++  );
++}
+diff --git a/apps/web/src/components/sergey/closeFile.test.ts b/apps/web/src/components/sergey/closeFile.test.ts
+new file mode 100644
+index 0000000000..ae3c1d8172
+--- /dev/null
++++ b/apps/web/src/components/sergey/closeFile.test.ts
+@@ -0,0 +1,35 @@
++import { scopeThreadRef } from "@t3tools/client-runtime/environment";
++import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
++import { describe, expect, it } from "vite-plus/test";
++
++import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
++
++import { closeFileToExplorer } from "./closeFile";
++
++const ref = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-close"));
++const panel = () => selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
++
++describe("closeFileToExplorer", () => {
++  it("после закрытия файла остаётся дерево проекта, панель открыта", () => {
++    useRightPanelStore.getState().open(ref, "files");
++    useRightPanelStore.getState().openFile(ref, "notes/a.md");
++    expect(panel().surfaces.map((s) => s.id)).toEqual(["file:notes/a.md"]);
++
++    closeFileToExplorer(ref, "notes/a.md");
++
++    expect(panel().surfaces.map((s) => s.id)).toEqual(["files"]);
++    expect(panel().activeSurfaceId).toBe("files");
++    expect(panel().isOpen).toBe(true);
++  });
++
++  it("другие открытые файлы остаются вкладками", () => {
++    useRightPanelStore.getState().openFile(ref, "a.md");
++    useRightPanelStore.getState().openFile(ref, "b.md");
++    closeFileToExplorer(ref, "b.md");
++    const ids = panel().surfaces.map((s) => s.id);
++    expect(ids).toContain("file:a.md");
++    expect(ids).toContain("files");
++    expect(ids).not.toContain("file:b.md");
++    expect(panel().activeSurfaceId).toBe("files");
++  });
++});
+diff --git a/apps/web/src/components/sergey/closeFile.ts b/apps/web/src/components/sergey/closeFile.ts
+new file mode 100644
+index 0000000000..3bb45dd20a
+--- /dev/null
++++ b/apps/web/src/components/sergey/closeFile.ts
+@@ -0,0 +1,14 @@
++import type { ScopedThreadRef } from "@t3tools/contracts";
++
++import { useRightPanelStore } from "~/rightPanelStore";
++
++/**
++ * t3-patch: закрыть вкладку файла и показать на её месте дерево проекта.
++ * Штатно openFile удаляет вкладку «только дерево» (`files`), поэтому после
++ * закрытия документа вернуться к дереву было нельзя.
++ */
++export function closeFileToExplorer(threadRef: ScopedThreadRef, relativePath: string): void {
++  const store = useRightPanelStore.getState();
++  store.closeSurface(threadRef, `file:${relativePath}`);
++  store.open(threadRef, "files");
++}
+-- 
+2.43.0
+

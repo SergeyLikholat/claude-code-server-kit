@@ -1,0 +1,101 @@
+From 3e451303eafd827b2ca6078d2dcee140fa423e0f Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 08:55:05 +0300
+Subject: [PATCH 2001/2006] =?UTF-8?q?build(mobile):=20=D1=81=D0=B2=D0=BE?=
+ =?UTF-8?q?=D1=8F=20=D1=81=D0=B1=D0=BE=D1=80=D0=BA=D0=B0=20=D1=80=D1=8F?=
+ =?UTF-8?q?=D0=B4=D0=BE=D0=BC=20=D1=81=20=D0=BE=D1=84=D0=B8=D1=86=D0=B8?=
+ =?UTF-8?q?=D0=B0=D0=BB=D1=8C=D0=BD=D0=BE=D0=B9=20=D0=B8=20=D1=80=D1=83?=
+ =?UTF-8?q?=D1=81=D1=81=D0=BA=D0=B8=D0=B9=20=D0=B8=D0=BD=D1=82=D0=B5=D1=80?=
+ =?UTF-8?q?=D1=84=D0=B5=D0=B9=D1=81?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Имя пакета, название, схема ссылок и номер сборки задаются переменными
+T3PATCH_* (их выставляет build-apk.sh) — APK ставится рядом с приложением
+из магазина. babel.config.js подключает тот же плагин русификации, что
+веб-клиент (T3PATCH_I18N_DIR); без переменной и в тестах сборка штатная.
+---
+ apps/mobile/app.config.ts    | 14 +++++++++++++-
+ apps/mobile/babel.config.js  |  3 +++
+ apps/mobile/t3patch-i18n.cjs | 22 ++++++++++++++++++++++
+ 3 files changed, 38 insertions(+), 1 deletion(-)
+ create mode 100644 apps/mobile/t3patch-i18n.cjs
+
+diff --git a/apps/mobile/app.config.ts b/apps/mobile/app.config.ts
+index ddc022508d..7bb981fefc 100644
+--- a/apps/mobile/app.config.ts
++++ b/apps/mobile/app.config.ts
+@@ -109,7 +109,15 @@ function resolveAppVariant(value: string | undefined): AppVariant {
+   }
+ }
+ 
+-const variant = VARIANT_CONFIG[APP_VARIANT];
++// t3-patch: своя сборка ставится рядом с официальной — своё имя пакета, название и схема ссылок
++const variant = process.env.T3PATCH_ANDROID_PACKAGE
++  ? {
++      ...VARIANT_CONFIG[APP_VARIANT],
++      androidPackage: process.env.T3PATCH_ANDROID_PACKAGE,
++      appName: process.env.T3PATCH_APP_NAME ?? VARIANT_CONFIG[APP_VARIANT].appName,
++      scheme: process.env.T3PATCH_APP_SCHEME ?? VARIANT_CONFIG[APP_VARIANT].scheme,
++    }
++  : VARIANT_CONFIG[APP_VARIANT];
+ const iosBundleIdentifier = isIosPersonalTeamBuild
+   ? personalTeamBundleIdentifier!
+   : variant.iosBundleIdentifier;
+@@ -276,6 +284,10 @@ const config: ExpoConfig = {
+   android: {
+     icon: variant.assets.appIcon,
+     package: variant.androidPackage,
++    // t3-patch: номер сборки растёт с каждой пересборкой — APK ставится поверх прошлого
++    ...(process.env.T3PATCH_ANDROID_VERSION_CODE
++      ? { versionCode: Number(process.env.T3PATCH_ANDROID_VERSION_CODE) }
++      : {}),
+     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
+       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
+       : {}),
+diff --git a/apps/mobile/babel.config.js b/apps/mobile/babel.config.js
+index 5c85f81242..7918f75051 100644
+--- a/apps/mobile/babel.config.js
++++ b/apps/mobile/babel.config.js
+@@ -1,6 +1,9 @@
++const t3patchRuBabelPlugins = require("./t3patch-i18n.cjs"); // t3-patch: русификация
++
+ module.exports = function (api) {
+   api.cache(true);
+   return {
+     presets: [["babel-preset-expo", { unstable_transformImportMeta: true }]],
++    plugins: t3patchRuBabelPlugins(), // t3-patch
+   };
+ };
+diff --git a/apps/mobile/t3patch-i18n.cjs b/apps/mobile/t3patch-i18n.cjs
+new file mode 100644
+index 0000000000..953c695fa8
+--- /dev/null
++++ b/apps/mobile/t3patch-i18n.cjs
+@@ -0,0 +1,22 @@
++// t3-patch: подключение русификации к сборке Android-приложения.
++//
++// Плагин и словарь живут вне исходников T3 — в каталоге патчей (T3PATCH_I18N_DIR, его
++// выставляет build-apk.sh). Без переменной и в тестах плагин не подключается — сборка штатная.
++// plugin.mjs — ES-модуль; Node 22+ загружает его через require синхронно, как нужно Babel.
++const { existsSync, readFileSync } = require("node:fs");
++const { join } = require("node:path");
++
++module.exports = function t3patchRuBabelPlugins() {
++  const dir = process.env.T3PATCH_I18N_DIR;
++  if (
++    !dir ||
++    process.env.VITEST ||
++    // JEST_WORKER_ID не проверяем: Metro раздаёт сборку через jest-worker и выставляет его сам
++    !existsSync(join(dir, "plugin.mjs"))
++  ) {
++    return [];
++  }
++  const plugin = require(join(dir, "plugin.mjs")).default;
++  const dict = JSON.parse(readFileSync(join(dir, "ru.json"), "utf8"));
++  return [[plugin, { dict }]];
++};
+-- 
+2.43.0
+

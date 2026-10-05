@@ -1,0 +1,65 @@
+From db817fd61971bae8bf0080382ce8c488aadc086e Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 14:16:26 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D0=BA=D0=B0=D1=80=D1=82=D0=BE?=
+ =?UTF-8?q?=D1=87=D0=BA=D0=B0=20=D1=84=D0=B0=D0=B9=D0=BB=D0=B0=20=D0=B3?=
+ =?UTF-8?q?=D0=BE=D0=B2=D0=BE=D1=80=D0=B8=D1=82,=20=D0=BF=D0=BE=D1=87?=
+ =?UTF-8?q?=D0=B5=D0=BC=D1=83=20=D0=BD=D0=B5=D0=BB=D1=8C=D0=B7=D1=8F=20?=
+ =?UTF-8?q?=D1=81=D0=BA=D0=B0=D1=87=D0=B0=D1=82=D1=8C?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Удалённый файл (ссылка из старого сообщения), нет связи с сервером или файл
+вне проекта — теперь это разные пояснения, а не одно общее.
+---
+ apps/mobile/src/sergey/FileUnavailable.tsx | 25 +++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/apps/mobile/src/sergey/FileUnavailable.tsx b/apps/mobile/src/sergey/FileUnavailable.tsx
+index 34bec5079f..41ae7f2bf4 100644
+--- a/apps/mobile/src/sergey/FileUnavailable.tsx
++++ b/apps/mobile/src/sergey/FileUnavailable.tsx
+@@ -88,8 +88,26 @@ export function T3patchFileUnavailable(props: {
+     draftCwd: props.threadId === null ? cwd : null,
+   });
+   const downloadUrl = asset._tag === "Success" ? asset.url : null;
+-  // Сервер отказал в ссылке (файл вне проекта, скрытый файл, сервер без патча 0011).
++  // Сервер отказал в ссылке (файл удалён, вне проекта, скрытый, сервер без патча 0011).
+   const downloadFailed = asset._tag === "Failure";
++  const disconnected = asset._tag === "Failure" && asset.reason === "disconnected";
++  // Есть ли файл на месте: смотрим список соседей в его папке.
++  const trimmedPath = relativePath.replace(/\/+$/, "");
++  const parentPath = trimmedPath.includes("/")
++    ? trimmedPath.slice(0, trimmedPath.lastIndexOf("/"))
++    : "";
++  const siblings = useEnvironmentQuery(
++    downloadFailed && !disconnected
++      ? projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath: parentPath } })
++      : null,
++  );
++  const missing =
++    siblings.data !== null && !siblings.data.entries.some((entry) => entry.path === trimmedPath);
++  const failureText = disconnected
++    ? "Нет связи с сервером — ссылку на скачивание получить не удалось. Проверь подключение и открой файл заново."
++    : missing
++      ? "Файла нет на месте: его удалили или переименовали после того, как появилась ссылка."
++      : "Сервер не выдал ссылку на этот файл: он вне проекта или скрытый. Скопируй путь и забери файл другим способом.";
+ 
+   if (directory.isPending || isDirectory) {
+     return (
+@@ -111,10 +129,7 @@ export function T3patchFileUnavailable(props: {
+         {t3patchFullPath(cwd, relativePath)}
+       </Text>
+       {downloadFailed ? (
+-        <Text className="text-center text-xs text-foreground-muted">
+-          Сервер не выдал ссылку на этот файл: он вне проекта или скрытый. Скопируй путь и забери
+-          файл другим способом.
+-        </Text>
++        <Text className="text-center text-xs text-foreground-muted">{failureText}</Text>
+       ) : null}
+       <View className="mt-3 items-center gap-2">
+         <ActionButton
+-- 
+2.43.0
+

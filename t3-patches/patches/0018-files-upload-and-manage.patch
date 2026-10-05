@@ -1,0 +1,1829 @@
+From 21fc4852b45c68a487fbec25f80056e56e73e341 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Wed, 30 Sep 2026 21:03:25 +0300
+Subject: [PATCH] =?UTF-8?q?feat:=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE=D0=B4?=
+ =?UTF-8?q?=D0=BD=D0=B8=D0=BA=20=D0=B2=20=D0=BE=D0=B1=D0=B5=20=D1=81=D1=82?=
+ =?UTF-8?q?=D0=BE=D1=80=D0=BE=D0=BD=D1=8B=20=E2=80=94=20=D0=B7=D0=B0=D0=B3?=
+ =?UTF-8?q?=D1=80=D1=83=D0=B7=D0=BA=D0=B0=20=D0=B2=20=D0=BF=D0=B0=D0=BF?=
+ =?UTF-8?q?=D0=BA=D1=83=20=D1=81=20=D0=B4=D0=BE=D0=BA=D0=B0=D1=87=D0=BA?=
+ =?UTF-8?q?=D0=BE=D0=B9,=20=D0=BD=D0=BE=D0=B2=D0=B0=D1=8F=20=D0=BF=D0=B0?=
+ =?UTF-8?q?=D0=BF=D0=BA=D0=B0,=20=D0=BF=D0=B5=D1=80=D0=B5=D0=B8=D0=BC?=
+ =?UTF-8?q?=D0=B5=D0=BD=D0=BE=D0=B2=D0=B0=D0=BD=D0=B8=D0=B5,=20=D0=BA?=
+ =?UTF-8?q?=D0=BE=D1=80=D0=B7=D0=B8=D0=BD=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/server/src/auth/RpcAuthorization.ts      |   8 +
+ apps/server/src/sergey/uploadRoute.ts         |  91 ++++
+ apps/server/src/sergey/workspaceOps.test.ts   | 184 +++++++
+ apps/server/src/sergey/workspaceOps.ts        | 482 ++++++++++++++++++
+ apps/server/src/server.ts                     |   6 +
+ apps/server/src/ws.ts                         |  81 +++
+ .../src/components/files/FileBrowserPanel.tsx |   8 +-
+ apps/web/src/components/sergey/fileActions.ts | 133 ++++-
+ apps/web/src/components/sergey/uploads.tsx    | 234 +++++++++
+ .../sergey/useT3patchExplorerDrop.ts          |  81 +++
+ .../src/components/sergey/workspaceClient.ts  | 120 +++++
+ apps/web/src/routes/__root.tsx                |   2 +
+ packages/client-runtime/src/state/server.ts   |  26 +
+ packages/contracts/src/index.ts               |   1 +
+ packages/contracts/src/rpc.ts                 |  14 +
+ packages/contracts/src/t3patchWorkspace.ts    |  81 +++
+ 16 files changed, 1549 insertions(+), 3 deletions(-)
+ create mode 100644 apps/server/src/sergey/uploadRoute.ts
+ create mode 100644 apps/server/src/sergey/workspaceOps.test.ts
+ create mode 100644 apps/server/src/sergey/workspaceOps.ts
+ create mode 100644 apps/web/src/components/sergey/uploads.tsx
+ create mode 100644 apps/web/src/components/sergey/useT3patchExplorerDrop.ts
+ create mode 100644 apps/web/src/components/sergey/workspaceClient.ts
+ create mode 100644 packages/contracts/src/t3patchWorkspace.ts
+
+diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
+index 6285a52eba..f19532f44b 100644
+--- a/apps/server/src/auth/RpcAuthorization.ts
++++ b/apps/server/src/auth/RpcAuthorization.ts
+@@ -8,6 +8,7 @@ import {
+   AuthTerminalOperateScope,
+   ORCHESTRATION_WS_METHODS,
+   type AuthEnvironmentScope,
++  T3PATCH_WORKSPACE_METHODS,
+   WS_METHODS,
+   WsRpcGroup,
+ } from "@t3tools/contracts";
+@@ -63,6 +64,13 @@ export const RPC_REQUIRED_SCOPES = {
+   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
+   [WS_METHODS.t3patchMarkThreadVisited]: AuthOrchestrationReadScope, // t3-patch
+   [WS_METHODS.t3patchSubscribeThreadVisits]: AuthOrchestrationReadScope, // t3-patch
++  // t3-patch: файловые операции проводника — запись, как projects.writeFile
++  [T3PATCH_WORKSPACE_METHODS.createUpload]: AuthOrchestrationOperateScope,
++  [T3PATCH_WORKSPACE_METHODS.mkdir]: AuthOrchestrationOperateScope,
++  [T3PATCH_WORKSPACE_METHODS.move]: AuthOrchestrationOperateScope,
++  [T3PATCH_WORKSPACE_METHODS.trash]: AuthOrchestrationOperateScope,
++  [T3PATCH_WORKSPACE_METHODS.listTrash]: AuthOrchestrationReadScope,
++  [T3PATCH_WORKSPACE_METHODS.restore]: AuthOrchestrationOperateScope,
+   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
+   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
+   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
+diff --git a/apps/server/src/sergey/uploadRoute.ts b/apps/server/src/sergey/uploadRoute.ts
+new file mode 100644
+index 0000000000..8624114f88
+--- /dev/null
++++ b/apps/server/src/sergey/uploadRoute.ts
+@@ -0,0 +1,91 @@
++/**
++ * t3-patch: HTTP-маршрут загрузки файла в папку проекта кусками (логика — workspaceOps.ts).
++ *
++ *   GET  /api/t3patch/upload/<ссылка>            → { offset, size }  — сколько уже получено
++ *   POST /api/t3patch/upload/<ссылка>?offset=N    → тело: следующий кусок
++ *        → { offset, done: false } или { offset, done: true, relativePath }
++ *        → 409 { offset } — смещение разошлось, продолжить с offset
++ *
++ * Авторизация — подписанная ссылка из запроса t3patch.workspaceCreateUpload (как у вложений чата):
++ * так файл может грузить и фоновый загрузчик Android без заголовков сессии.
++ */
++import { T3PATCH_WORKSPACE_UPLOAD_ROUTE } from "@t3tools/contracts";
++import * as Effect from "effect/Effect";
++import * as Option from "effect/Option";
++import * as Stream from "effect/Stream";
++import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
++
++import * as ServerConfig from "../config.ts";
++import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
++import {
++  T3patchOpError,
++  t3patchAppendChunk,
++  t3patchUploadOffset,
++  t3patchVerifyUpload,
++} from "./workspaceOps.ts";
++
++const json = (body: unknown, status = 200) =>
++  HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
++
++const claimsFromRequest = Effect.gen(function* () {
++  const request = yield* HttpServerRequest.HttpServerRequest;
++  const url = HttpServerRequest.toURL(request);
++  if (Option.isNone(url)) return null;
++  const token = url.value.pathname.slice(`${T3PATCH_WORKSPACE_UPLOAD_ROUTE}/`.length);
++  const config = yield* ServerConfig.ServerConfig;
++  const claims = yield* Effect.promise(() => t3patchVerifyUpload(config.stateDir, token));
++  return claims ? { claims, url: url.value, stateDir: config.stateDir, request } : null;
++});
++
++export const t3patchUploadStatusRouteLayer = HttpRouter.add(
++  "GET",
++  `${T3PATCH_WORKSPACE_UPLOAD_ROUTE}/*`,
++  Effect.gen(function* () {
++    const found = yield* claimsFromRequest;
++    if (!found) return json({ error: "Ссылка загрузки недействительна или устарела." }, 404);
++    const offset = yield* Effect.promise(() => t3patchUploadOffset(found.stateDir, found.claims));
++    if (offset === null) return json({ error: "Загрузка не найдена — начните заново." }, 404);
++    return json({ offset, size: found.claims.size });
++  }),
++);
++
++export const t3patchUploadChunkRouteLayer = HttpRouter.add(
++  "POST",
++  `${T3PATCH_WORKSPACE_UPLOAD_ROUTE}/*`,
++  Effect.gen(function* () {
++    const found = yield* claimsFromRequest;
++    if (!found) return json({ error: "Ссылка загрузки недействительна или устарела." }, 404);
++    const offset = Number(found.url.searchParams.get("offset") ?? "0");
++    if (!Number.isSafeInteger(offset) || offset < 0)
++      return json({ error: "Неверное смещение." }, 400);
++    const body = yield* Stream.toAsyncIterableEffect(found.request.stream);
++    const result = yield* Effect.promise(async () => {
++      try {
++        return {
++          ok: true as const,
++          value: await t3patchAppendChunk({
++            stateDir: found.stateDir,
++            claims: found.claims,
++            offset,
++            body,
++          }),
++        };
++      } catch (error) {
++        return { ok: false as const, error };
++      }
++    });
++    if (!result.ok) {
++      const error = result.error as T3patchOpError & { offset?: number };
++      const status = error instanceof T3patchOpError ? error.status : 500;
++      return json(
++        { error: error instanceof Error ? error.message : String(error), offset: error.offset },
++        status,
++      );
++    }
++    if (result.value.done) {
++      const entries = yield* WorkspaceEntries.WorkspaceEntries;
++      yield* entries.refresh(found.claims.cwd);
++    }
++    return json(result.value);
++  }),
++);
+diff --git a/apps/server/src/sergey/workspaceOps.test.ts b/apps/server/src/sergey/workspaceOps.test.ts
+new file mode 100644
+index 0000000000..5de5faae21
+--- /dev/null
++++ b/apps/server/src/sergey/workspaceOps.test.ts
+@@ -0,0 +1,184 @@
++// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics globalDate:off
++import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++
++import { describe, expect, it } from "vite-plus/test";
++
++import {
++  t3patchAppendChunk,
++  t3patchCreateUpload,
++  t3patchFreeName,
++  t3patchListTrash,
++  t3patchMkdir,
++  t3patchMove,
++  t3patchParseMountInfo,
++  t3patchRealPath,
++  t3patchResolveInside,
++  t3patchRestore,
++  t3patchTrash,
++  t3patchUploadOffset,
++  t3patchVerifyUpload,
++} from "./workspaceOps.ts";
++
++async function* chunks(...parts: string[]) {
++  for (const part of parts) yield new TextEncoder().encode(part);
++}
++
++async function setup() {
++  const base = await mkdtemp(join(tmpdir(), "t3patch-ops-"));
++  const cwd = join(base, "project");
++  const stateDir = join(base, "state");
++  await mkdir(join(cwd, "docs"), { recursive: true });
++  return { cwd, stateDir };
++}
++
++describe("загрузка файлов в папку проекта", () => {
++  it("кусками, с обрывом и продолжением с места обрыва", async () => {
++    const { cwd, stateDir } = await setup();
++    const { token } = await t3patchCreateUpload({
++      stateDir,
++      cwd,
++      directory: "docs",
++      name: "Смета.txt",
++      size: 10,
++    });
++    const claims = (await t3patchVerifyUpload(stateDir, token))!;
++    const first = await t3patchAppendChunk({ stateDir, claims, offset: 0, body: chunks("01234") });
++    expect(first).toEqual({ done: false, offset: 5 });
++    // обрыв: клиент спрашивает, сколько дошло
++    expect(await t3patchUploadOffset(stateDir, claims)).toBe(5);
++    // повтор со старым смещением — отказ с текущим смещением
++    await expect(
++      t3patchAppendChunk({ stateDir, claims, offset: 0, body: chunks("x") }),
++    ).rejects.toMatchObject({ status: 409, offset: 5 });
++    const last = await t3patchAppendChunk({ stateDir, claims, offset: 5, body: chunks("56789") });
++    expect(last).toEqual({ done: true, offset: 10, relativePath: "docs/Смета.txt" });
++    expect(await readFile(join(cwd, "docs/Смета.txt"), "utf8")).toBe("0123456789");
++  });
++
++  it("занятое имя — «Имя (2).ext», замена — только явным выбором", async () => {
++    const { cwd, stateDir } = await setup();
++    await writeFile(join(cwd, "docs/a.txt"), "old");
++    const upload = async (conflict?: "replace") => {
++      const { token } = await t3patchCreateUpload({
++        stateDir,
++        cwd,
++        directory: "docs",
++        name: "a.txt",
++        size: 3,
++        ...(conflict ? { conflict } : {}),
++      });
++      const claims = (await t3patchVerifyUpload(stateDir, token))!;
++      return t3patchAppendChunk({ stateDir, claims, offset: 0, body: chunks("new") });
++    };
++    expect(await upload()).toMatchObject({ relativePath: "docs/a (2).txt" });
++    expect(await readFile(join(cwd, "docs/a.txt"), "utf8")).toBe("old");
++    expect(await upload("replace")).toMatchObject({ relativePath: "docs/a.txt" });
++    expect(await readFile(join(cwd, "docs/a.txt"), "utf8")).toBe("new");
++  });
++
++  it("не выходит за пределы проекта и не принимает подделанную ссылку", async () => {
++    const { cwd, stateDir } = await setup();
++    expect(() => t3patchResolveInside(cwd, "../etc")).toThrow("за пределы");
++    await expect(
++      t3patchCreateUpload({ stateDir, cwd, directory: "docs", name: "../x", size: 1 }),
++    ).rejects.toThrow("Недопустимое имя");
++    const { token } = await t3patchCreateUpload({
++      stateDir,
++      cwd,
++      directory: "docs",
++      name: "a",
++      size: 1,
++    });
++    const forged = `${Buffer.from(JSON.stringify({ id: "x", cwd: "/", directory: "etc", name: "passwd", size: 1, conflict: "replace", exp: 9e15 })).toString("base64url")}.${token.split(".")[1]}`;
++    expect(await t3patchVerifyUpload(stateDir, forged)).toBeNull();
++    expect(await t3patchVerifyUpload(stateDir, token, Date.now() + 49 * 3600_000)).toBeNull();
++  });
++
++  it("папка целиком: недостающие вложенные папки создаются", async () => {
++    const { cwd, stateDir } = await setup();
++    const { token } = await t3patchCreateUpload({
++      stateDir,
++      cwd,
++      directory: "docs/Новая/Акты",
++      name: "a.txt",
++      size: 1,
++    });
++    const claims = (await t3patchVerifyUpload(stateDir, token))!;
++    expect(
++      await t3patchAppendChunk({ stateDir, claims, offset: 0, body: chunks("1") }),
++    ).toMatchObject({
++      relativePath: "docs/Новая/Акты/a.txt",
++    });
++  });
++
++  it("лишние данные сверх размера — отказ", async () => {
++    const { cwd, stateDir } = await setup();
++    const { token } = await t3patchCreateUpload({
++      stateDir,
++      cwd,
++      directory: "",
++      name: "b",
++      size: 2,
++    });
++    const claims = (await t3patchVerifyUpload(stateDir, token))!;
++    await expect(
++      t3patchAppendChunk({ stateDir, claims, offset: 0, body: chunks("abc") }),
++    ).rejects.toMatchObject({ status: 413 });
++  });
++});
++
++describe("папки, переименование, корзина", () => {
++  it("новая папка, переименование без затирания, перемещение", async () => {
++    const { cwd } = await setup();
++    expect(await t3patchMkdir(cwd, "docs/Акты")).toBe("docs/Акты");
++    await writeFile(join(cwd, "docs/1.txt"), "1");
++    await writeFile(join(cwd, "docs/2.txt"), "2");
++    await expect(t3patchMove(cwd, "docs/1.txt", "docs/2.txt")).rejects.toMatchObject({
++      status: 409,
++    });
++    expect(await t3patchMove(cwd, "docs/1.txt", "docs/Акты/1.txt")).toBe("docs/Акты/1.txt");
++    await expect(t3patchMove(cwd, "docs", "docs/Акты/docs")).rejects.toThrow("внутрь");
++  });
++
++  it("удаление в корзину и восстановление на прежнее место", async () => {
++    const { cwd, stateDir } = await setup();
++    await writeFile(join(cwd, "docs/план.md"), "текст");
++    const item = await t3patchTrash(stateDir, cwd, "docs/план.md");
++    expect(await stat(join(cwd, "docs/план.md")).catch(() => null)).toBeNull();
++    expect((await t3patchListTrash(stateDir, cwd)).map((entry) => entry.id)).toEqual([item.id]);
++    expect(await t3patchRestore(stateDir, item.id)).toBe("docs/план.md");
++    expect(await readFile(join(cwd, "docs/план.md"), "utf8")).toBe("текст");
++    expect(await t3patchListTrash(stateDir, cwd)).toEqual([]);
++  });
++
++  it("свободное имя подбирается по номеру", async () => {
++    const { cwd } = await setup();
++    await writeFile(join(cwd, "docs/x.pdf"), "");
++    await writeFile(join(cwd, "docs/x (2).pdf"), "");
++    expect(await t3patchFreeName(join(cwd, "docs"), "x.pdf")).toBe("x (3).pdf");
++    expect(await t3patchFreeName(join(cwd, "docs"), "y.pdf")).toBe("y.pdf");
++  });
++});
++
++describe("запись через окно-монтирование (!Obsidian)", () => {
++  const mountinfo = [
++    "25 1 252:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw",
++    "613 25 252:1 /root/Obsidian /root/projects/tk-vector/!Obsidian ro,relatime shared:1 - ext4 /dev/vda1 rw",
++  ].join("\n");
++  const mounts = t3patchParseMountInfo(mountinfo);
++
++  it("путь в окне только для чтения переводится в настоящую папку базы", () => {
++    expect(t3patchRealPath("/root/projects/tk-vector/!Obsidian/ОБМЕН/a.pdf", mounts)).toBe(
++      "/root/Obsidian/ОБМЕН/a.pdf",
++    );
++  });
++
++  it("обычный путь проекта не меняется", () => {
++    expect(t3patchRealPath("/root/projects/tk-vector/docs/a.pdf", mounts)).toBe(
++      "/root/projects/tk-vector/docs/a.pdf",
++    );
++  });
++});
+diff --git a/apps/server/src/sergey/workspaceOps.ts b/apps/server/src/sergey/workspaceOps.ts
+new file mode 100644
+index 0000000000..752670a499
+--- /dev/null
++++ b/apps/server/src/sergey/workspaceOps.ts
+@@ -0,0 +1,482 @@
++// @effect-diagnostics nodeBuiltinImport:off
++// @effect-diagnostics globalDate:off
++/**
++ * t3-patch: файловые операции проводника — загрузка файлов в папку проекта (кусками, с докачкой),
++ * новая папка, переименование/перемещение, удаление в корзину с восстановлением.
++ *
++ * Штатно проводник T3 только читает: записать можно лишь текст из редактора (projects.writeFile).
++ * Загрузка устроена как у вложений чата: клиент по авторизованному соединению получает подписанную
++ * ссылку (HMAC), по ней шлёт файл кусками с указанием смещения. Недокачанный файл лежит в
++ * `<stateDir>/t3patch-uploads/`, при обрыве клиент спрашивает, сколько дошло, и продолжает.
++ * Готовый файл переносится в папку; занятое имя — «Имя (2).ext», замена — только явным выбором.
++ * Удалённое уходит в `<stateDir>/t3patch-trash/` и хранится 30 дней.
++ */
++import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
++import {
++  copyFile,
++  mkdir,
++  open,
++  readdir,
++  readFile,
++  rename,
++  rm,
++  stat,
++  unlink,
++  writeFile,
++} from "node:fs/promises";
++import * as NodePath from "node:path";
++
++export const T3PATCH_UPLOAD_MAX_BYTES = 4 * 1024 ** 3; // 4 ГБ на файл
++const UPLOAD_TTL_MS = 48 * 60 * 60 * 1000;
++const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
++
++export type T3patchConflict = "rename" | "replace";
++
++export class T3patchOpError extends Error {
++  readonly status: number;
++  constructor(message: string, status = 400) {
++    super(message);
++    this.status = status;
++  }
++}
++
++// ---------- пути ----------
++
++/** Имя файла или папки без путей и служебных значений. */
++export function t3patchValidName(name: string): string {
++  const trimmed = name.trim();
++  if (
++    !trimmed ||
++    trimmed === "." ||
++    trimmed === ".." ||
++    /[/\\\0]/.test(trimmed) ||
++    trimmed.length > 255
++  ) {
++    throw new T3patchOpError(`Недопустимое имя: «${name}».`);
++  }
++  return trimmed;
++}
++
++/** Абсолютный путь внутри корня проекта; выход наружу — ошибка. */
++export function t3patchResolveInside(root: string, relativePath: string): string {
++  const base = NodePath.resolve(root);
++  const target = NodePath.resolve(base, relativePath || ".");
++  if (target !== base && !target.startsWith(base + NodePath.sep)) {
++    throw new T3patchOpError("Путь выходит за пределы проекта.", 403);
++  }
++  return target;
++}
++
++const exists = (path: string) =>
++  stat(path).then(
++    () => true,
++    () => false,
++  );
++
++/** Свободное имя в папке: «Смета.xlsx» → «Смета (2).xlsx», «Смета (3).xlsx»… */
++export async function t3patchFreeName(directory: string, name: string): Promise<string> {
++  if (!(await exists(NodePath.join(directory, name)))) return name;
++  const ext = NodePath.extname(name);
++  const stem = ext && ext !== name ? name.slice(0, -ext.length) : name;
++  for (let index = 2; index < 10_000; index += 1) {
++    const candidate = `${stem} (${index})${ext}`;
++    if (!(await exists(NodePath.join(directory, candidate)))) return candidate;
++  }
++  throw new T3patchOpError("Не удалось подобрать свободное имя.", 409);
++}
++
++function explainFsError(error: unknown): T3patchOpError {
++  const code = (error as { code?: string }).code;
++  if (code === "EROFS" || code === "EACCES" || code === "EPERM") {
++    return new T3patchOpError("Папка только для чтения — записать сюда нельзя.", 403);
++  }
++  if (code === "ENOSPC") return new T3patchOpError("На сервере закончилось место.", 507);
++  if (code === "ENOENT") return new T3patchOpError("Файл или папка не найдены.", 404);
++  if (code === "EEXIST" || code === "ENOTEMPTY") {
++    return new T3patchOpError("Файл или папка с таким именем уже есть.", 409);
++  }
++  return new T3patchOpError(
++    `Ошибка файловой системы: ${String((error as Error).message ?? error)}`,
++    500,
++  );
++}
++
++async function moveAcrossDevices(from: string, to: string): Promise<void> {
++  try {
++    await rename(from, to);
++  } catch (error) {
++    if ((error as { code?: string }).code !== "EXDEV") throw error;
++    await copyFile(from, to);
++    await unlink(from);
++  }
++}
++
++// ---------- окна-монтирования (например, !Obsidian) ----------
++
++interface MountEntry {
++  readonly device: string;
++  readonly root: string;
++  readonly mountPoint: string;
++}
++
++const unescapeMountField = (value: string) =>
++  value.replace(/\\([0-7]{3})/g, (_, octal: string) =>
++    String.fromCharCode(Number.parseInt(octal, 8)),
++  );
++
++export function t3patchParseMountInfo(text: string): MountEntry[] {
++  return text
++    .split("\n")
++    .map((line) => line.split(" "))
++    .filter((fields) => fields.length > 4)
++    .map((fields) => ({
++      device: fields[2]!,
++      root: unescapeMountField(fields[3]!),
++      mountPoint: unescapeMountField(fields[4]!),
++    }));
++}
++
++const within = (parent: string, child: string) =>
++  child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
++
++/**
++ * Окно на другую папку (bind-монтирование, например `<проект>/!Obsidian` → `/root/Obsidian`)
++ * смонтировано только для чтения — чтобы `rm -rf` проекта не задел базу. Запись через проводник —
++ * явное действие человека, поэтому она идёт в настоящую папку, а не в окно.
++ */
++export function t3patchRealPath(absolutePath: string, mounts: readonly MountEntry[]): string {
++  const owner = mounts
++    .filter((mount) => within(mount.mountPoint, absolutePath))
++    .toSorted((left, right) => right.mountPoint.length - left.mountPoint.length)[0];
++  if (!owner || owner.root === "/") return absolutePath;
++  const whole = mounts.find((mount) => mount.device === owner.device && mount.root === "/");
++  if (!whole) return absolutePath;
++  return NodePath.join(
++    whole.mountPoint,
++    owner.root,
++    NodePath.relative(owner.mountPoint, absolutePath),
++  );
++}
++
++async function writable(absolutePath: string): Promise<string> {
++  try {
++    const mounts = t3patchParseMountInfo(await readFile("/proc/self/mountinfo", "utf8"));
++    return t3patchRealPath(absolutePath, mounts);
++  } catch {
++    return absolutePath;
++  }
++}
++
++// ---------- подпись ссылок загрузки ----------
++
++let secretCache: { stateDir: string; secret: Buffer } | null = null;
++
++async function uploadSecret(stateDir: string): Promise<Buffer> {
++  if (secretCache?.stateDir === stateDir) return secretCache.secret;
++  const path = NodePath.join(stateDir, "t3patch-upload-secret");
++  let secret: Buffer;
++  try {
++    secret = await readFile(path);
++    if (secret.length < 32) throw new Error("short");
++  } catch {
++    secret = randomBytes(32);
++    await mkdir(stateDir, { recursive: true });
++    await writeFile(path, secret, { mode: 0o600 });
++  }
++  secretCache = { stateDir, secret };
++  return secret;
++}
++
++export interface T3patchUploadClaims {
++  readonly id: string;
++  readonly cwd: string;
++  readonly directory: string;
++  readonly name: string;
++  readonly size: number;
++  readonly conflict: T3patchConflict;
++  readonly exp: number;
++}
++
++export async function t3patchSignUpload(
++  stateDir: string,
++  claims: T3patchUploadClaims,
++): Promise<string> {
++  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
++  const sig = createHmac("sha256", await uploadSecret(stateDir))
++    .update(payload)
++    .digest("base64url");
++  return `${payload}.${sig}`;
++}
++
++export async function t3patchVerifyUpload(
++  stateDir: string,
++  token: string,
++  now = Date.now(),
++): Promise<T3patchUploadClaims | null> {
++  const [payload, sig] = token.split(".");
++  if (!payload || !sig) return null;
++  const expected = createHmac("sha256", await uploadSecret(stateDir))
++    .update(payload)
++    .digest();
++  const given = Buffer.from(sig, "base64url");
++  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
++  try {
++    const claims = JSON.parse(Buffer.from(payload, "base64url").toString()) as T3patchUploadClaims;
++    return claims.exp > now ? claims : null;
++  } catch {
++    return null;
++  }
++}
++
++// ---------- загрузка ----------
++
++const uploadsDir = (stateDir: string) => NodePath.join(stateDir, "t3patch-uploads");
++const partPath = (stateDir: string, id: string) =>
++  NodePath.join(uploadsDir(stateDir), `${id}.part`);
++
++async function sweep(directory: string, ttlMs: number, now: number): Promise<void> {
++  const names = await readdir(directory).catch(() => [] as string[]);
++  for (const name of names) {
++    const path = NodePath.join(directory, name);
++    const info = await stat(path).catch(() => null);
++    if (info && now - info.mtimeMs > ttlMs) await rm(path, { recursive: true, force: true });
++  }
++}
++
++export async function t3patchCreateUpload(input: {
++  readonly stateDir: string;
++  readonly cwd: string;
++  readonly directory: string;
++  readonly name: string;
++  readonly size: number;
++  readonly conflict?: T3patchConflict;
++  readonly now?: number;
++}): Promise<{ readonly token: string; readonly expiresAt: number }> {
++  const now = input.now ?? Date.now();
++  const name = t3patchValidName(input.name);
++  if (!Number.isSafeInteger(input.size) || input.size < 0) {
++    throw new T3patchOpError("Неверный размер файла.");
++  }
++  if (input.size > T3PATCH_UPLOAD_MAX_BYTES) {
++    throw new T3patchOpError("Файл больше 4 ГБ — такой не загрузить.", 413);
++  }
++  const root = await stat(input.cwd).catch(() => null);
++  if (!root?.isDirectory()) throw new T3patchOpError("Папка проекта не найдена.", 404);
++  // Недостающие вложенные папки (загрузка папки целиком) создаются при завершении загрузки.
++  const target = t3patchResolveInside(input.cwd, input.directory);
++  const info = await stat(target).catch(() => null);
++  if (info && !info.isDirectory()) {
++    throw new T3patchOpError("На месте папки назначения лежит файл.", 409);
++  }
++  await mkdir(uploadsDir(input.stateDir), { recursive: true });
++  await sweep(uploadsDir(input.stateDir), UPLOAD_TTL_MS, now);
++  const claims: T3patchUploadClaims = {
++    id: randomUUID(),
++    cwd: NodePath.resolve(input.cwd),
++    directory: input.directory,
++    name,
++    size: input.size,
++    conflict: input.conflict ?? "rename",
++    exp: now + UPLOAD_TTL_MS,
++  };
++  await writeFile(partPath(input.stateDir, claims.id), new Uint8Array());
++  return { token: await t3patchSignUpload(input.stateDir, claims), expiresAt: claims.exp };
++}
++
++/** Сколько байт уже получено (для докачки). */
++export async function t3patchUploadOffset(
++  stateDir: string,
++  claims: T3patchUploadClaims,
++): Promise<number | null> {
++  const info = await stat(partPath(stateDir, claims.id)).catch(() => null);
++  return info ? info.size : null;
++}
++
++export type T3patchChunkResult =
++  | { readonly done: false; readonly offset: number }
++  | { readonly done: true; readonly offset: number; readonly relativePath: string };
++
++/**
++ * Дописать кусок начиная с `offset`. Смещение должно совпадать с уже полученным — иначе 409 с
++ * текущим смещением (клиент продолжит с него). Файл целиком — перенос в папку проекта.
++ */
++export async function t3patchAppendChunk(input: {
++  readonly stateDir: string;
++  readonly claims: T3patchUploadClaims;
++  readonly offset: number;
++  readonly body: AsyncIterable<Uint8Array>;
++}): Promise<T3patchChunkResult> {
++  const { stateDir, claims } = input;
++  const current = await t3patchUploadOffset(stateDir, claims);
++  if (current === null) {
++    throw new T3patchOpError("Загрузка не найдена или уже завершена — начните заново.", 404);
++  }
++  if (input.offset !== current) {
++    throw Object.assign(new T3patchOpError(`Ожидалось смещение ${current}.`, 409), {
++      offset: current,
++    });
++  }
++  const handle = await open(partPath(stateDir, claims.id), "r+");
++  let written = current;
++  try {
++    for await (const chunk of input.body) {
++      if (written + chunk.byteLength > claims.size) {
++        throw new T3patchOpError("Получено больше данных, чем размер файла.", 413);
++      }
++      await handle.write(chunk, 0, chunk.byteLength, written);
++      written += chunk.byteLength;
++    }
++  } finally {
++    await handle.close();
++  }
++  if (written < claims.size) return { done: false, offset: written };
++  return { done: true, offset: written, relativePath: await finishUpload(stateDir, claims) };
++}
++
++async function finishUpload(stateDir: string, claims: T3patchUploadClaims): Promise<string> {
++  const directory = t3patchResolveInside(claims.cwd, claims.directory);
++  const realDirectory = await writable(directory);
++  try {
++    await mkdir(realDirectory, { recursive: true });
++    const name =
++      claims.conflict === "replace"
++        ? claims.name
++        : await t3patchFreeName(realDirectory, claims.name);
++    await moveAcrossDevices(partPath(stateDir, claims.id), NodePath.join(realDirectory, name));
++    // клиенту — путь как в дереве (через окно), чтобы проводник нашёл файл
++    return NodePath.relative(claims.cwd, NodePath.join(directory, name));
++  } catch (error) {
++    throw error instanceof T3patchOpError ? error : explainFsError(error);
++  }
++}
++
++// ---------- папки, переименование, корзина ----------
++
++export async function t3patchMkdir(cwd: string, relativePath: string): Promise<string> {
++  const parent = t3patchResolveInside(cwd, NodePath.dirname(relativePath));
++  const name = t3patchValidName(NodePath.basename(relativePath));
++  const target = NodePath.join(parent, name);
++  try {
++    await mkdir(await writable(target));
++  } catch (error) {
++    throw explainFsError(error);
++  }
++  return NodePath.relative(NodePath.resolve(cwd), target);
++}
++
++/** Переименовать или переместить внутри проекта. Занятое имя — ошибка (не затираем). */
++export async function t3patchMove(cwd: string, from: string, to: string): Promise<string> {
++  const source = t3patchResolveInside(cwd, from);
++  if (source === NodePath.resolve(cwd)) throw new T3patchOpError("Корень проекта не перемещается.");
++  const parent = t3patchResolveInside(cwd, NodePath.dirname(to));
++  const target = NodePath.join(parent, t3patchValidName(NodePath.basename(to)));
++  if (target === source) return NodePath.relative(NodePath.resolve(cwd), target);
++  if (target.startsWith(source + NodePath.sep)) {
++    throw new T3patchOpError("Нельзя переместить папку внутрь неё самой.");
++  }
++  if (await exists(target))
++    throw new T3patchOpError("Файл или папка с таким именем уже есть.", 409);
++  try {
++    await moveTree(await writable(source), await writable(target));
++  } catch (error) {
++    throw explainFsError(error);
++  }
++  return NodePath.relative(NodePath.resolve(cwd), target);
++}
++
++export interface T3patchTrashItem {
++  readonly id: string;
++  readonly cwd: string;
++  readonly relativePath: string;
++  readonly deletedAt: number;
++  readonly isDirectory: boolean;
++}
++
++const trashDir = (stateDir: string) => NodePath.join(stateDir, "t3patch-trash");
++
++export async function t3patchTrash(
++  stateDir: string,
++  cwd: string,
++  relativePath: string,
++  now = Date.now(),
++): Promise<T3patchTrashItem> {
++  const source = t3patchResolveInside(cwd, relativePath);
++  if (source === NodePath.resolve(cwd)) throw new T3patchOpError("Корень проекта не удаляется.");
++  const info = await stat(source).catch(() => null);
++  if (!info) throw new T3patchOpError("Файл или папка не найдены.", 404);
++  await mkdir(trashDir(stateDir), { recursive: true });
++  await sweep(trashDir(stateDir), TRASH_TTL_MS, now);
++  const item: T3patchTrashItem = {
++    id: randomUUID(),
++    cwd: NodePath.resolve(cwd),
++    relativePath: NodePath.relative(NodePath.resolve(cwd), source),
++    deletedAt: now,
++    isDirectory: info.isDirectory(),
++  };
++  const slot = NodePath.join(trashDir(stateDir), item.id);
++  await mkdir(slot);
++  try {
++    await moveTree(await writable(source), NodePath.join(slot, NodePath.basename(source)));
++  } catch (error) {
++    await rm(slot, { recursive: true, force: true });
++    throw explainFsError(error);
++  }
++  await writeFile(NodePath.join(slot, "item.json"), JSON.stringify(item));
++  return item;
++}
++
++async function moveTree(from: string, to: string): Promise<void> {
++  try {
++    await rename(from, to);
++  } catch (error) {
++    if ((error as { code?: string }).code !== "EXDEV") throw error;
++    const { cp } = await import("node:fs/promises");
++    await cp(from, to, { recursive: true });
++    await rm(from, { recursive: true, force: true });
++  }
++}
++
++export async function t3patchListTrash(
++  stateDir: string,
++  cwd?: string,
++): Promise<T3patchTrashItem[]> {
++  const ids = await readdir(trashDir(stateDir)).catch(() => [] as string[]);
++  const items: T3patchTrashItem[] = [];
++  for (const id of ids) {
++    try {
++      const item = JSON.parse(
++        await readFile(NodePath.join(trashDir(stateDir), id, "item.json"), "utf8"),
++      ) as T3patchTrashItem;
++      if (!cwd || item.cwd === NodePath.resolve(cwd)) items.push(item);
++    } catch {
++      // незавершённое удаление — пропускаем
++    }
++  }
++  return items.toSorted((a, b) => b.deletedAt - a.deletedAt);
++}
++
++/** Вернуть из корзины на прежнее место; занято — рядом с номером. */
++export async function t3patchRestore(stateDir: string, id: string): Promise<string> {
++  if (!/^[0-9a-f-]{36}$/.test(id)) throw new T3patchOpError("Неверный идентификатор.");
++  const slot = NodePath.join(trashDir(stateDir), id);
++  let item: T3patchTrashItem;
++  try {
++    item = JSON.parse(await readFile(NodePath.join(slot, "item.json"), "utf8")) as T3patchTrashItem;
++  } catch {
++    throw new T3patchOpError("В корзине такого нет.", 404);
++  }
++  const parent = t3patchResolveInside(item.cwd, NodePath.dirname(item.relativePath));
++  const realParent = await writable(parent);
++  await mkdir(realParent, { recursive: true });
++  const name = await t3patchFreeName(realParent, NodePath.basename(item.relativePath));
++  try {
++    await moveTree(
++      NodePath.join(slot, NodePath.basename(item.relativePath)),
++      NodePath.join(realParent, name),
++    );
++  } catch (error) {
++    throw explainFsError(error);
++  }
++  await rm(slot, { recursive: true, force: true });
++  return NodePath.relative(item.cwd, NodePath.join(parent, name));
++}
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index 60b31346d2..5b4d2567a0 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -36,6 +36,10 @@ import {
+   t3patchFileInfoRouteLayer,
+   t3patchFileRouteLayer,
+ } from "./sergey/fileAccess.ts";
++import {
++  t3patchUploadChunkRouteLayer,
++  t3patchUploadStatusRouteLayer,
++} from "./sergey/uploadRoute.ts"; // t3-patch
+ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+ import { fixPath } from "./os-jank.ts";
+ import { websocketRpcRouteLayer } from "./ws.ts";
+@@ -585,6 +589,8 @@ export const makeRoutesLayer = Layer.mergeAll(
+     t3patchFileRouteLayer, // t3-patch
+     t3patchConvertRouteLayer, // t3-patch
+     t3patchAssetDocxRouteLayer, // t3-patch
++    t3patchUploadStatusRouteLayer, // t3-patch
++    t3patchUploadChunkRouteLayer, // t3-patch
+     deviceHubProxyRouteLayer,
+     staticAndDevRouteLayer,
+     websocketRpcRouteLayer,
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index 0700eb81d5..4279d1efb7 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -22,6 +22,19 @@ import {
+   t3patchSubscribeThreadVisits,
+   type T3patchThreadVisits,
+ } from "./sergey/threadVisits.ts"; // t3-patch
++import {
++  t3patchCreateUpload,
++  t3patchListTrash,
++  t3patchMkdir,
++  t3patchMove,
++  t3patchRestore,
++  t3patchTrash,
++} from "./sergey/workspaceOps.ts"; // t3-patch
++import {
++  T3PATCH_WORKSPACE_METHODS,
++  T3PATCH_WORKSPACE_UPLOAD_ROUTE,
++  T3patchWorkspaceError,
++} from "@t3tools/contracts"; // t3-patch
+ import {
+   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+   AuthAccessStreamError,
+@@ -496,6 +509,16 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest)
+   };
+ }
+ 
++// t3-patch: ошибка файловой операции — понятным текстом клиенту
++const t3patchOp = <A>(run: () => Promise<A>) =>
++  Effect.tryPromise({
++    try: run,
++    catch: (error) =>
++      new T3patchWorkspaceError({
++        message: error instanceof Error ? error.message : String(error),
++      }),
++  });
++
+ const makeWsRpcLayer = (
+   currentSession: EnvironmentAuth.AuthenticatedSession,
+   clientOrigin: OrchestrationClientOrigin,
+@@ -3639,6 +3662,64 @@ const makeWsRpcLayer = (
+             }),
+             { "rpc.aggregate": "auth" },
+           ),
++        // t3-patch: файловые операции проводника (sergey/workspaceOps.ts)
++        [T3PATCH_WORKSPACE_METHODS.createUpload]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.createUpload,
++            t3patchOp(async () => {
++              const upload = await t3patchCreateUpload({
++                stateDir: config.stateDir,
++                cwd: input.cwd,
++                directory: input.directory,
++                name: input.name,
++                size: input.sizeBytes,
++                ...(input.conflict ? { conflict: input.conflict } : {}),
++              });
++              return {
++                relativeUrl: `${T3PATCH_WORKSPACE_UPLOAD_ROUTE}/${upload.token}`,
++                expiresAt: upload.expiresAt,
++              };
++            }),
++            { "rpc.aggregate": "workspace" },
++          ),
++        [T3PATCH_WORKSPACE_METHODS.mkdir]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.mkdir,
++            t3patchOp(async () => ({
++              relativePath: await t3patchMkdir(input.cwd, input.relativePath),
++            })).pipe(Effect.tap(() => workspaceEntries.refresh(input.cwd))),
++            { "rpc.aggregate": "workspace" },
++          ),
++        [T3PATCH_WORKSPACE_METHODS.move]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.move,
++            t3patchOp(async () => ({
++              relativePath: await t3patchMove(input.cwd, input.from, input.to),
++            })).pipe(Effect.tap(() => workspaceEntries.refresh(input.cwd))),
++            { "rpc.aggregate": "workspace" },
++          ),
++        [T3PATCH_WORKSPACE_METHODS.trash]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.trash,
++            t3patchOp(() => t3patchTrash(config.stateDir, input.cwd, input.relativePath)).pipe(
++              Effect.tap(() => workspaceEntries.refresh(input.cwd)),
++            ),
++            { "rpc.aggregate": "workspace" },
++          ),
++        [T3PATCH_WORKSPACE_METHODS.listTrash]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.listTrash,
++            t3patchOp(() => t3patchListTrash(config.stateDir, input.cwd)),
++            { "rpc.aggregate": "workspace" },
++          ),
++        [T3PATCH_WORKSPACE_METHODS.restore]: (input) =>
++          observeRpcEffect(
++            T3PATCH_WORKSPACE_METHODS.restore,
++            t3patchOp(async () => ({
++              relativePath: await t3patchRestore(config.stateDir, input.id),
++            })),
++            { "rpc.aggregate": "workspace" },
++          ),
+         // t3-patch: время открытия тредов, общее для браузера и приложения (sergey/threadVisits.ts)
+         [WS_METHODS.t3patchMarkThreadVisited]: (input) =>
+           observeRpcEffect(
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 0b6e7ef8ea..2b248e6947 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -19,6 +19,7 @@ import { useTheme } from "~/hooks/useTheme";
+ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+ import { readLocalApi } from "~/localApi";
+ import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
++import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
+ import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
+ import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
+ import { T3_PIERRE_ICONS } from "~/pierre-icons";
+@@ -186,7 +187,8 @@ export default function FileBrowserPanel({
+         ],
+         position,
+       );
+-      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath })) return; // t3-patch
++      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath, environmentId, refresh }))
++        return; // t3-patch
+       if (clicked === "copy-mention") {
+         try {
+           await writeTextToClipboard(mention);
+@@ -472,11 +474,13 @@ export default function FileBrowserPanel({
+     onOpenFileRef.current(path);
+   }, []);
+   useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
++  useT3patchExplorerDrop(panelRef, { environmentId, cwd, refresh }); // t3-patch
+ 
+   return (
+     <div
+       ref={panelRef}
+-      className="flex min-h-0 flex-1 flex-col bg-background"
++      // t3-patch: подсветка при перетаскивании файлов с компьютера
++      className="flex min-h-0 flex-1 flex-col bg-background data-t3patch-drop:outline-2 data-t3patch-drop:-outline-offset-2 data-t3patch-drop:outline-primary data-t3patch-drop:bg-primary/5"
+       data-file-browser-panel={`${environmentId}:${cwd}`}
+     >
+       <div
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 7b5902918c..aafc42126a 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -6,6 +6,10 @@
+  * /api/t3patch/file-info (apps/server/src/sergey/fileAccess.ts). Окна вроде
+  * `!Obsidian/...` сервер раскрывает в настоящий путь `/root/Obsidian/...`.
+  */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { readLocalApi } from "~/localApi";
++import { t3patchEnqueueUploads, t3patchPickFiles } from "./uploads";
++import { t3patchWorkspace } from "./workspaceClient";
+ import { toastManager } from "~/components/ui/toast";
+ import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
+ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+@@ -25,6 +29,10 @@ export interface T3PatchFileInfo {
+ const MENU_COPY_PATH = "t3patch-copy-path";
+ const MENU_COPY_REAL_PATH = "t3patch-copy-real-path";
+ const MENU_DOWNLOAD = "t3patch-download";
++const MENU_UPLOAD = "t3patch-upload";
++const MENU_MKDIR = "t3patch-mkdir";
++const MENU_RENAME = "t3patch-rename";
++const MENU_TRASH = "t3patch-trash";
+ 
+ /** Пункты, которые патч добавляет в меню дерева. `path` — как в дереве, у папок со слешем в конце. */
+ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; label: string }> {
+@@ -33,9 +41,118 @@ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; labe
+     { id: MENU_COPY_PATH, label: "Копировать путь" },
+     { id: MENU_COPY_REAL_PATH, label: "Копировать полный путь" },
+     ...(isDirectory ? [] : [{ id: MENU_DOWNLOAD, label: "Скачать" }]),
++    ...(isDirectory
++      ? [
++          { id: MENU_UPLOAD, label: "Загрузить сюда…" },
++          { id: MENU_MKDIR, label: "Новая папка…" },
++        ]
++      : []),
++    { id: MENU_RENAME, label: "Переименовать…" },
++    { id: MENU_TRASH, label: "Удалить" },
+   ];
+ }
+ 
++const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
++const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
++
++function reportError(title: string, error: unknown) {
++  toastManager.add({
++    type: "error",
++    title,
++    description: error instanceof Error ? error.message : String(error),
++  });
++}
++
++/** Файловые операции проводника: загрузка, новая папка, переименование, удаление в корзину. */
++async function handleWorkspaceMenu(
++  clicked: string,
++  input: {
++    readonly environmentId: EnvironmentId;
++    readonly cwd: string;
++    readonly relativePath: string;
++    readonly refresh: () => void;
++  },
++): Promise<void> {
++  const { environmentId, cwd, relativePath, refresh } = input;
++  if (clicked === MENU_UPLOAD) {
++    const files = await t3patchPickFiles();
++    if (files.length === 0) return;
++    t3patchEnqueueUploads({
++      environmentId,
++      cwd,
++      directory: relativePath,
++      files: files.map((file) => ({ file, subdirectory: "" })),
++      onUploaded: refresh,
++    });
++    return;
++  }
++  if (clicked === MENU_MKDIR) {
++    const name = window.prompt("Название новой папки", "Новая папка")?.trim();
++    if (!name) return;
++    try {
++      await t3patchWorkspace.mkdir(
++        environmentId,
++        cwd,
++        [relativePath, name].filter(Boolean).join("/"),
++      );
++      refresh();
++    } catch (error) {
++      reportError("Не удалось создать папку", error);
++    }
++    return;
++  }
++  if (clicked === MENU_RENAME) {
++    const name = window.prompt("Новое имя", baseName(relativePath))?.trim();
++    if (!name || name === baseName(relativePath)) return;
++    try {
++      await t3patchWorkspace.move(
++        environmentId,
++        cwd,
++        relativePath,
++        [parentOf(relativePath), name].filter(Boolean).join("/"),
++      );
++      refresh();
++    } catch (error) {
++      reportError("Не удалось переименовать", error);
++    }
++    return;
++  }
++  // MENU_TRASH
++  const localApi = readLocalApi();
++  const confirmed = localApi
++    ? await localApi.dialogs
++        .confirm(
++          `Удалить «${baseName(relativePath)}»?\nФайл уйдёт в корзину, его можно вернуть 30 дней.`,
++          {
++            variant: "destructive",
++          },
++        )
++        .catch(() => false)
++    : window.confirm(`Удалить «${baseName(relativePath)}»?`);
++  if (!confirmed) return;
++  try {
++    const item = await t3patchWorkspace.trash(environmentId, cwd, relativePath);
++    refresh();
++    toastManager.add({
++      type: "success",
++      title: "Удалено в корзину",
++      description: relativePath,
++      timeout: 10_000,
++      actionProps: {
++        children: "Восстановить",
++        onClick: () => {
++          void t3patchWorkspace
++            .restore(environmentId, item.id)
++            .then(() => refresh())
++            .catch((error: unknown) => reportError("Не удалось восстановить", error));
++        },
++      },
++    });
++  } catch (error) {
++    reportError("Не удалось удалить", error);
++  }
++}
++
+ export async function fetchT3PatchFileInfo(
+   cwd: string,
+   relativePath: string,
+@@ -82,8 +199,22 @@ export function startDownload(url: string) {
+ /** Обработать пункт меню патча. Возвращает false, если пункт не наш. */
+ export async function handleT3PatchFileMenu(
+   clicked: string | null | undefined,
+-  input: { readonly cwd: string; readonly relativePath: string },
++  input: {
++    readonly cwd: string;
++    readonly relativePath: string;
++    readonly environmentId: EnvironmentId;
++    readonly refresh: () => void;
++  },
+ ): Promise<boolean> {
++  if (
++    clicked === MENU_UPLOAD ||
++    clicked === MENU_MKDIR ||
++    clicked === MENU_RENAME ||
++    clicked === MENU_TRASH
++  ) {
++    await handleWorkspaceMenu(clicked, input);
++    return true;
++  }
+   if (clicked !== MENU_COPY_PATH && clicked !== MENU_COPY_REAL_PATH && clicked !== MENU_DOWNLOAD) {
+     return false;
+   }
+diff --git a/apps/web/src/components/sergey/uploads.tsx b/apps/web/src/components/sergey/uploads.tsx
+new file mode 100644
+index 0000000000..366f181d1f
+--- /dev/null
++++ b/apps/web/src/components/sergey/uploads.tsx
+@@ -0,0 +1,234 @@
++/**
++ * t3-patch: очередь загрузок в проводнике и панель прогресса.
++ *
++ * Файлы грузятся по одному (связь на объекте слабая — параллель только мешает), каждый кусками
++ * с докачкой (workspaceClient.ts). Панель внизу слева: имя, прогресс, итог; закрывается сама,
++ * когда всё загрузилось без ошибок.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { useEffect, useSyncExternalStore } from "react";
++
++import { t3patchSendFile, t3patchWorkspace } from "./workspaceClient";
++
++export interface T3patchUploadFile {
++  readonly file: File;
++  /** Подпапка внутри папки назначения (при загрузке папки целиком), "" — сама папка. */
++  readonly subdirectory: string;
++}
++
++interface UploadItem {
++  readonly id: number;
++  readonly name: string;
++  readonly size: number;
++  sent: number;
++  status: "waiting" | "uploading" | "done" | "error";
++  error?: string;
++  relativePath?: string;
++}
++
++let items: UploadItem[] = [];
++let nextId = 1;
++let running = false;
++const listeners = new Set<() => void>();
++const queue: Array<() => Promise<void>> = [];
++
++function emit() {
++  items = [...items];
++  for (const listener of listeners) listener();
++}
++
++async function drain() {
++  if (running) return;
++  running = true;
++  while (queue.length > 0) await queue.shift()!();
++  running = false;
++}
++
++const joinPath = (...parts: string[]) => parts.filter(Boolean).join("/");
++
++/** Поставить файлы в очередь. `onUploaded` — после каждого файла (обновить дерево). */
++export function t3patchEnqueueUploads(input: {
++  readonly environmentId: EnvironmentId;
++  readonly cwd: string;
++  readonly directory: string;
++  readonly files: ReadonlyArray<T3patchUploadFile>;
++  readonly onUploaded: () => void;
++}): void {
++  for (const { file, subdirectory } of input.files) {
++    const item: UploadItem = {
++      id: nextId++,
++      name: joinPath(subdirectory, file.name),
++      size: file.size,
++      sent: 0,
++      status: "waiting",
++    };
++    items.push(item);
++    queue.push(async () => {
++      item.status = "uploading";
++      emit();
++      try {
++        const upload = await t3patchWorkspace.createUpload(input.environmentId, {
++          cwd: input.cwd,
++          directory: joinPath(input.directory, subdirectory),
++          name: file.name,
++          sizeBytes: file.size,
++        });
++        item.relativePath = await t3patchSendFile({
++          relativeUrl: upload.relativeUrl,
++          file,
++          onProgress: (sent) => {
++            item.sent = sent;
++            emit();
++          },
++        });
++        item.sent = item.size;
++        item.status = "done";
++        input.onUploaded();
++      } catch (error) {
++        item.status = "error";
++        item.error = error instanceof Error ? error.message : String(error);
++      }
++      emit();
++    });
++  }
++  emit();
++  void drain();
++}
++
++/** Файлы из перетаскивания: папки обходятся целиком, с сохранением вложенности. */
++export async function t3patchFilesFromDrop(
++  dataTransfer: DataTransfer,
++): Promise<T3patchUploadFile[]> {
++  const entries = Array.from(dataTransfer.items)
++    .map((item) => (item.kind === "file" ? item.webkitGetAsEntry?.() : null))
++    .filter((entry): entry is FileSystemEntry => Boolean(entry));
++  if (entries.length === 0) {
++    return Array.from(dataTransfer.files).map((file) => ({ file, subdirectory: "" }));
++  }
++  const result: T3patchUploadFile[] = [];
++  const walk = async (entry: FileSystemEntry, parent: string): Promise<void> => {
++    if (entry.isFile) {
++      const file = await new Promise<File>((resolve, reject) =>
++        (entry as FileSystemFileEntry).file(resolve, reject),
++      );
++      result.push({ file, subdirectory: parent });
++      return;
++    }
++    const reader = (entry as FileSystemDirectoryEntry).createReader();
++    const folder = joinPath(parent, entry.name);
++    for (;;) {
++      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
++        reader.readEntries(resolve, reject),
++      );
++      if (batch.length === 0) break;
++      for (const child of batch) await walk(child, folder);
++    }
++  };
++  for (const entry of entries) await walk(entry, "");
++  return result;
++}
++
++/** Выбор файлов в системном окне. */
++export function t3patchPickFiles(): Promise<File[]> {
++  return new Promise((resolve) => {
++    const input = document.createElement("input");
++    input.type = "file";
++    input.multiple = true;
++    input.addEventListener("change", () => resolve(Array.from(input.files ?? [])));
++    input.addEventListener("cancel", () => resolve([]));
++    input.click();
++  });
++}
++
++function subscribe(listener: () => void) {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++const formatBytes = (bytes: number) =>
++  bytes >= 1024 ** 3
++    ? `${(bytes / 1024 ** 3).toFixed(1)} ГБ`
++    : bytes >= 1024 ** 2
++      ? `${(bytes / 1024 ** 2).toFixed(1)} МБ`
++      : `${Math.max(1, Math.round(bytes / 1024))} КБ`;
++
++export function T3patchUploadPanel() {
++  const current = useSyncExternalStore(subscribe, () => items);
++  const active = current.some((item) => item.status === "waiting" || item.status === "uploading");
++  const failed = current.some((item) => item.status === "error");
++
++  useEffect(() => {
++    if (current.length === 0 || active || failed) return;
++    const timer = window.setTimeout(() => {
++      items = [];
++      emit();
++    }, 6_000);
++    return () => window.clearTimeout(timer);
++  }, [active, current.length, failed]);
++
++  if (current.length === 0) return null;
++  const done = current.filter((item) => item.status === "done").length;
++  return (
++    <div className="fixed bottom-4 left-4 z-50 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
++      <div className="flex items-center justify-between border-b border-border px-3 py-2">
++        <span className="text-sm font-medium">
++          {active
++            ? `Загрузка: ${done} из ${current.length}`
++            : failed
++              ? "Загрузка с ошибками"
++              : "Загружено"}
++        </span>
++        {active ? null : (
++          <button
++            type="button"
++            className="rounded px-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
++            aria-label="Закрыть"
++            onClick={() => {
++              items = [];
++              emit();
++            }}
++          >
++            ✕
++          </button>
++        )}
++      </div>
++      <ul className="max-h-64 overflow-y-auto">
++        {current.map((item) => {
++          const percent = item.size > 0 ? Math.floor((item.sent / item.size) * 100) : 100;
++          return (
++            <li key={item.id} className="px-3 py-2 text-xs">
++              <div className="flex justify-between gap-2">
++                <span className="truncate" title={item.name}>
++                  {item.name}
++                </span>
++                <span className="shrink-0 text-muted-foreground">
++                  {item.status === "done"
++                    ? "готово"
++                    : item.status === "error"
++                      ? "ошибка"
++                      : item.status === "waiting"
++                        ? "в очереди"
++                        : `${percent}% из ${formatBytes(item.size)}`}
++                </span>
++              </div>
++              {item.status === "error" ? (
++                <div className="mt-1 text-destructive">{item.error}</div>
++              ) : (
++                <div className="mt-1 h-1 overflow-hidden rounded bg-muted">
++                  <div
++                    className={
++                      item.status === "done" ? "h-full bg-emerald-500" : "h-full bg-primary"
++                    }
++                    style={{ width: `${percent}%` }}
++                  />
++                </div>
++              )}
++            </li>
++          );
++        })}
++      </ul>
++    </div>
++  );
++}
+diff --git a/apps/web/src/components/sergey/useT3patchExplorerDrop.ts b/apps/web/src/components/sergey/useT3patchExplorerDrop.ts
+new file mode 100644
+index 0000000000..8e88e1cae4
+--- /dev/null
++++ b/apps/web/src/components/sergey/useT3patchExplorerDrop.ts
+@@ -0,0 +1,81 @@
++/**
++ * t3-patch: перетаскивание файлов и папок с компьютера в проводник.
++ *
++ * Отпустил на папку — файлы попадут в неё, на файл — в его папку, на пустое место — в корень
++ * проекта. Строки дерева лежат в открытом shadow DOM (@pierre/trees), поэтому цель ищется по
++ * `composedPath()` и атрибуту `data-item-path`. Внутреннее перетаскивание строк дерева в чат не
++ * трогаем: реагируем, только если тащат файлы из системы.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { type RefObject, useEffect } from "react";
++
++import { t3patchEnqueueUploads, t3patchFilesFromDrop } from "./uploads";
++
++const DROP_ATTRIBUTE = "data-t3patch-drop";
++
++function dropDirectory(event: DragEvent): string {
++  for (const node of event.composedPath()) {
++    if (!(node instanceof HTMLElement)) continue;
++    const path = node.getAttribute("data-item-path");
++    if (path === null) continue;
++    if (path.endsWith("/")) return path.replace(/\/+$/, "");
++    return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
++  }
++  return "";
++}
++
++const carriesFiles = (event: DragEvent) =>
++  Array.from(event.dataTransfer?.types ?? []).includes("Files");
++
++export function useT3patchExplorerDrop(
++  panelRef: RefObject<HTMLElement | null>,
++  input: {
++    readonly environmentId: EnvironmentId;
++    readonly cwd: string;
++    readonly refresh: () => void;
++  },
++): void {
++  const { environmentId, cwd, refresh } = input;
++  useEffect(() => {
++    const panel = panelRef.current;
++    if (!panel) return;
++    let depth = 0;
++    const onEnter = (event: DragEvent) => {
++      if (!carriesFiles(event)) return;
++      depth += 1;
++      panel.setAttribute(DROP_ATTRIBUTE, "");
++    };
++    const onLeave = (event: DragEvent) => {
++      if (!carriesFiles(event)) return;
++      depth = Math.max(0, depth - 1);
++      if (depth === 0) panel.removeAttribute(DROP_ATTRIBUTE);
++    };
++    const onOver = (event: DragEvent) => {
++      if (!carriesFiles(event)) return;
++      event.preventDefault();
++      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
++    };
++    const onDrop = (event: DragEvent) => {
++      if (!carriesFiles(event) || !event.dataTransfer) return;
++      event.preventDefault();
++      event.stopPropagation();
++      depth = 0;
++      panel.removeAttribute(DROP_ATTRIBUTE);
++      const directory = dropDirectory(event);
++      void t3patchFilesFromDrop(event.dataTransfer).then((files) => {
++        if (files.length === 0) return;
++        t3patchEnqueueUploads({ environmentId, cwd, directory, files, onUploaded: refresh });
++      });
++    };
++    panel.addEventListener("dragenter", onEnter, true);
++    panel.addEventListener("dragleave", onLeave, true);
++    panel.addEventListener("dragover", onOver, true);
++    panel.addEventListener("drop", onDrop, true);
++    return () => {
++      panel.removeEventListener("dragenter", onEnter, true);
++      panel.removeEventListener("dragleave", onLeave, true);
++      panel.removeEventListener("dragover", onOver, true);
++      panel.removeEventListener("drop", onDrop, true);
++    };
++  }, [cwd, environmentId, panelRef, refresh]);
++}
+diff --git a/apps/web/src/components/sergey/workspaceClient.ts b/apps/web/src/components/sergey/workspaceClient.ts
+new file mode 100644
+index 0000000000..4f8b93d17a
+--- /dev/null
++++ b/apps/web/src/components/sergey/workspaceClient.ts
+@@ -0,0 +1,120 @@
++/**
++ * t3-patch: вызовы файловых операций проводника (сервер: apps/server/src/sergey/workspaceOps.ts)
++ * и загрузка файла кусками с докачкой. Ошибка приходит понятным текстом с сервера.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import {
++  type AtomCommand,
++  runAtomCommand,
++  squashAtomCommandFailure,
++} from "@t3tools/client-runtime/state/runtime";
++
++import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target";
++import { appAtomRegistry } from "~/rpc/atomRegistry";
++import { serverEnvironment } from "~/state/server";
++
++function failureMessage(error: unknown): string {
++  if (error && typeof error === "object" && "message" in error) return String(error.message);
++  return String(error);
++}
++
++async function call<I, A>(
++  command: AtomCommand<{ environmentId: EnvironmentId; input: I }, A, unknown>,
++  environmentId: EnvironmentId,
++  input: I,
++): Promise<A> {
++  const result = await runAtomCommand(
++    appAtomRegistry,
++    command,
++    { environmentId, input },
++    {
++      reportFailure: false,
++      reportDefect: false,
++    },
++  );
++  if (result._tag === "Success") return result.value;
++  throw new Error(failureMessage(squashAtomCommandFailure(result)));
++}
++
++export const t3patchWorkspace = {
++  mkdir: (environmentId: EnvironmentId, cwd: string, relativePath: string) =>
++    call(serverEnvironment.t3patchWorkspaceMkdir, environmentId, { cwd, relativePath }),
++  move: (environmentId: EnvironmentId, cwd: string, from: string, to: string) =>
++    call(serverEnvironment.t3patchWorkspaceMove, environmentId, { cwd, from, to }),
++  trash: (environmentId: EnvironmentId, cwd: string, relativePath: string) =>
++    call(serverEnvironment.t3patchWorkspaceTrash, environmentId, { cwd, relativePath }),
++  restore: (environmentId: EnvironmentId, id: string) =>
++    call(serverEnvironment.t3patchWorkspaceRestore, environmentId, { id }),
++  createUpload: (
++    environmentId: EnvironmentId,
++    input: {
++      cwd: string;
++      directory: string;
++      name: string;
++      sizeBytes: number;
++      conflict?: "rename" | "replace";
++    },
++  ) => call(serverEnvironment.t3patchWorkspaceCreateUpload, environmentId, input),
++};
++
++export const T3PATCH_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
++const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 20_000, 30_000];
++
++const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
++
++/**
++ * Отправить файл по ссылке загрузки кусками. Обрыв связи — пауза и вопрос серверу «сколько
++ * дошло», продолжение с этого места. `onProgress` — отправлено байт.
++ */
++export async function t3patchSendFile(input: {
++  readonly relativeUrl: string;
++  readonly file: Blob;
++  readonly onProgress: (sent: number) => void;
++  readonly signal?: AbortSignal;
++}): Promise<string> {
++  const url = resolvePrimaryEnvironmentHttpUrl(input.relativeUrl);
++  let offset = 0;
++  let failures = 0;
++  for (;;) {
++    input.signal?.throwIfAborted();
++    try {
++      const end = Math.min(offset + T3PATCH_UPLOAD_CHUNK_BYTES, input.file.size);
++      const response = await fetch(`${url}?offset=${offset}`, {
++        method: "POST",
++        body: input.file.slice(offset, end),
++        signal: input.signal ?? null,
++      });
++      const body = (await response.json().catch(() => ({}))) as {
++        offset?: number;
++        done?: boolean;
++        relativePath?: string;
++        error?: string;
++      };
++      if (response.status === 409 && typeof body.offset === "number") {
++        offset = body.offset;
++        continue;
++      }
++      if (!response.ok)
++        throw Object.assign(new Error(body.error ?? `Сервер ответил ${response.status}`), {
++          fatal: response.status < 500,
++        });
++      failures = 0;
++      offset = body.offset ?? end;
++      input.onProgress(offset);
++      if (body.done) return body.relativePath ?? "";
++    } catch (error) {
++      if (input.signal?.aborted || (error as { fatal?: boolean }).fatal) throw error;
++      // обрыв связи: подождать и спросить у сервера, сколько дошло
++      const delay = RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length - 1)]!;
++      failures += 1;
++      await sleep(delay);
++      const status = await fetch(url, { signal: input.signal ?? null })
++        .then((response) => (response.ok ? response.json() : null))
++        .catch(() => null);
++      if (status && typeof status.offset === "number") {
++        offset = status.offset;
++        input.onProgress(offset);
++      }
++    }
++  }
++}
+diff --git a/apps/web/src/routes/__root.tsx b/apps/web/src/routes/__root.tsx
+index 8ad37b6511..a9f4dc7782 100644
+--- a/apps/web/src/routes/__root.tsx
++++ b/apps/web/src/routes/__root.tsx
+@@ -1,5 +1,6 @@
+ import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+ import { T3patchThreadVisitsSync } from "../components/sergey/ThreadVisitsSync"; // t3-patch
++import { T3patchUploadPanel } from "../components/sergey/uploads"; // t3-patch
+ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+ import {
+@@ -235,6 +236,7 @@ function RootRouteView() {
+           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+           {primaryEnvironmentAuthenticated ? <T3patchThreadVisitsSync /> : null}
++          {primaryEnvironmentAuthenticated ? <T3patchUploadPanel /> : null}
+           {appShell}
+           {/* Above the router: a theme draft is judged by walking the app, so the
+               editor has to survive navigation away from settings. */}
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index e0dc7651ce..475dc6c518 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -6,6 +6,7 @@ import {
+   type ServerLifecycleStreamReadyEvent,
+   type ServerSelfUpdateProgressEvent,
+   type ServerSelfUpdateResult,
++  T3PATCH_WORKSPACE_METHODS,
+   WS_METHODS,
+ } from "@t3tools/contracts";
+ import * as Cause from "effect/Cause";
+@@ -1030,6 +1031,31 @@ export function createServerEnvironmentAtoms<R, E>(
+       label: "environment-data:server:process-resource-history",
+       tag: WS_METHODS.serverGetProcessResourceHistory,
+     }),
++    // t3-patch: файловые операции проводника (сервер: sergey/workspaceOps.ts)
++    t3patchWorkspaceCreateUpload: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-create-upload",
++      tag: T3PATCH_WORKSPACE_METHODS.createUpload,
++    }),
++    t3patchWorkspaceMkdir: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-mkdir",
++      tag: T3PATCH_WORKSPACE_METHODS.mkdir,
++    }),
++    t3patchWorkspaceMove: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-move",
++      tag: T3PATCH_WORKSPACE_METHODS.move,
++    }),
++    t3patchWorkspaceTrash: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-trash",
++      tag: T3PATCH_WORKSPACE_METHODS.trash,
++    }),
++    t3patchWorkspaceListTrash: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-list-trash",
++      tag: T3PATCH_WORKSPACE_METHODS.listTrash,
++    }),
++    t3patchWorkspaceRestore: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-workspace-restore",
++      tag: T3PATCH_WORKSPACE_METHODS.restore,
++    }),
+     // t3-patch: время открытия тредов, общее для всех клиентов (сервер: sergey/threadVisits.ts)
+     t3patchThreadVisits: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+       label: "environment-data:server:t3patch-thread-visits",
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index 978a0459e6..79c5006704 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -31,6 +31,7 @@ export * from "./orchestration.ts";
+ export * from "./t3ProjectFile.ts";
+ export * from "./editor.ts";
+ export * from "./project.ts";
++export * from "./t3patchWorkspace.ts"; // t3-patch
+ export * from "./filesystem.ts";
+ export * from "./agentSessions.ts";
+ export * from "./assets.ts";
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 50b9f2c891..e8b0a49fcd 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -13,6 +13,14 @@ import {
+ } from "./providerSetup.ts";
+ 
+ import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
++import {
++  WsT3patchWorkspaceCreateUploadRpc,
++  WsT3patchWorkspaceListTrashRpc,
++  WsT3patchWorkspaceMkdirRpc,
++  WsT3patchWorkspaceMoveRpc,
++  WsT3patchWorkspaceRestoreRpc,
++  WsT3patchWorkspaceTrashRpc,
++} from "./t3patchWorkspace.ts"; // t3-patch
+ import {
+   AuthAccessStreamError,
+   AuthAccessStreamEvent,
+@@ -1379,6 +1387,12 @@ const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeTh
+ export const WsRpcGroup = RpcGroup.make(
+   WsT3patchMarkThreadVisitedRpc,
+   WsT3patchSubscribeThreadVisitsRpc,
++  WsT3patchWorkspaceCreateUploadRpc,
++  WsT3patchWorkspaceMkdirRpc,
++  WsT3patchWorkspaceMoveRpc,
++  WsT3patchWorkspaceTrashRpc,
++  WsT3patchWorkspaceListTrashRpc,
++  WsT3patchWorkspaceRestoreRpc,
+   WsServerProbeRpc,
+   WsServerGetConfigRpc,
+   WsServerRefreshProvidersRpc,
+diff --git a/packages/contracts/src/t3patchWorkspace.ts b/packages/contracts/src/t3patchWorkspace.ts
+new file mode 100644
+index 0000000000..6f150badfb
+--- /dev/null
++++ b/packages/contracts/src/t3patchWorkspace.ts
+@@ -0,0 +1,81 @@
++/**
++ * t3-patch: запросы файловых операций проводника — загрузка в папку, новая папка,
++ * переименование/перемещение, корзина. Сервер: apps/server/src/sergey/workspaceOps.ts.
++ */
++import * as Rpc from "effect/unstable/rpc/Rpc";
++import * as Schema from "effect/Schema";
++
++import { EnvironmentAuthorizationError } from "./auth.ts";
++
++export class T3patchWorkspaceError extends Schema.TaggedError<T3patchWorkspaceError>()(
++  "T3patchWorkspaceError",
++  { message: Schema.String },
++) {}
++
++const errors = Schema.Union([T3patchWorkspaceError, EnvironmentAuthorizationError]);
++const PathResult = Schema.Struct({ relativePath: Schema.String });
++
++export const T3PATCH_WORKSPACE_METHODS = {
++  createUpload: "t3patch.workspaceCreateUpload",
++  mkdir: "t3patch.workspaceMkdir",
++  move: "t3patch.workspaceMove",
++  trash: "t3patch.workspaceTrash",
++  listTrash: "t3patch.workspaceListTrash",
++  restore: "t3patch.workspaceRestore",
++} as const;
++
++export const T3patchTrashItem = Schema.Struct({
++  id: Schema.String,
++  cwd: Schema.String,
++  relativePath: Schema.String,
++  deletedAt: Schema.Number,
++  isDirectory: Schema.Boolean,
++});
++export type T3patchTrashItem = typeof T3patchTrashItem.Type;
++
++export const WsT3patchWorkspaceCreateUploadRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.createUpload, {
++  payload: Schema.Struct({
++    cwd: Schema.String,
++    /** Папка назначения относительно корня проекта ("" — корень). */
++    directory: Schema.String,
++    name: Schema.String,
++    sizeBytes: Schema.Number,
++    /** rename (по умолчанию) — «Имя (2).ext»; replace — заменить существующий. */
++    conflict: Schema.optional(Schema.Literals(["rename", "replace"])),
++  }),
++  success: Schema.Struct({ relativeUrl: Schema.String, expiresAt: Schema.Number }),
++  error: errors,
++});
++
++export const WsT3patchWorkspaceMkdirRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.mkdir, {
++  payload: Schema.Struct({ cwd: Schema.String, relativePath: Schema.String }),
++  success: PathResult,
++  error: errors,
++});
++
++export const WsT3patchWorkspaceMoveRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.move, {
++  payload: Schema.Struct({ cwd: Schema.String, from: Schema.String, to: Schema.String }),
++  success: PathResult,
++  error: errors,
++});
++
++export const WsT3patchWorkspaceTrashRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.trash, {
++  payload: Schema.Struct({ cwd: Schema.String, relativePath: Schema.String }),
++  success: T3patchTrashItem,
++  error: errors,
++});
++
++export const WsT3patchWorkspaceListTrashRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.listTrash, {
++  payload: Schema.Struct({ cwd: Schema.String }),
++  success: Schema.Array(T3patchTrashItem),
++  error: errors,
++});
++
++export const WsT3patchWorkspaceRestoreRpc = Rpc.make(T3PATCH_WORKSPACE_METHODS.restore, {
++  payload: Schema.Struct({ id: Schema.String }),
++  success: PathResult,
++  error: errors,
++});
++
++/** Адрес загрузки кусками: GET — сколько получено, POST ?offset=N — дописать кусок. */
++export const T3PATCH_WORKSPACE_UPLOAD_ROUTE = "/api/t3patch/upload";
+-- 
+2.43.0
+

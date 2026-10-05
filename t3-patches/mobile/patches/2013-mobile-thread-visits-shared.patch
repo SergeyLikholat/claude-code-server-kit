@@ -1,0 +1,429 @@
+From 6393654c4a2640db4ae78d877776388f0882c5b7 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 27 Sep 2026 13:26:44 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=93=D0=BE=D1=82=D0=BE?=
+ =?UTF-8?q?=D0=B2=D0=BE=C2=BB=20=D1=81=D0=B8=D0=BD=D1=85=D1=80=D0=BE=D0=BD?=
+ =?UTF-8?q?=D0=BD=D0=BE=20=D1=81=20=D0=B1=D1=80=D0=B0=D1=83=D0=B7=D0=B5?=
+ =?UTF-8?q?=D1=80=D0=BE=D0=BC=20=E2=80=94=20=D0=B6=D1=83=D1=80=D0=BD=D0=B0?=
+ =?UTF-8?q?=D0=BB=20=D0=BE=D1=82=D0=BA=D1=80=D1=8B=D1=82=D0=B8=D0=B9=20?=
+ =?UTF-8?q?=D1=87=D0=B5=D1=80=D0=B5=D0=B7=20=D1=81=D0=B5=D1=80=D0=B2=D0=B5?=
+ =?UTF-8?q?=D1=80?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/mobile/src/App.tsx                       |   2 +
+ apps/mobile/src/sergey/ThreadVisitsSync.tsx   |  91 ++++++++++++++++
+ apps/mobile/src/sergey/sergey.test.ts         |  28 +++++
+ apps/mobile/src/sergey/threadVisits.ts        |  31 +++++-
+ .../src/sergey/threadVisitsSyncLogic.ts       | 103 ++++++++++++++++++
+ packages/client-runtime/src/rpc/client.ts     |   1 +
+ packages/client-runtime/src/state/server.ts   |  10 ++
+ packages/contracts/src/rpc.ts                 |  21 ++++
+ 8 files changed, 283 insertions(+), 4 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/ThreadVisitsSync.tsx
+ create mode 100644 apps/mobile/src/sergey/threadVisitsSyncLogic.ts
+
+diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
+index 9a9c3fc5c6..6e5282b4dd 100644
+--- a/apps/mobile/src/App.tsx
++++ b/apps/mobile/src/App.tsx
+@@ -26,6 +26,7 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
+ 
+ import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
+ import { t3patchMarkReady } from "./sergey/startupDiagnostics"; // t3-patch
++import { T3patchThreadVisitsSync } from "./sergey/ThreadVisitsSync"; // t3-patch
+ 
+ import "../global.css";
+ 
+@@ -86,6 +87,7 @@ function AppContent() {
+     <>
+       <SplashScreenCoordinator />
+       <SubscriptionUsageCoordinator />
++      <T3patchThreadVisitsSync />
+       <GestureHandlerRootView className="flex-1">
+         <KeyboardProvider statusBarTranslucent>
+           <SafeAreaProvider>
+diff --git a/apps/mobile/src/sergey/ThreadVisitsSync.tsx b/apps/mobile/src/sergey/ThreadVisitsSync.tsx
+new file mode 100644
+index 0000000000..7bd459f379
+--- /dev/null
++++ b/apps/mobile/src/sergey/ThreadVisitsSync.tsx
+@@ -0,0 +1,91 @@
++/**
++ * t3-patch: держит журнал открытий тредов на телефоне в согласии с сервером (патч 0017),
++ * чтобы «Готово» гасло там, где тред прочитали: в браузере или в приложении.
++ * Логика слияния — threadVisitsSyncLogic.ts (та же, что в браузере). Сервер без патча
++ * подписку не знает: она падает, и журнал работает только на телефоне, как раньше.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { useCallback, useEffect, useRef } from "react";
++
++import { useEnvironments } from "../state/environments";
++import { useEnvironmentQuery } from "../state/query";
++import { serverEnvironment } from "../state/server";
++import { useAtomCommand } from "../state/use-atom-command";
++import {
++  t3patchGetThreadVisits,
++  t3patchOnLocalThreadVisit,
++  t3patchReplaceThreadVisits,
++} from "./threadVisits";
++import {
++  t3patchMergeServerVisits,
++  t3patchUnsentToRetry,
++  t3patchWithoutThreads,
++} from "./threadVisitsSyncLogic";
++
++function EnvironmentThreadVisitsSync(props: { readonly environmentId: EnvironmentId }) {
++  const { environmentId } = props;
++  const serverVisits = useEnvironmentQuery(
++    serverEnvironment.t3patchThreadVisits({ environmentId, input: {} }),
++  ).data;
++  const mark = useAtomCommand(serverEnvironment.t3patchMarkThreadVisited, {
++    reportFailure: false,
++    reportDefect: false,
++  });
++  // Отметки, которые не дошли (нет связи): отправляются снова со следующим снимком сервера.
++  const unsent = useRef<Record<string, string>>({});
++  const synced = useRef(false);
++
++  const push = useCallback(
++    (threadId: string, visitedAt: string) => {
++      void mark({ environmentId, input: { threadId, visitedAt } }).then((result) => {
++        if (result._tag === "Success") {
++          if (unsent.current[threadId] === visitedAt) delete unsent.current[threadId];
++        } else {
++          unsent.current[threadId] = visitedAt;
++        }
++      });
++    },
++    [environmentId, mark],
++  );
++
++  useEffect(() => {
++    if (serverVisits === null) return;
++    const firstSnapshot = !synced.current;
++    synced.current = true;
++    const local = t3patchGetThreadVisits();
++    const retry = t3patchUnsentToRetry({ unsent: unsent.current, local, environmentId });
++    const merge = t3patchMergeServerVisits({
++      local,
++      environmentId,
++      server: t3patchWithoutThreads(serverVisits, retry),
++      firstSnapshot,
++    });
++    if (merge.local !== null) t3patchReplaceThreadVisits(merge.local);
++    for (const [threadId, visitedAt] of [...merge.push, ...retry]) push(threadId, visitedAt);
++  }, [environmentId, push, serverVisits]);
++
++  useEffect(() => {
++    const prefix = `${environmentId}:`;
++    return t3patchOnLocalThreadVisit((key, visitedAt) => {
++      // до первого снимка отметку отправит слияние
++      if (!synced.current || !key.startsWith(prefix)) return;
++      push(key.slice(prefix.length), visitedAt);
++    });
++  }, [environmentId, push]);
++
++  return null;
++}
++
++export function T3patchThreadVisitsSync() {
++  const { environments } = useEnvironments();
++  return (
++    <>
++      {environments.map((environment) => (
++        <EnvironmentThreadVisitsSync
++          key={environment.environmentId}
++          environmentId={environment.environmentId}
++        />
++      ))}
++    </>
++  );
++}
+diff --git a/apps/mobile/src/sergey/sergey.test.ts b/apps/mobile/src/sergey/sergey.test.ts
+index 41c043bdf1..ddf6ff557e 100644
+--- a/apps/mobile/src/sergey/sergey.test.ts
++++ b/apps/mobile/src/sergey/sergey.test.ts
+@@ -5,6 +5,7 @@ import { t3patchFullPath, t3patchWorkspacePath } from "./paths";
+ import { t3patchSortThreadsByLatest } from "./threadOrderSort";
+ import { t3patchHasUnseenCompletion } from "./threadVisitsLogic";
+ import { t3patchSettledThreadStatus } from "./threadStatusExtra";
++import { t3patchMergeServerVisits } from "./threadVisitsSyncLogic";
+ 
+ describe("t3patchFullPath", () => {
+   it("склеивает корень проекта и относительный путь", () => {
+@@ -160,3 +161,30 @@ describe("статусы как в браузере", () => {
+     expect(t3patchSettledThreadStatus(settled, "2026-09-27T11:00:00Z")).toBeNull();
+   });
+ });
++
++describe("журнал открытий: слияние с сервером", () => {
++  it("первый снимок отправляет на сервер то, что телефон знал раньше", () => {
++    const merge = t3patchMergeServerVisits({
++      local: { "env:a": "2026-09-27T11:00:00.000Z" },
++      environmentId: "env",
++      server: { b: "2026-09-27T10:00:00.000Z" },
++      firstSnapshot: true,
++    });
++    expect(merge.local).toEqual({
++      "env:a": "2026-09-27T11:00:00.000Z",
++      "env:b": "2026-09-27T10:00:00.000Z",
++    });
++    expect(merge.push).toEqual([["a", "2026-09-27T11:00:00.000Z"]]);
++  });
++
++  it("отметка из браузера гасит «Готово» на телефоне", () => {
++    const completedAt = "2026-09-27T10:05:00.000Z";
++    const merge = t3patchMergeServerVisits({
++      local: { "env:a": "2026-09-27T10:00:00.000Z" },
++      environmentId: "env",
++      server: { a: completedAt },
++      firstSnapshot: false,
++    });
++    expect(t3patchHasUnseenCompletion(completedAt, merge.local?.["env:a"])).toBe(false);
++  });
++});
+diff --git a/apps/mobile/src/sergey/threadVisits.ts b/apps/mobile/src/sergey/threadVisits.ts
+index d450a3bb41..728caa1672 100644
+--- a/apps/mobile/src/sergey/threadVisits.ts
++++ b/apps/mobile/src/sergey/threadVisits.ts
+@@ -1,8 +1,9 @@
+ /**
+  * t3-patch: журнал открытий тредов на телефоне — для статуса «Готово».
+  *
+- * Браузер хранит время последнего открытия у себя (uiStateStore), на сервер оно не уходит,
+- * поэтому у приложения свой журнал: локальное хранилище expo-sqlite/kv-store. Открытие и уход
++ * Журнал на телефоне (expo-sqlite/kv-store) — копия серверного (патч 0017): ThreadVisitsSync
++ * сливает его с сервером, поэтому тред, прочитанный в браузере, гаснет и здесь, и наоборот.
++ * Без связи или со старым сервером журнал работает сам по себе, как раньше. Открытие и уход
+  * с треда отмечаются; завершение работы, случившееся при открытом треде, тоже считается увиденным.
+  */
+ import Storage from "expo-sqlite/kv-store";
+@@ -11,8 +12,10 @@ import { useEffect, useSyncExternalStore } from "react";
+ export { t3patchHasUnseenCompletion, t3patchThreadVisitKey } from "./threadVisitsLogic";
+ 
+ const STORAGE_KEY = "t3patch.threadVisits";
+-const MAX_ENTRIES = 500;
++const MAX_ENTRIES = 2000; // как на сервере (sergey/threadVisits.ts)
+ const listeners = new Set<() => void>();
++/** Слушатели отметок, сделанных на этом телефоне (их надо отправить на сервер). */
++const localVisitListeners = new Set<(key: string, at: string) => void>();
+ let visits: Readonly<Record<string, string>> | null = null;
+ 
+ function load(): Readonly<Record<string, string>> {
+@@ -27,7 +30,27 @@ function load(): Readonly<Record<string, string>> {
+ }
+ 
+ export function t3patchMarkThreadVisited(key: string, at = new Date().toISOString()): void {
+-  const next: Record<string, string> = { ...load(), [key]: at };
++  save({ ...load(), [key]: at });
++  for (const listener of localVisitListeners) listener(key, at);
++}
++
++/** Заменить журнал целиком — так в него попадают отметки с сервера. */
++export function t3patchReplaceThreadVisits(next: Record<string, string>): void {
++  save({ ...next });
++}
++
++export function t3patchGetThreadVisits(): Readonly<Record<string, string>> {
++  return load();
++}
++
++export function t3patchOnLocalThreadVisit(listener: (key: string, at: string) => void): () => void {
++  localVisitListeners.add(listener);
++  return () => {
++    localVisitListeners.delete(listener);
++  };
++}
++
++function save(next: Record<string, string>): void {
+   const keys = Object.keys(next);
+   if (keys.length > MAX_ENTRIES) {
+     // Старые записи — прочь: журнал не должен расти бесконечно.
+diff --git a/apps/mobile/src/sergey/threadVisitsSyncLogic.ts b/apps/mobile/src/sergey/threadVisitsSyncLogic.ts
+new file mode 100644
+index 0000000000..4c19adc5ab
+--- /dev/null
++++ b/apps/mobile/src/sergey/threadVisitsSyncLogic.ts
+@@ -0,0 +1,103 @@
++/**
++ * t3-patch: слияние времени открытия тредов с серверным (сервер: sergey/threadVisits.ts).
++ * Тот же файл, что в браузере (apps/web/src/components/sergey/threadVisitsSyncLogic.ts).
++ *
++ * Браузер держит отметки в uiStateStore под ключом `<environmentId>:<threadId>`, сервер — по
++ * threadId внутри своего окружения. Правила:
++ * - первый снимок с сервера: побеждает более позднее время, а то, что браузер знал раньше
++ *   сервера, отправляется на сервер — так не теряются отметки, сделанные до патча;
++ * - дальше сервер — источник правды: его значение ставится как есть, даже если оно раньше
++ *   (так до браузера доходит «пометить непрочитанным» с другого устройства);
++ * - изменение в браузере, которого сервер ещё не знает, отправляется на сервер.
++ * Чистые функции — их проверяют тесты.
++ */
++export type T3patchVisitMap = Readonly<Record<string, string>>;
++
++export const t3patchVisitKey = (environmentId: string, threadId: string) =>
++  `${environmentId}:${threadId}`;
++
++const ms = (value: string | undefined) => (value === undefined ? NaN : Date.parse(value));
++
++export interface T3patchServerMerge {
++  /** Новые отметки браузера или null, если менять нечего. */
++  readonly local: Record<string, string> | null;
++  /** Что отправить на сервер: [threadId, visitedAt]. */
++  readonly push: ReadonlyArray<readonly [string, string]>;
++}
++
++export function t3patchMergeServerVisits(input: {
++  readonly local: T3patchVisitMap;
++  readonly environmentId: string;
++  readonly server: T3patchVisitMap;
++  readonly firstSnapshot: boolean;
++}): T3patchServerMerge {
++  const { local, environmentId, server, firstSnapshot } = input;
++  const prefix = `${environmentId}:`;
++  let next: Record<string, string> | null = null;
++  const push: Array<readonly [string, string]> = [];
++  for (const [threadId, serverValue] of Object.entries(server)) {
++    const key = t3patchVisitKey(environmentId, threadId);
++    const localValue = local[key];
++    if (localValue === serverValue) continue;
++    if (firstSnapshot && ms(localValue) > ms(serverValue)) {
++      push.push([threadId, localValue!]);
++      continue;
++    }
++    next ??= { ...local };
++    next[key] = serverValue;
++  }
++  if (firstSnapshot) {
++    for (const [key, localValue] of Object.entries(local)) {
++      if (!key.startsWith(prefix)) continue;
++      const threadId = key.slice(prefix.length);
++      if (!(threadId in server) && Number.isFinite(ms(localValue)))
++        push.push([threadId, localValue]);
++    }
++  }
++  return { local: next, push };
++}
++
++/** Отметки окружения, изменившиеся в браузере и ещё не известные серверу. */
++export function t3patchLocalChanges(input: {
++  readonly next: T3patchVisitMap;
++  readonly previous: T3patchVisitMap;
++  readonly environmentId: string;
++  readonly known: T3patchVisitMap;
++}): Array<readonly [string, string]> {
++  const { next, previous, environmentId, known } = input;
++  if (next === previous) return [];
++  const prefix = `${environmentId}:`;
++  const changes: Array<readonly [string, string]> = [];
++  for (const [key, value] of Object.entries(next)) {
++    if (!key.startsWith(prefix) || previous[key] === value) continue;
++    const threadId = key.slice(prefix.length);
++    if (known[threadId] === value) continue;
++    changes.push([threadId, value]);
++  }
++  return changes;
++}
++
++/**
++ * Недошедшие отметки, которые всё ещё актуальны (в браузере то же значение): их отправить
++ * снова, а серверное значение для них не применять — сервер о них ещё не знает.
++ */
++export function t3patchUnsentToRetry(input: {
++  readonly unsent: T3patchVisitMap;
++  readonly local: T3patchVisitMap;
++  readonly environmentId: string;
++}): Array<readonly [string, string]> {
++  return Object.entries(input.unsent).filter(
++    ([threadId, value]) => input.local[t3patchVisitKey(input.environmentId, threadId)] === value,
++  );
++}
++
++/** Карта сервера без указанных тредов. */
++export function t3patchWithoutThreads(
++  server: T3patchVisitMap,
++  threads: ReadonlyArray<readonly [string, string]>,
++): T3patchVisitMap {
++  if (threads.length === 0) return server;
++  const next: Record<string, string> = { ...server };
++  for (const [threadId] of threads) delete next[threadId];
++  return next;
++}
+diff --git a/packages/client-runtime/src/rpc/client.ts b/packages/client-runtime/src/rpc/client.ts
+index e80a2f0f4b..eb0ca26dd4 100644
+--- a/packages/client-runtime/src/rpc/client.ts
++++ b/packages/client-runtime/src/rpc/client.ts
+@@ -53,6 +53,7 @@ export type EnvironmentSubscriptionRpcTag =
+   | typeof WS_METHODS.subscribeDiscoveredLocalServers
+   | typeof WS_METHODS.subscribeDeviceState
+   | typeof WS_METHODS.subscribeResourceTelemetry
++  | typeof WS_METHODS.t3patchSubscribeThreadVisits // t3-patch
+   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
+   | typeof WS_METHODS.previewAutomationConnect
+   | typeof WS_METHODS.subscribeVcsStatus
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index 18127076ff..e0dc7651ce 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -1030,6 +1030,16 @@ export function createServerEnvironmentAtoms<R, E>(
+       label: "environment-data:server:process-resource-history",
+       tag: WS_METHODS.serverGetProcessResourceHistory,
+     }),
++    // t3-patch: время открытия тредов, общее для всех клиентов (сервер: sergey/threadVisits.ts)
++    t3patchThreadVisits: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
++      label: "environment-data:server:t3patch-thread-visits",
++      tag: WS_METHODS.t3patchSubscribeThreadVisits,
++      idleTtlMs: 0,
++    }),
++    t3patchMarkThreadVisited: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-mark-thread-visited",
++      tag: WS_METHODS.t3patchMarkThreadVisited,
++    }),
+     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+       label: "environment-data:server:resource-telemetry",
+       tag: WS_METHODS.subscribeResourceTelemetry,
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 9096dd6e27..50b9f2c891 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -434,6 +434,9 @@ export const WS_METHODS = {
+   subscribeAuthAccess: "subscribeAuthAccess",
+   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
+   subscribeResourceTelemetry: "subscribeResourceTelemetry",
++  // t3-patch: время открытия тредов — общее для браузера и приложения
++  t3patchMarkThreadVisited: "t3patch.markThreadVisited",
++  t3patchSubscribeThreadVisits: "t3patch.subscribeThreadVisits",
+ } as const;
+ 
+ const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
+@@ -1357,7 +1360,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
+   stream: true,
+ });
+ 
++// t3-patch: время последнего открытия треда (threadId → ISO-время) хранит сервер, чтобы статус
++// «Завершено/Готово» совпадал в браузере и в приложении. Запись — «последняя побеждает»:
++// так работает и «пометить непрочитанным», которое сдвигает время назад.
++const WsT3patchMarkThreadVisitedRpc = Rpc.make(WS_METHODS.t3patchMarkThreadVisited, {
++  payload: Schema.Struct({ threadId: Schema.String, visitedAt: Schema.String }),
++  success: Schema.Struct({}),
++  error: EnvironmentAuthorizationError,
++});
++
++const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeThreadVisits, {
++  payload: Schema.Struct({}),
++  success: Schema.Record(Schema.String, Schema.String),
++  error: EnvironmentAuthorizationError,
++  stream: true,
++});
++
+ export const WsRpcGroup = RpcGroup.make(
++  WsT3patchMarkThreadVisitedRpc,
++  WsT3patchSubscribeThreadVisitsRpc,
+   WsServerProbeRpc,
+   WsServerGetConfigRpc,
+   WsServerRefreshProvidersRpc,
+-- 
+2.43.0
+

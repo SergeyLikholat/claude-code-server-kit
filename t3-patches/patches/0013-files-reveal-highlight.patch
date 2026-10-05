@@ -1,0 +1,210 @@
+From 93823922805bdab06efce358df3915626ed983d9 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 14:13:23 +0300
+Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=B7=D0=B0=D0=BC=D0=B5=D1=82?=
+ =?UTF-8?q?=D0=BD=D0=B0=D1=8F=20=D0=BF=D0=BE=D0=B4=D1=81=D0=B2=D0=B5=D1=82?=
+ =?UTF-8?q?=D0=BA=D0=B0=20=D1=84=D0=B0=D0=B9=D0=BB=D0=B0=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=D1=81=D0=BB=D0=B5=20=C2=AB=D0=9F=D0=BE=D0=BA=D0=B0=D0=B7=D0=B0?=
+ =?UTF-8?q?=D1=82=D1=8C=20=D0=B2=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE=D0=B4?=
+ =?UTF-8?q?=D0=BD=D0=B8=D0=BA=D0=B5=C2=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Строка файла мигает янтарным и остаётся окрашенной, пока пользователь не
+кликнет в дереве (или 20 секунд). Выделять файл нельзя — выделение его
+открывает, поэтому у строки своя метка в shadow DOM дерева.
+---
+ .../src/components/files/FileBrowserPanel.tsx |  2 +-
+ .../src/components/sergey/explorerReveal.ts   | 28 +++++--
+ .../web/src/components/sergey/rowHighlight.ts | 81 +++++++++++++++++++
+ 3 files changed, 103 insertions(+), 8 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/rowHighlight.ts
+
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 33e6b1db15..0b6e7ef8ea 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -463,7 +463,7 @@ export default function FileBrowserPanel({
+   }, [dragMention]);
+ 
+   // t3-patch: ссылка из чата на папку — переход к папке; повторный клик по выделенному файлу — открыть снова
+-  useT3patchExplorerReveal(cwd, model, load);
++  useT3patchExplorerReveal(cwd, model, load, panelRef);
+   const onOpenFileRef = useRef(onOpenFile);
+   onOpenFileRef.current = onOpenFile;
+   const isTreeFile = useCallback((path: string) => entryKindsRef.current.get(path) === "file", []);
+diff --git a/apps/web/src/components/sergey/explorerReveal.ts b/apps/web/src/components/sergey/explorerReveal.ts
+index 324db92a93..75be0f0777 100644
+--- a/apps/web/src/components/sergey/explorerReveal.ts
++++ b/apps/web/src/components/sergey/explorerReveal.ts
+@@ -8,11 +8,12 @@
+  * чем пришла команда (вкладка «Проводник» открывается тем же действием).
+  */
+ import type { ScopedThreadRef } from "@t3tools/contracts";
+-import { useEffect, useRef } from "react";
++import { type RefObject, useEffect, useRef } from "react";
+ 
+ import { toastManager } from "~/components/ui/toast";
+ import { useRightPanelStore } from "~/rightPanelStore";
+ import { fetchT3PatchFileInfo } from "./fileActions";
++import { t3patchHighlightTreeRow } from "./rowHighlight";
+ 
+ interface RevealRequest {
+   readonly cwd: string;
+@@ -140,7 +141,7 @@ export async function t3patchRevealInTree(
+   load: (path: string) => Promise<unknown>,
+   path: string,
+   focusName?: string,
+-): Promise<void> {
++): Promise<string | null> {
+   const segments = path.split("/").filter(Boolean);
+   model.closeSearch();
+   // Предков и саму папку — по очереди: дерево подгружает содержимое лениво.
+@@ -157,18 +158,26 @@ export async function t3patchRevealInTree(
+     const filePath = segments.length > 0 ? `${segments.join("/")}/${focusName}` : focusName;
+     if (await waitForItem(model, filePath)) {
+       model.scrollToPath(filePath, { focus: true, offset: "center" });
++      return filePath;
+     }
+-    return;
++    // Ссылка из старого сообщения: папка на месте, а файла в ней уже нет.
++    toastManager.add({
++      type: "warning",
++      title: "Файл не найден в папке",
++      description: `${focusName} — возможно, переименован или удалён. Папка открыта.`,
++    });
++    return null;
+   }
+-  if (segments.length === 0) return;
++  if (segments.length === 0) return null;
+   const target = model.getItem(`${path}/`) ?? model.getItem(path);
+-  if (!target) return;
++  if (!target) return null;
+   for (const selected of model.getSelectedPaths()) model.getItem(selected)?.deselect?.();
+   target.select?.();
+   model.scrollToPath(model.getItem(`${path}/`) ? `${path}/` : path, {
+     focus: true,
+     offset: "center",
+   });
++  return null;
+ }
+ 
+ /** Проводник выполняет запросы перехода к папке для своего проекта. */
+@@ -176,6 +185,7 @@ export function useT3patchExplorerReveal(
+   cwd: string,
+   model: TreeModel,
+   load: (path: string) => Promise<unknown>,
++  panelRef?: RefObject<HTMLElement | null>,
+ ): void {
+   const handledRef = useRef(0);
+   useEffect(() => {
+@@ -184,12 +194,16 @@ export function useT3patchExplorerReveal(
+       if (!request || request.cwd !== root || request.id <= handledRef.current) return;
+       if (Date.now() - request.at > REQUEST_TTL_MS) return;
+       handledRef.current = request.id;
+-      void t3patchRevealInTree(model, load, request.path, request.focusName);
++      void t3patchRevealInTree(model, load, request.path, request.focusName).then((focused) => {
++        // Файл из «Показать в проводнике» — заметная подсветка строки (выделять нельзя: откроется)
++        const panel = panelRef?.current;
++        if (focused && panel) t3patchHighlightTreeRow(panel, focused);
++      });
+     };
+     run(latest);
+     listeners.add(run);
+     return () => {
+       listeners.delete(run);
+     };
+-  }, [cwd, load, model]);
++  }, [cwd, load, model, panelRef]);
+ }
+diff --git a/apps/web/src/components/sergey/rowHighlight.ts b/apps/web/src/components/sergey/rowHighlight.ts
+new file mode 100644
+index 0000000000..2c0e46f539
+--- /dev/null
++++ b/apps/web/src/components/sergey/rowHighlight.ts
+@@ -0,0 +1,81 @@
++/**
++ * t3-patch: заметная подсветка строки дерева после «Показать в проводнике».
++ *
++ * Выделять файл в дереве нельзя — выделение его открывает. Поэтому строка получает свою метку
++ * `data-t3patch-flash`: пару раз мигает янтарным и остаётся окрашенной, пока пользователь не
++ * кликнет в дереве (или 20 секунд). Строки лежат в открытом shadow DOM дерева @pierre/trees и
++ * пересоздаются при прокрутке (дерево виртуальное), поэтому метка ставится заново, пока
++ * подсветка активна, а стиль один раз добавляется в shadow root.
++ */
++const STYLE_ID = "t3patch-flash-style";
++const HIGHLIGHT_MS = 20_000;
++const REAPPLY_MS = 150;
++
++const FLASH_CSS = `
++@keyframes t3patch-flash {
++  from { background-color: rgb(245 158 11 / 0.55); }
++  to { background-color: rgb(245 158 11 / 0.18); }
++}
++[data-t3patch-flash] {
++  background-color: rgb(245 158 11 / 0.22) !important;
++  box-shadow: inset 3px 0 0 rgb(245 158 11);
++  border-radius: 4px;
++  animation: t3patch-flash 0.45s ease-in-out 6 alternate;
++}
++`;
++
++/** Все открытые shadow root внутри панели — дерево может быть вложено глубже одного уровня. */
++function shadowRoots(root: ParentNode): ShadowRoot[] {
++  const found: ShadowRoot[] = [];
++  for (const element of Array.from(root.querySelectorAll("*"))) {
++    if (element.shadowRoot) {
++      found.push(element.shadowRoot, ...shadowRoots(element.shadowRoot));
++    }
++  }
++  return found;
++}
++
++function ensureStyle(shadow: ShadowRoot): void {
++  if (shadow.getElementById(STYLE_ID)) return;
++  const style = document.createElement("style");
++  style.id = STYLE_ID;
++  style.textContent = FLASH_CSS;
++  shadow.append(style);
++}
++
++let stopCurrent: (() => void) | null = null;
++
++/** Подсветить строку `path` в дереве внутри `panel`. Новая подсветка снимает прежнюю. */
++export function t3patchHighlightTreeRow(panel: HTMLElement, path: string): void {
++  stopCurrent?.();
++  const selector = `[data-item-path="${CSS.escape(path)}"]`;
++  const apply = () => {
++    for (const shadow of shadowRoots(panel)) {
++      const row = shadow.querySelector(selector);
++      if (!row) continue;
++      ensureStyle(shadow);
++      if (!row.hasAttribute("data-t3patch-flash")) row.setAttribute("data-t3patch-flash", "");
++    }
++  };
++  const clear = () => {
++    for (const shadow of shadowRoots(panel)) {
++      for (const row of Array.from(shadow.querySelectorAll("[data-t3patch-flash]"))) {
++        row.removeAttribute("data-t3patch-flash");
++      }
++    }
++  };
++  apply();
++  const interval = setInterval(apply, REAPPLY_MS);
++  const timeout = setTimeout(() => stop(), HIGHLIGHT_MS);
++  // Любой клик в дереве — пользователь увидел файл, подсветка больше не нужна.
++  const onPointerDown = () => stop();
++  panel.addEventListener("pointerdown", onPointerDown, true);
++  function stop() {
++    clearInterval(interval);
++    clearTimeout(timeout);
++    panel.removeEventListener("pointerdown", onPointerDown, true);
++    clear();
++    if (stopCurrent === stop) stopCurrent = null;
++  }
++  stopCurrent = stop;
++}
+-- 
+2.43.0
+

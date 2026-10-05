@@ -1,0 +1,565 @@
+From a775b14b981f933668a83c0af8b754725ea3be34 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 1 Oct 2026 23:19:09 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20PWA=20=E2=80=94=20=D0=BC=D0=B5?=
+ =?UTF-8?q?=D0=BD=D1=8E=20=D0=B4=D0=BE=D0=BB=D0=B3=D0=B8=D0=BC=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=D0=B6=D0=B0=D1=82=D0=B8=D0=B5=D0=BC,=20=C2=AB=D0=9F?=
+ =?UTF-8?q?=D0=BE=D0=B4=D0=B5=D0=BB=D0=B8=D1=82=D1=8C=D1=81=D1=8F=20?=
+ =?UTF-8?q?=E2=86=92=20T3=C2=BB=20=D0=B2=20=D0=BF=D0=B0=D0=BF=D0=BA=D1=83,?=
+ =?UTF-8?q?=20=D0=B7=D0=B0=D0=B3=D1=80=D1=83=D0=B7=D0=BA=D0=B0=20=D0=B2=20?=
+ =?UTF-8?q?=D1=84=D0=BE=D0=BD=D0=B5=20(Background=20Fetch)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/package.json                         |   2 +-
+ apps/web/public/manifest.webmanifest          |  18 ++-
+ apps/web/public/t3patch-sw.js                 |  48 ++++++++
+ .../src/components/files/FileBrowserPanel.tsx |  12 +-
+ apps/web/src/components/sergey/fileActions.ts |  23 ++++
+ apps/web/src/components/sergey/pwaShare.ts    | 102 +++++++++++++++++
+ apps/web/src/components/sergey/uploads.tsx    |  22 +++-
+ .../components/sergey/useT3patchTouchMenu.ts  | 108 ++++++++++++++++++
+ .../src/components/sergey/workspaceClient.ts  |  33 +++++-
+ 9 files changed, 360 insertions(+), 8 deletions(-)
+ create mode 100644 apps/web/public/t3patch-sw.js
+ create mode 100644 apps/web/src/components/sergey/pwaShare.ts
+ create mode 100644 apps/web/src/components/sergey/useT3patchTouchMenu.ts
+
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 53dc91214d..86fb491308 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@t3tools/web",
+-  "version": "0.0.40",
++  "version": "0.0.42",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
+index 0389551332..92443e15f8 100644
+--- a/apps/web/public/manifest.webmanifest
++++ b/apps/web/public/manifest.webmanifest
+@@ -16,5 +16,21 @@
+       "sizes": "180x180",
+       "type": "image/png"
+     }
+-  ]
++  ],
++  "share_target": {
++    "action": "/t3patch-share",
++    "method": "POST",
++    "enctype": "multipart/form-data",
++    "params": {
++      "title": "title",
++      "text": "text",
++      "url": "url",
++      "files": [
++        {
++          "name": "files",
++          "accept": ["*/*"]
++        }
++      ]
++    }
++  }
+ }
+diff --git a/apps/web/public/t3patch-sw.js b/apps/web/public/t3patch-sw.js
+new file mode 100644
+index 0000000000..6a75171c0d
+--- /dev/null
++++ b/apps/web/public/t3patch-sw.js
+@@ -0,0 +1,48 @@
++/*
++ * t3-patch: фоновый скрипт PWA — только две задачи, остальные запросы не трогает.
++ *  1. «Поделиться» (share_target в manifest.webmanifest): файлы из других приложений
++ *     складываются в IndexedDB «t3patch-share», T3 открывается с ?t3patch-share=1, и в
++ *     проводнике на папке появляется «Загрузить сюда полученные».
++ *  2. Загрузка в фоне (Background Fetch): браузер сам ведёт загрузку со своим уведомлением,
++ *     даже если PWA закрыта; здесь — итог в уведомлении.
++ */
++const DB_NAME = "t3patch-share";
++const STORE = "files";
++
++function openDb() {
++  return new Promise((resolve, reject) => {
++    const request = indexedDB.open(DB_NAME, 1);
++    request.onupgradeneeded = () =>
++      request.result.createObjectStore(STORE, { autoIncrement: true });
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++
++async function saveShared(files) {
++  const db = await openDb();
++  await new Promise((resolve, reject) => {
++    const tx = db.transaction(STORE, "readwrite");
++    for (const file of files)
++      tx.objectStore(STORE).add({ name: file.name, type: file.type, blob: file });
++    tx.oncomplete = resolve;
++    tx.onerror = () => reject(tx.error);
++  });
++  db.close();
++}
++
++self.addEventListener("install", () => self.skipWaiting());
++self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
++
++self.addEventListener("fetch", (event) => {
++  const url = new URL(event.request.url);
++  if (event.request.method !== "POST" || url.pathname !== "/t3patch-share") return;
++  event.respondWith(
++    (async () => {
++      const form = await event.request.formData();
++      const files = form.getAll("files").filter((item) => typeof item !== "string");
++      if (files.length > 0) await saveShared(files);
++      return Response.redirect(`/?t3patch-share=${files.length}`, 303);
++    })(),
++  );
++});
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 2b248e6947..86245bcb1b 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -20,6 +20,7 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
+ import { readLocalApi } from "~/localApi";
+ import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
+ import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
++import { useT3patchTouchMenu } from "~/components/sergey/useT3patchTouchMenu"; // t3-patch
+ import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
+ import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
+ import { T3_PIERRE_ICONS } from "~/pierre-icons";
+@@ -31,6 +32,12 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+ import { useDirectoryEntries } from "./useDirectoryEntries";
+ import { useProjectPathSearch } from "~/state/queries";
+ 
++// t3-patch: устройство только с пальцем (телефон, планшет без мыши)
++const T3PATCH_TOUCH_ONLY =
++  typeof window !== "undefined" &&
++  window.matchMedia?.("(pointer: coarse)").matches === true &&
++  window.matchMedia?.("(any-pointer: fine)").matches !== true;
++
+ interface FileBrowserPanelProps {
+   environmentId: EnvironmentId;
+   cwd: string;
+@@ -249,7 +256,9 @@ export default function FileBrowserPanel({
+     },
+     // Rows only need to be draggable so entries can be dropped into the chat
+     // composer; rearranging files inside the tree stays off.
+-    dragAndDrop: { canDrop: () => false },
++    // t3-patch: на сенсорном экране перетаскивание выключено — его удержание (400 мс) перехватывало
++    // долгое нажатие, и меню строки (useT3patchTouchMenu) не открывалось.
++    dragAndDrop: T3PATCH_TOUCH_ONLY ? false : { canDrop: () => false },
+     density: "compact",
+     fileTreeSearchMode: "hide-non-matches",
+     flattenEmptyDirectories: true,
+@@ -475,6 +484,7 @@ export default function FileBrowserPanel({
+   }, []);
+   useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
+   useT3patchExplorerDrop(panelRef, { environmentId, cwd, refresh }); // t3-patch
++  useT3patchTouchMenu(panelRef); // t3-patch: долгое нажатие на телефоне → меню
+ 
+   return (
+     <div
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index aafc42126a..d7ddc2b428 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -8,6 +8,7 @@
+  */
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import { readLocalApi } from "~/localApi";
++import { t3patchSharedFileCount, t3patchTakeSharedFiles } from "./pwaShare";
+ import { t3patchEnqueueUploads, t3patchPickFiles } from "./uploads";
+ import { t3patchWorkspace } from "./workspaceClient";
+ import { toastManager } from "~/components/ui/toast";
+@@ -33,6 +34,7 @@ const MENU_UPLOAD = "t3patch-upload";
+ const MENU_MKDIR = "t3patch-mkdir";
+ const MENU_RENAME = "t3patch-rename";
+ const MENU_TRASH = "t3patch-trash";
++const MENU_UPLOAD_SHARED = "t3patch-upload-shared";
+ 
+ /** Пункты, которые патч добавляет в меню дерева. `path` — как в дереве, у папок со слешем в конце. */
+ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; label: string }> {
+@@ -41,6 +43,14 @@ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; labe
+     { id: MENU_COPY_PATH, label: "Копировать путь" },
+     { id: MENU_COPY_REAL_PATH, label: "Копировать полный путь" },
+     ...(isDirectory ? [] : [{ id: MENU_DOWNLOAD, label: "Скачать" }]),
++    ...(isDirectory && t3patchSharedFileCount() > 0
++      ? [
++          {
++            id: MENU_UPLOAD_SHARED,
++            label: `Загрузить сюда полученные (${t3patchSharedFileCount()})`,
++          },
++        ]
++      : []),
+     ...(isDirectory
+       ? [
+           { id: MENU_UPLOAD, label: "Загрузить сюда…" },
+@@ -74,6 +84,18 @@ async function handleWorkspaceMenu(
+   },
+ ): Promise<void> {
+   const { environmentId, cwd, relativePath, refresh } = input;
++  if (clicked === MENU_UPLOAD_SHARED) {
++    const files = await t3patchTakeSharedFiles();
++    if (files.length === 0) return;
++    t3patchEnqueueUploads({
++      environmentId,
++      cwd,
++      directory: relativePath,
++      files: files.map((file) => ({ file, subdirectory: "" })),
++      onUploaded: refresh,
++    });
++    return;
++  }
+   if (clicked === MENU_UPLOAD) {
+     const files = await t3patchPickFiles();
+     if (files.length === 0) return;
+@@ -207,6 +229,7 @@ export async function handleT3PatchFileMenu(
+   },
+ ): Promise<boolean> {
+   if (
++    clicked === MENU_UPLOAD_SHARED ||
+     clicked === MENU_UPLOAD ||
+     clicked === MENU_MKDIR ||
+     clicked === MENU_RENAME ||
+diff --git a/apps/web/src/components/sergey/pwaShare.ts b/apps/web/src/components/sergey/pwaShare.ts
+new file mode 100644
+index 0000000000..a061da9ddf
+--- /dev/null
++++ b/apps/web/src/components/sergey/pwaShare.ts
+@@ -0,0 +1,102 @@
++/**
++ * t3-patch: PWA — фоновый скрипт (public/t3patch-sw.js) и файлы из «Поделиться».
++ *
++ * «Поделиться → T3 Code» на телефоне: скрипт кладёт файлы в IndexedDB «t3patch-share» и
++ * открывает T3. Здесь они читаются, в проводнике на папке появляется «Загрузить сюда
++ * полученные (N)».
++ *
++ * Background Fetch для загрузки на сервер не годится: Chrome отправляет запрос с пустым телом
++ * (content-length: 0), сервер получал 0 байт, а страница считала файл загруженным.
++ */
++import { useSyncExternalStore } from "react";
++
++const DB_NAME = "t3patch-share";
++const STORE = "files";
++
++let sharedCount = 0;
++const listeners = new Set<() => void>();
++const emit = () => {
++  for (const listener of listeners) listener();
++};
++
++function openDb(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    const request = indexedDB.open(DB_NAME, 1);
++    request.onupgradeneeded = () =>
++      request.result.createObjectStore(STORE, { autoIncrement: true });
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++
++async function countShared(): Promise<number> {
++  if (typeof indexedDB === "undefined") return 0;
++  const db = await openDb();
++  const count = await new Promise<number>((resolve, reject) => {
++    const request = db.transaction(STORE).objectStore(STORE).count();
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++  db.close();
++  return count;
++}
++
++/** Забрать полученные файлы (хранилище очищается). */
++export async function t3patchTakeSharedFiles(): Promise<File[]> {
++  const db = await openDb();
++  const records = await new Promise<Array<{ name: string; type: string; blob: Blob }>>(
++    (resolve, reject) => {
++      const tx = db.transaction(STORE, "readwrite");
++      const request = tx.objectStore(STORE).getAll();
++      request.onsuccess = () => {
++        tx.objectStore(STORE).clear();
++        resolve(request.result as Array<{ name: string; type: string; blob: Blob }>);
++      };
++      request.onerror = () => reject(request.error);
++    },
++  );
++  db.close();
++  sharedCount = 0;
++  emit();
++  return records.map((record) => new File([record.blob], record.name, { type: record.type }));
++}
++
++export function t3patchSharedFileCount(): number {
++  return sharedCount;
++}
++
++export function useT3patchSharedFileCount(): number {
++  return useSyncExternalStore(
++    (listener) => {
++      listeners.add(listener);
++      return () => {
++        listeners.delete(listener);
++      };
++    },
++    () => sharedCount,
++  );
++}
++
++let started = false;
++
++/** Зарегистрировать фоновый скрипт и подхватить файлы из «Поделиться». Один раз за сеанс. */
++export function t3patchStartPwa(onShared: (count: number) => void): void {
++  if (started || typeof window === "undefined") return;
++  started = true;
++  if ("serviceWorker" in navigator && window.isSecureContext) {
++    void navigator.serviceWorker.register("/t3patch-sw.js").catch(() => undefined);
++  }
++  void countShared()
++    .then((count) => {
++      sharedCount = count;
++      emit();
++      if (count > 0) onShared(count);
++    })
++    .catch(() => undefined);
++  const params = new URLSearchParams(window.location.search);
++  if (params.has("t3patch-share")) {
++    params.delete("t3patch-share");
++    const query = params.toString();
++    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
++  }
++}
+diff --git a/apps/web/src/components/sergey/uploads.tsx b/apps/web/src/components/sergey/uploads.tsx
+index 366f181d1f..2a3f46bc12 100644
+--- a/apps/web/src/components/sergey/uploads.tsx
++++ b/apps/web/src/components/sergey/uploads.tsx
+@@ -8,6 +8,8 @@
+ import type { EnvironmentId } from "@t3tools/contracts";
+ import { useEffect, useSyncExternalStore } from "react";
+ 
++import { toastManager } from "~/components/ui/toast";
++import { t3patchStartPwa } from "./pwaShare";
+ import { t3patchSendFile, t3patchWorkspace } from "./workspaceClient";
+ 
+ export interface T3patchUploadFile {
+@@ -76,8 +78,8 @@ export function t3patchEnqueueUploads(input: {
+         item.relativePath = await t3patchSendFile({
+           relativeUrl: upload.relativeUrl,
+           file,
+-          onProgress: (sent) => {
+-            item.sent = sent;
++          onProgress: (sent: number) => {
++            item.sent = Math.min(sent, item.size);
+             emit();
+           },
+         });
+@@ -155,6 +157,18 @@ const formatBytes = (bytes: number) =>
+       : `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+ 
+ export function T3patchUploadPanel() {
++  // PWA: фоновый скрипт и файлы из «Поделиться» (pwaShare.ts) — один раз за сеанс
++  useEffect(() => {
++    t3patchStartPwa((count) =>
++      toastManager.add({
++        type: "info",
++        title: `Получено файлов: ${count}`,
++        description:
++          "Откройте проводник проекта и на нужной папке выберите «Загрузить сюда полученные».",
++        timeout: 15_000,
++      }),
++    );
++  }, []);
+   const current = useSyncExternalStore(subscribe, () => items);
+   const active = current.some((item) => item.status === "waiting" || item.status === "uploading");
+   const failed = current.some((item) => item.status === "error");
+@@ -171,7 +185,9 @@ export function T3patchUploadPanel() {
+   if (current.length === 0) return null;
+   const done = current.filter((item) => item.status === "done").length;
+   return (
+-    <div className="fixed bottom-4 left-4 z-50 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
++    // На телефоне панель проводника выезжает поверх всего и закрывала плашку — поэтому слой выше
++    // и во всю ширину экрана снизу; на широком экране — как было, слева внизу.
++    <div className="fixed inset-x-3 bottom-3 z-[1000] overflow-hidden rounded-xl border border-border bg-popover shadow-lg sm:inset-x-auto sm:bottom-4 sm:left-4 sm:w-80">
+       <div className="flex items-center justify-between border-b border-border px-3 py-2">
+         <span className="text-sm font-medium">
+           {active
+diff --git a/apps/web/src/components/sergey/useT3patchTouchMenu.ts b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+new file mode 100644
+index 0000000000..542800a116
+--- /dev/null
++++ b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+@@ -0,0 +1,108 @@
++/**
++ * t3-patch: долгое нажатие на строку дерева на телефоне (PWA, мобильный браузер) открывает меню.
++ *
++ * Меню дерева открывается правой кнопкой мыши. На телефоне её нет, а долгое нажатие на строку
++ * запускало перетаскивание (строки можно тащить в чат) — меню не появлялось. Здесь: удержание
++ * 500 мс без сдвига → то же событие contextmenu на строке, что и от правой кнопки, плюс
++ * отмена перетаскивания и следующего «клика» (иначе после меню открылся бы файл).
++ */
++import { type RefObject, useEffect } from "react";
++
++const HOLD_MS = 500;
++const MOVE_TOLERANCE_PX = 10;
++
++function rowFromEvent(event: Event): HTMLElement | null {
++  for (const node of event.composedPath()) {
++    if (node instanceof HTMLElement && node.hasAttribute("data-item-path")) return node;
++  }
++  return null;
++}
++
++export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): void {
++  useEffect(() => {
++    const panel = panelRef.current;
++    if (!panel) return;
++    let timer: ReturnType<typeof setTimeout> | null = null;
++    let start: { x: number; y: number } | null = null;
++    let fired = false;
++
++    const cancel = () => {
++      if (timer !== null) clearTimeout(timer);
++      timer = null;
++      start = null;
++    };
++    const onTouchStart = (event: TouchEvent) => {
++      fired = false;
++      if (event.touches.length !== 1) return cancel();
++      const row = rowFromEvent(event);
++      if (!row) return;
++      const touch = event.touches[0]!;
++      start = { x: touch.clientX, y: touch.clientY };
++      timer = setTimeout(() => {
++        timer = null;
++        fired = true;
++        navigator.vibrate?.(10);
++        row.dispatchEvent(
++          new MouseEvent("contextmenu", {
++            bubbles: true,
++            cancelable: true,
++            composed: true,
++            clientX: start?.x ?? 0,
++            clientY: start?.y ?? 0,
++            button: 2,
++          }),
++        );
++      }, HOLD_MS);
++    };
++    const onTouchMove = (event: TouchEvent) => {
++      if (!start || timer === null) return;
++      const touch = event.touches[0];
++      if (!touch) return cancel();
++      if (
++        Math.abs(touch.clientX - start.x) > MOVE_TOLERANCE_PX ||
++        Math.abs(touch.clientY - start.y) > MOVE_TOLERANCE_PX
++      ) {
++        cancel();
++      }
++    };
++    const onTouchEnd = (event: TouchEvent) => {
++      cancel();
++      if (fired) event.preventDefault(); // не превращать удержание в клик по строке
++    };
++    const swallowAfterMenu = (event: Event) => {
++      if (!fired) return;
++      event.preventDefault();
++      event.stopPropagation();
++      if (event.type === "click") fired = false;
++    };
++    const blockDragWhileHolding = (event: DragEvent) => {
++      if (timer !== null || fired) event.preventDefault();
++    };
++    // Удержание пальца браузер сам превращает в contextmenu — после нашего. Окно меню
++    // (contextMenuFallback) ловит contextmenu на document и закрывается от «щелчка мимо»:
++    // меню мелькало и пропадало. Гасим браузерное событие на window, раньше document.
++    const blockNativeMenu = (event: Event) => {
++      if (!event.isTrusted || (timer === null && !fired)) return;
++      event.preventDefault();
++      event.stopImmediatePropagation();
++    };
++
++    panel.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
++    panel.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
++    panel.addEventListener("touchend", onTouchEnd, { capture: true });
++    panel.addEventListener("touchcancel", cancel, { capture: true });
++    panel.addEventListener("click", swallowAfterMenu, true);
++    panel.addEventListener("dragstart", blockDragWhileHolding, true);
++    window.addEventListener("contextmenu", blockNativeMenu, true);
++    return () => {
++      cancel();
++      panel.removeEventListener("touchstart", onTouchStart, { capture: true });
++      panel.removeEventListener("touchmove", onTouchMove, { capture: true });
++      panel.removeEventListener("touchend", onTouchEnd, { capture: true });
++      panel.removeEventListener("touchcancel", cancel, { capture: true });
++      panel.removeEventListener("click", swallowAfterMenu, true);
++      panel.removeEventListener("dragstart", blockDragWhileHolding, true);
++      window.removeEventListener("contextmenu", blockNativeMenu, true);
++    };
++  }, [panelRef]);
++}
+diff --git a/apps/web/src/components/sergey/workspaceClient.ts b/apps/web/src/components/sergey/workspaceClient.ts
+index 4f8b93d17a..d7c127225e 100644
+--- a/apps/web/src/components/sergey/workspaceClient.ts
++++ b/apps/web/src/components/sergey/workspaceClient.ts
+@@ -18,7 +18,11 @@ function failureMessage(error: unknown): string {
+   return String(error);
+ }
+ 
+-async function call<I, A>(
++const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
++const NOT_CONNECTED = /not connected|not available|unavailable|disconnected|reconnect/i;
++const CONNECT_WAIT_MS = 45_000;
++
++async function callOnce<I, A>(
+   command: AtomCommand<{ environmentId: EnvironmentId; input: I }, A, unknown>,
+   environmentId: EnvironmentId,
+   input: I,
+@@ -36,6 +40,32 @@ async function call<I, A>(
+   throw new Error(failureMessage(squashAtomCommandFailure(result)));
+ }
+ 
++/**
++ * Запрос к серверу с ожиданием соединения. На телефоне после системного окна выбора файла
++ * страница несколько секунд заново подключается к серверу, и запрос сразу получал
++ * «… is not connected».
++ */
++async function call<I, A>(
++  command: AtomCommand<{ environmentId: EnvironmentId; input: I }, A, unknown>,
++  environmentId: EnvironmentId,
++  input: I,
++): Promise<A> {
++  const deadline = Date.now() + CONNECT_WAIT_MS;
++  for (;;) {
++    try {
++      return await callOnce(command, environmentId, input);
++    } catch (error) {
++      if (!NOT_CONNECTED.test(failureMessage(error))) throw error;
++      if (Date.now() > deadline) {
++        throw new Error("Нет соединения с сервером — дождитесь подключения и повторите.", {
++          cause: error,
++        });
++      }
++      await sleep(1_500);
++    }
++  }
++}
++
+ export const t3patchWorkspace = {
+   mkdir: (environmentId: EnvironmentId, cwd: string, relativePath: string) =>
+     call(serverEnvironment.t3patchWorkspaceMkdir, environmentId, { cwd, relativePath }),
+@@ -60,7 +90,6 @@ export const t3patchWorkspace = {
+ export const T3PATCH_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+ const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 20_000, 30_000];
+ 
+-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+ 
+ /**
+  * Отправить файл по ссылке загрузки кусками. Обрыв связи — пауза и вопрос серверу «сколько
+-- 
+2.43.0
+

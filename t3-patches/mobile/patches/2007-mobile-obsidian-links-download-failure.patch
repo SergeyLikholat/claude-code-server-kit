@@ -1,0 +1,154 @@
+From fb8b03a8960fc0f0c5b17e8ca51811a3b60d80fa Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 14:00:50 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA?=
+ =?UTF-8?q?=D0=B8=20=D0=BD=D0=B0=20/root/Obsidian=20=D0=B8=20=D0=BE=D1=82?=
+ =?UTF-8?q?=D0=BA=D0=B0=D0=B7=20=D0=B2=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA?=
+ =?UTF-8?q?=D0=B5=20=D0=BD=D0=B0=20=D1=81=D0=BA=D0=B0=D1=87=D0=B8=D0=B2?=
+ =?UTF-8?q?=D0=B0=D0=BD=D0=B8=D0=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ссылка из чата на /root/Obsidian/... вела на путь вне проекта: сервер
+отказывал в ссылке на скачивание, а карточка висела на «Готовлю ссылку…».
+Теперь такой путь открывается через окно !Obsidian кабинета, полный путь
+внутри кабинета — как относительный. Если сервер всё же отказал — карточка
+так и пишет. Полный путь больше не склеивается с папкой кабинета.
+---
+ .../features/files/ThreadFilesRouteScreen.tsx |  6 +++--
+ apps/mobile/src/sergey/FileUnavailable.tsx    | 10 +++++++-
+ apps/mobile/src/sergey/paths.ts               | 16 ++++++++++++
+ apps/mobile/src/sergey/sergey.test.ts         | 25 ++++++++++++++++++-
+ 4 files changed, 53 insertions(+), 4 deletions(-)
+
+diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+index 904328f481..c353f18c3e 100644
+--- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
++++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+@@ -67,7 +67,7 @@ import {
+ import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
+ // t3-patch: офисные файлы открываются страницей просмотра с сервера
+ import { isT3patchOfficePreviewPath, t3patchOfficeViewUri } from "../../sergey/officePreview";
+-import { t3patchFullPath } from "../../sergey/paths";
++import { t3patchFullPath, t3patchWorkspacePath } from "../../sergey/paths";
+ import { T3patchFileUnavailable } from "../../sergey/FileUnavailable";
+ 
+ type FileViewMode = "preview" | "source";
+@@ -604,11 +604,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+   const iconColor = useUniwindTheme()["--color-icon"];
+   const isAndroid = Platform.OS === "android";
+   const params = props.route.params;
+-  const relativePath = normalizeRoutePath(params.path);
++  const routePath = normalizeRoutePath(params.path);
+   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
+   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
+     props.route.params,
+   );
++  // t3-patch: /root/Obsidian/... и полные пути кабинета — в путь внутри проекта
++  const relativePath = routePath === null ? null : t3patchWorkspacePath(cwd, routePath);
+   const [modeOverride, setModeOverride] = useState<{
+     readonly path: string;
+     readonly mode: FileViewMode;
+diff --git a/apps/mobile/src/sergey/FileUnavailable.tsx b/apps/mobile/src/sergey/FileUnavailable.tsx
+index 4784cbe182..34bec5079f 100644
+--- a/apps/mobile/src/sergey/FileUnavailable.tsx
++++ b/apps/mobile/src/sergey/FileUnavailable.tsx
+@@ -88,6 +88,8 @@ export function T3patchFileUnavailable(props: {
+     draftCwd: props.threadId === null ? cwd : null,
+   });
+   const downloadUrl = asset._tag === "Success" ? asset.url : null;
++  // Сервер отказал в ссылке (файл вне проекта, скрытый файл, сервер без патча 0011).
++  const downloadFailed = asset._tag === "Failure";
+ 
+   if (directory.isPending || isDirectory) {
+     return (
+@@ -108,10 +110,16 @@ export function T3patchFileUnavailable(props: {
+       <Text selectable className="text-center font-mono text-xs text-foreground-muted">
+         {t3patchFullPath(cwd, relativePath)}
+       </Text>
++      {downloadFailed ? (
++        <Text className="text-center text-xs text-foreground-muted">
++          Сервер не выдал ссылку на этот файл: он вне проекта или скрытый. Скопируй путь и забери
++          файл другим способом.
++        </Text>
++      ) : null}
+       <View className="mt-3 items-center gap-2">
+         <ActionButton
+           primary
+-          label={downloadUrl ? "Скачать" : "Готовлю ссылку…"}
++          label={downloadUrl ? "Скачать" : downloadFailed ? "Скачать нельзя" : "Готовлю ссылку…"}
+           disabled={downloadUrl === null}
+           onPress={() => {
+             if (downloadUrl) void tryOpenExternalUrl(downloadUrl, "file-preview");
+diff --git a/apps/mobile/src/sergey/paths.ts b/apps/mobile/src/sergey/paths.ts
+index 8172790120..eda6eb9587 100644
+--- a/apps/mobile/src/sergey/paths.ts
++++ b/apps/mobile/src/sergey/paths.ts
+@@ -7,7 +7,23 @@ const OBSIDIAN_WINDOW = "/!Obsidian/";
+ const OBSIDIAN_ROOT = "/root/Obsidian/";
+ 
+ export function t3patchFullPath(cwd: string, relativePath: string): string {
++  if (relativePath.startsWith("/")) return relativePath; // уже полный путь (ссылка из чата)
+   const joined = `${cwd.replace(/\/+$/, "")}/${relativePath.replace(/^\/+/, "")}`;
+   const window = joined.indexOf(OBSIDIAN_WINDOW);
+   return window >= 0 ? OBSIDIAN_ROOT + joined.slice(window + OBSIDIAN_WINDOW.length) : joined;
+ }
++
++/**
++ * Путь из ссылки — в путь внутри проекта. Абсолютный путь внутри кабинета — относительным,
++ * `/root/Obsidian/...` — через окно `!Obsidian/...` (оно есть в каждом кабинете, кроме самой базы).
++ * Иначе приложение просит у сервера файл вне проекта, и тот отказывает.
++ */
++export function t3patchWorkspacePath(cwd: string | null, path: string): string {
++  if (!path.startsWith("/") || cwd === null) return path;
++  const root = cwd.replace(/\/+$/, "");
++  if (path.startsWith(`${root}/`)) return path.slice(root.length + 1);
++  if (root !== "/root/Obsidian" && path.startsWith(OBSIDIAN_ROOT)) {
++    return `!Obsidian/${path.slice(OBSIDIAN_ROOT.length)}`;
++  }
++  return path;
++}
+diff --git a/apps/mobile/src/sergey/sergey.test.ts b/apps/mobile/src/sergey/sergey.test.ts
+index 9351c7c4c6..484d310520 100644
+--- a/apps/mobile/src/sergey/sergey.test.ts
++++ b/apps/mobile/src/sergey/sergey.test.ts
+@@ -1,7 +1,7 @@
+ import { describe, expect, it } from "vite-plus/test";
+ 
+ import { isT3patchOfficePreviewPath, t3patchOfficeViewUri } from "./officePreview";
+-import { t3patchFullPath } from "./paths";
++import { t3patchFullPath, t3patchWorkspacePath } from "./paths";
+ import { t3patchSortThreadsByLatest } from "./threadOrderSort";
+ 
+ describe("t3patchFullPath", () => {
+@@ -65,3 +65,26 @@ describe("порядок тредов по последнему сообщени
+     ).toEqual(["a", "b"]);
+   });
+ });
++
++describe("путь из ссылки в путь проекта", () => {
++  it("/root/Obsidian/... — через окно !Obsidian кабинета", () => {
++    expect(t3patchWorkspacePath("/root/projects/tk-vector", "/root/Obsidian/ОБМЕН/T3.apk")).toBe(
++      "!Obsidian/ОБМЕН/T3.apk",
++    );
++  });
++
++  it("полный путь внутри кабинета — относительный; в самой базе окна нет", () => {
++    expect(
++      t3patchWorkspacePath("/root/projects/tk-vector", "/root/projects/tk-vector/docs/a.md"),
++    ).toBe("docs/a.md");
++    expect(t3patchWorkspacePath("/root/Obsidian", "/root/Obsidian/ОБМЕН/a.md")).toBe("ОБМЕН/a.md");
++    expect(t3patchWorkspacePath("/root/projects/tk-vector", "/etc/hosts")).toBe("/etc/hosts");
++    expect(t3patchWorkspacePath("/root/projects/tk-vector", "docs/a.md")).toBe("docs/a.md");
++  });
++
++  it("полный путь не склеивается с папкой кабинета", () => {
++    expect(t3patchFullPath("/root/projects/tk-vector", "/root/Obsidian/a.md")).toBe(
++      "/root/Obsidian/a.md",
++    );
++  });
++});
+-- 
+2.43.0
+

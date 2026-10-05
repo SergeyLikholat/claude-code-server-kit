@@ -1,0 +1,211 @@
+From 9ddd6d409cef445d6d457108eec2d7be6d3c052a Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 13:54:20 +0300
+Subject: [PATCH] =?UTF-8?q?feat(chat):=20=C2=AB=D0=9F=D0=BE=D0=BA=D0=B0?=
+ =?UTF-8?q?=D0=B7=D0=B0=D1=82=D1=8C=20=D0=B2=20=D0=BF=D1=80=D0=BE=D0=B2?=
+ =?UTF-8?q?=D0=BE=D0=B4=D0=BD=D0=B8=D0=BA=D0=B5=C2=BB=20=D0=B2=20=D0=BC?=
+ =?UTF-8?q?=D0=B5=D0=BD=D1=8E=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA=D0=B8=20?=
+ =?UTF-8?q?=D0=BD=D0=B0=20=D1=84=D0=B0=D0=B9=D0=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Правый клик по ссылке на файл в чате: новый пункт открывает проводник T3 на
+папке файла, раскрывает её и прокручивает к файлу — сам файл не открывается.
+Штатно такой пункт был только в программе для компьютера (системный
+проводник), в браузере его не было.
+---
+ apps/web/src/components/ChatMarkdown.tsx      | 17 ++++--
+ .../src/components/sergey/explorerReveal.ts   | 53 +++++++++++++++++--
+ .../components/sergey/fileUnavailable.test.ts | 28 ++++++++++
+ 3 files changed, 91 insertions(+), 7 deletions(-)
+
+diff --git a/apps/web/src/components/ChatMarkdown.tsx b/apps/web/src/components/ChatMarkdown.tsx
+index 86fc2c3d4c..2536ac67fa 100644
+--- a/apps/web/src/components/ChatMarkdown.tsx
++++ b/apps/web/src/components/ChatMarkdown.tsx
+@@ -160,7 +160,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
+ import { cn } from "../lib/utils";
+ import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+ import { useRightPanelStore } from "../rightPanelStore";
+-import { t3patchOpenFolder } from "./sergey/explorerReveal"; // t3-patch
++import { t3patchOpenFolder, t3patchRevealFile } from "./sergey/explorerReveal"; // t3-patch
+ import { readThreadShell, useProjects } from "../state/entities";
+ import { serverEnvironment } from "../state/server";
+ import { shellEnvironment } from "../state/shell";
+@@ -2593,9 +2593,19 @@ function useChatMarkdownState({
+           onReveal={
+             canUseShellActions && revealInFileManagerLabel !== undefined
+               ? () => revealMarkdownFileInFileManager(fileLinkMeta)
+-              : undefined
++              : // t3-patch: в браузере — папка файла в проводнике T3 (файл не открывается)
++                threadRef && cwd && panelPath
++                ? async () => {
++                    await t3patchRevealFile(threadRef, cwd, panelPath);
++                    return AsyncResult.success(undefined);
++                  }
++                : undefined
++          }
++          revealLabel={
++            canUseShellActions && revealInFileManagerLabel !== undefined
++              ? revealInFileManagerLabel
++              : "Показать в проводнике" // t3-patch
+           }
+-          revealLabel={revealInFileManagerLabel}
+           onOpenInBrowser={
+             threadRef &&
+             isPreviewSupportedInRuntime() &&
+@@ -2609,6 +2619,7 @@ function useChatMarkdownState({
+     },
+     [
+       canUseShellActions,
++      cwd,
+       fileLinkParentSuffixByPath,
+       openFileInPanel,
+       openInPreferredEditor,
+diff --git a/apps/web/src/components/sergey/explorerReveal.ts b/apps/web/src/components/sergey/explorerReveal.ts
+index 2d5aae40e8..324db92a93 100644
+--- a/apps/web/src/components/sergey/explorerReveal.ts
++++ b/apps/web/src/components/sergey/explorerReveal.ts
+@@ -17,6 +17,8 @@ import { fetchT3PatchFileInfo } from "./fileActions";
+ interface RevealRequest {
+   readonly cwd: string;
+   readonly path: string;
++  /** Файл внутри папки, к которому прокрутить (не открывая его). */
++  readonly focusName?: string;
+   readonly id: number;
+   readonly at: number;
+ }
+@@ -32,8 +34,14 @@ const listeners = new Set<(request: RevealRequest) => void>();
+ 
+ const trimSlashes = (path: string) => path.replace(/\/+$/, "");
+ 
+-export function t3patchRevealInExplorer(cwd: string, path: string): void {
+-  const request = { cwd: trimSlashes(cwd), path: trimSlashes(path), id: nextId++, at: Date.now() };
++export function t3patchRevealInExplorer(cwd: string, path: string, focusName?: string): void {
++  const request = {
++    cwd: trimSlashes(cwd),
++    path: trimSlashes(path),
++    ...(focusName ? { focusName } : {}),
++    id: nextId++,
++    at: Date.now(),
++  };
+   latest = request;
+   for (const listener of listeners) listener(request);
+ }
+@@ -75,6 +83,34 @@ export async function t3patchOpenFolder(
+   t3patchRevealInExplorer(cwd, relative);
+ }
+ 
++/**
++ * «Показать в проводнике» для ссылки на файл: открыть проводник на папке файла и прокрутить
++ * к нему. Сам файл не открывается — нужно увидеть, где он лежит.
++ */
++export async function t3patchRevealFile(
++  threadRef: ScopedThreadRef,
++  cwd: string,
++  filePath: string,
++): Promise<void> {
++  const trimmed = trimSlashes(filePath);
++  const slash = trimmed.lastIndexOf("/");
++  const name = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
++  const folder = slash > 0 ? trimmed.slice(0, slash) : slash === 0 ? "/" : "";
++  let relative: string;
++  try {
++    relative = await workspaceRelative(cwd, folder);
++  } catch (error) {
++    toastManager.add({
++      type: "error",
++      title: "Не удалось показать файл в проводнике",
++      description: error instanceof Error ? error.message : String(error),
++    });
++    return;
++  }
++  useRightPanelStore.getState().open(threadRef, "files");
++  t3patchRevealInExplorer(cwd, relative, name);
++}
++
+ /** То, что хук использует у модели дерева @pierre/trees. */
+ interface TreeItem {
+   expand?: () => void;
+@@ -103,6 +139,7 @@ export async function t3patchRevealInTree(
+   model: TreeModel,
+   load: (path: string) => Promise<unknown>,
+   path: string,
++  focusName?: string,
+ ): Promise<void> {
+   const segments = path.split("/").filter(Boolean);
+   model.closeSearch();
+@@ -110,12 +147,20 @@ export async function t3patchRevealInTree(
+   for (let index = 0; index <= segments.length; index++) {
+     await load(segments.slice(0, index).join("/"));
+   }
+-  if (segments.length === 0) return;
+   for (let index = 1; index <= segments.length; index++) {
+     const current = segments.slice(0, index).join("/");
+     const item = await waitForItem(model, current);
+     item?.expand?.();
+   }
++  if (focusName) {
++    // Выделение файла в дереве его открывает, поэтому только прокрутка и фокус на строке.
++    const filePath = segments.length > 0 ? `${segments.join("/")}/${focusName}` : focusName;
++    if (await waitForItem(model, filePath)) {
++      model.scrollToPath(filePath, { focus: true, offset: "center" });
++    }
++    return;
++  }
++  if (segments.length === 0) return;
+   const target = model.getItem(`${path}/`) ?? model.getItem(path);
+   if (!target) return;
+   for (const selected of model.getSelectedPaths()) model.getItem(selected)?.deselect?.();
+@@ -139,7 +184,7 @@ export function useT3patchExplorerReveal(
+       if (!request || request.cwd !== root || request.id <= handledRef.current) return;
+       if (Date.now() - request.at > REQUEST_TTL_MS) return;
+       handledRef.current = request.id;
+-      void t3patchRevealInTree(model, load, request.path);
++      void t3patchRevealInTree(model, load, request.path, request.focusName);
+     };
+     run(latest);
+     listeners.add(run);
+diff --git a/apps/web/src/components/sergey/fileUnavailable.test.ts b/apps/web/src/components/sergey/fileUnavailable.test.ts
+index c7faf8a620..e48e199d07 100644
+--- a/apps/web/src/components/sergey/fileUnavailable.test.ts
++++ b/apps/web/src/components/sergey/fileUnavailable.test.ts
+@@ -75,6 +75,34 @@ describe("переход к папке в дереве", () => {
+   });
+ });
+ 
++describe("показать файл в проводнике", () => {
++  it("раскрывает папки и прокручивает к файлу, не выделяя его (выделение открыло бы файл)", async () => {
++    const expanded: string[] = [];
++    const selected: string[] = [];
++    let scrolled: string | null = null;
++    const paths = ["a/", "a/b/", "a/b/report.docx"];
++    const model = {
++      getItem: (path: string) =>
++        paths.includes(path)
++          ? {
++              expand: () => expanded.push(path),
++              select: () => selected.push(path),
++              deselect: () => {},
++            }
++          : null,
++      getSelectedPaths: () => [],
++      scrollToPath: (path: string) => {
++        scrolled = path;
++      },
++      closeSearch: () => {},
++    };
++    await t3patchRevealInTree(model, async () => {}, "a/b", "report.docx");
++    expect(expanded).toEqual(["a/", "a/b/"]);
++    expect(scrolled).toBe("a/b/report.docx");
++    expect(selected).toEqual([]);
++  });
++});
++
+ describe("открыть папку из ссылки", () => {
+   const ref = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-folder"));
+   const panel = () => selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+-- 
+2.43.0
+

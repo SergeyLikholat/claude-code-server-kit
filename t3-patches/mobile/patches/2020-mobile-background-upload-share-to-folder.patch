@@ -1,0 +1,793 @@
+From d8d2c8567ab1b8b452f7b8bafa482ec418f8a623 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 1 Oct 2026 23:13:24 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D0=B7=D0=B0=D0=B3=D1=80=D1=83?=
+ =?UTF-8?q?=D0=B7=D0=BA=D0=B0=20=D0=B2=20=D1=84=D0=BE=D0=BD=D0=B5=20=D1=81?=
+ =?UTF-8?q?=D0=BB=D1=83=D0=B6=D0=B1=D0=BE=D0=B9=20Android,=20=D0=BE=D0=B6?=
+ =?UTF-8?q?=D0=B8=D0=B4=D0=B0=D0=BD=D0=B8=D0=B5=20=D1=81=D0=BE=D0=B5=D0=B4?=
+ =?UTF-8?q?=D0=B8=D0=BD=D0=B5=D0=BD=D0=B8=D1=8F,=20=D0=B2=D0=BB=D0=BE?=
+ =?UTF-8?q?=D0=B6=D0=B5=D0=BD=D0=B8=D1=8F=20=D0=B8=20=C2=AB=D0=9F=D0=BE?=
+ =?UTF-8?q?=D0=B4=D0=B5=D0=BB=D0=B8=D1=82=D1=8C=D1=81=D1=8F=C2=BB=20?=
+ =?UTF-8?q?=E2=80=94=20=D0=B2=20=D0=BF=D0=B0=D0=BF=D0=BA=D1=83?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../t3patch-upload/android/build.gradle       |  19 ++
+ .../android/src/main/AndroidManifest.xml      |  12 +
+ .../t3patchupload/T3patchUploadModule.kt      |  36 +++
+ .../t3patchupload/T3patchUploadService.kt     | 296 ++++++++++++++++++
+ .../t3patch-upload/expo-module.config.json    |   4 +
+ .../features/files/ThreadFilesRouteScreen.tsx |  12 +-
+ apps/mobile/src/sergey/NewTaskFilesScreen.tsx |  16 +-
+ apps/mobile/src/sergey/pathActions.ts         |  43 ++-
+ apps/mobile/src/sergey/workspaceUploads.tsx   | 144 ++++++++-
+ 9 files changed, 570 insertions(+), 12 deletions(-)
+ create mode 100644 apps/mobile/modules/t3patch-upload/android/build.gradle
+ create mode 100644 apps/mobile/modules/t3patch-upload/android/src/main/AndroidManifest.xml
+ create mode 100644 apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadModule.kt
+ create mode 100644 apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadService.kt
+ create mode 100644 apps/mobile/modules/t3patch-upload/expo-module.config.json
+
+diff --git a/apps/mobile/modules/t3patch-upload/android/build.gradle b/apps/mobile/modules/t3patch-upload/android/build.gradle
+new file mode 100644
+index 0000000000..c92db04721
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-upload/android/build.gradle
+@@ -0,0 +1,19 @@
++// t3-patch: загрузка файлов на сервер в фоне — служба Android с уведомлением и докачкой.
++apply plugin: 'com.android.library'
++apply plugin: 'org.jetbrains.kotlin.android'
++
++group = 'com.t3tools.t3patchupload'
++version = '0.0.0'
++
++android {
++  namespace 'expo.modules.t3patchupload'
++  compileSdk rootProject.ext.compileSdkVersion
++  defaultConfig {
++    minSdkVersion rootProject.ext.minSdkVersion
++    targetSdkVersion rootProject.ext.targetSdkVersion
++  }
++}
++
++dependencies {
++  implementation project(':expo-modules-core')
++}
+diff --git a/apps/mobile/modules/t3patch-upload/android/src/main/AndroidManifest.xml b/apps/mobile/modules/t3patch-upload/android/src/main/AndroidManifest.xml
+new file mode 100644
+index 0000000000..1b4e7b9bbb
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-upload/android/src/main/AndroidManifest.xml
+@@ -0,0 +1,12 @@
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
++  <uses-permission android:name="android.permission.INTERNET" />
++  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
++  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
++  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
++  <application>
++    <service
++      android:name="expo.modules.t3patchupload.T3patchUploadService"
++      android:exported="false"
++      android:foregroundServiceType="dataSync" />
++  </application>
++</manifest>
+diff --git a/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadModule.kt b/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadModule.kt
+new file mode 100644
+index 0000000000..ec062cdc61
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadModule.kt
+@@ -0,0 +1,36 @@
++package expo.modules.t3patchupload
++
++import android.content.Intent
++import android.os.Build
++import expo.modules.kotlin.exception.Exceptions
++import expo.modules.kotlin.modules.Module
++import expo.modules.kotlin.modules.ModuleDefinition
++
++/**
++ * t3-patch: мост к службе фоновой загрузки (T3patchUploadService).
++ *   enqueue(jobJson) — поставить файл в очередь: {id, url, uri, name, size}
++ *   status()         — состояние всех задач JSON-строкой: {id: {sent, size, state, error, relativePath}}
++ *   forget(id)       — убрать завершённую задачу из списка
++ */
++class T3patchUploadModule : Module() {
++  override fun definition() = ModuleDefinition {
++    Name("T3patchUpload")
++
++    Function("enqueue") { jobJson: String ->
++      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
++      val intent = Intent(context, T3patchUploadService::class.java).putExtra(T3patchUploadService.EXTRA_JOB, jobJson)
++      if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
++      Unit
++    }
++
++    // Тип результата — только из «прямого» списка Expo (Unit, Long, Any…). Для прочих (String,
++    // ComponentName, Job) Expo зовёт заглушку плагина компилятора pika, которого у наших
++    // модулей нет: NotImplementedError при регистрации модуля, приложение висит на заставке.
++    Function("status") { -> T3patchUploadService.statusJson() as Any }
++
++    Function("forget") { id: String ->
++      T3patchUploadService.jobs.remove(id)
++      Unit
++    }
++  }
++}
+diff --git a/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadService.kt b/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadService.kt
+new file mode 100644
+index 0000000000..6bf3ef9a9d
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-upload/android/src/main/java/expo/modules/t3patchupload/T3patchUploadService.kt
+@@ -0,0 +1,296 @@
++package expo.modules.t3patchupload
++
++import android.app.Notification
++import android.app.NotificationChannel
++import android.app.NotificationManager
++import android.app.Service
++import android.content.Context
++import android.content.Intent
++import android.content.pm.ServiceInfo
++import android.net.Uri
++import android.os.Build
++import android.os.IBinder
++import org.json.JSONObject
++import java.io.File
++import java.io.RandomAccessFile
++import java.net.HttpURLConnection
++import java.net.URL
++import java.util.concurrent.ConcurrentHashMap
++import java.util.concurrent.LinkedBlockingQueue
++
++/**
++ * t3-patch: загрузка файлов на сервер T3 в фоне.
++ *
++ * Служба переднего плана (уведомление в шторке) — Android не останавливает её, когда приложение
++ * свёрнуто. Протокол сервера (патч 0018): GET <ссылка> → сколько уже получено; POST
++ * <ссылка>?offset=N, тело — следующий кусок. Обрыв связи — пауза и продолжение с того места, где
++ * сервер остановился. Состояние задач — в памяти процесса, приложение опрашивает его (status()).
++ */
++class T3patchUploadService : Service() {
++  data class Job(
++    val id: String,
++    val url: String,
++    val uri: String,
++    val name: String,
++    val size: Long,
++    @Volatile var sent: Long = 0,
++    @Volatile var state: String = "queued", // queued | uploading | done | error
++    @Volatile var error: String? = null,
++    @Volatile var relativePath: String? = null,
++  )
++
++  companion object {
++    const val EXTRA_JOB = "t3patch.job"
++    private const val CHANNEL = "t3patch_uploads"
++    private const val NOTIFICATION_ID = 7341
++    private const val CHUNK = 4L * 1024 * 1024
++    private val RETRY_MS = longArrayOf(1_000, 2_000, 5_000, 10_000, 20_000, 30_000)
++    private const val MAX_FAILURES = 80 // ~35 минут попыток при пропавшей связи
++
++    val jobs = ConcurrentHashMap<String, Job>()
++    private val queue = LinkedBlockingQueue<Job>()
++    @Volatile private var worker: Thread? = null
++
++    fun statusJson(): String {
++      val root = JSONObject()
++      for ((id, job) in jobs) {
++        root.put(
++          id,
++          JSONObject()
++            .put("sent", job.sent)
++            .put("size", job.size)
++            .put("state", job.state)
++            .put("error", job.error ?: JSONObject.NULL)
++            .put("relativePath", job.relativePath ?: JSONObject.NULL),
++        )
++      }
++      return root.toString()
++    }
++  }
++
++  private var lastNotify = 0L
++
++  override fun onBind(intent: Intent?): IBinder? = null
++
++  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
++    ensureChannel()
++    startForegroundCompat(buildNotification("Готовлю загрузку…", 0, 0, true))
++    intent?.getStringExtra(EXTRA_JOB)?.let { raw ->
++      val json = JSONObject(raw)
++      val job =
++        Job(
++          id = json.getString("id"),
++          url = json.getString("url"),
++          uri = json.getString("uri"),
++          name = json.optString("name", "файл"),
++          size = json.optLong("size", 0),
++        )
++      jobs[job.id] = job
++      queue.offer(job)
++    }
++    if (worker?.isAlive != true) {
++      worker = Thread { runQueue() }.also { it.start() }
++    }
++    return START_NOT_STICKY
++  }
++
++  private fun runQueue() {
++    var doneCount = 0
++    var failedCount = 0
++    while (true) {
++      val job = queue.poll() ?: break
++      job.state = "uploading"
++      try {
++        upload(job)
++        job.state = "done"
++        doneCount += 1
++      } catch (error: Exception) {
++        job.state = "error"
++        job.error = error.message ?: error.toString()
++        failedCount += 1
++      }
++    }
++    val summary =
++      when {
++        failedCount > 0 && doneCount > 0 -> "Загружено: $doneCount, не загружено: $failedCount"
++        failedCount > 0 -> "Не загружено: $failedCount — откройте приложение"
++        else -> if (doneCount == 1) "Файл загружен" else "Загружено файлов: $doneCount"
++      }
++    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++    if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_DETACH) else @Suppress("DEPRECATION") stopForeground(false)
++    manager.notify(NOTIFICATION_ID, buildNotification(summary, 0, 0, false, ongoing = false))
++    worker = null
++    stopSelf()
++  }
++
++  /** Локальный файл с произвольным доступом; content:// сначала копируется в кэш. */
++  private fun localFile(job: Job): File {
++    val uri = Uri.parse(job.uri)
++    if (uri.scheme == null || uri.scheme == "file") return File(uri.path ?: job.uri)
++    val copy = File(cacheDir, "t3patch-upload-${job.id}")
++    if (!copy.exists() || copy.length() != job.size) {
++      contentResolver.openInputStream(uri).use { input ->
++        requireNotNull(input) { "Не открыть файл" }
++        copy.outputStream().use { output -> input.copyTo(output) }
++      }
++    }
++    return copy
++  }
++
++  private fun upload(job: Job) {
++    val file = localFile(job)
++    if (!file.exists()) throw IllegalStateException("Файл больше недоступен на телефоне")
++    var offset = 0L
++    var failures = 0
++    var needStatus = true
++    RandomAccessFile(file, "r").use { source ->
++      while (true) {
++        try {
++          if (needStatus) {
++            offset = queryOffset(job.url)
++            job.sent = offset
++            needStatus = false
++          }
++          val length = minOf(CHUNK, job.size - offset)
++          val connection = (URL("${job.url}?offset=$offset").openConnection() as HttpURLConnection)
++          connection.requestMethod = "POST"
++          connection.doOutput = true
++          connection.connectTimeout = 20_000
++          connection.readTimeout = 60_000
++          connection.setRequestProperty("Content-Type", "application/octet-stream")
++          connection.setFixedLengthStreamingMode(length)
++          source.seek(offset)
++          connection.outputStream.use { output ->
++            val buffer = ByteArray(64 * 1024)
++            var remaining = length
++            while (remaining > 0) {
++              val read = source.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
++              if (read < 0) break
++              output.write(buffer, 0, read)
++              remaining -= read
++              job.sent = offset + (length - remaining)
++              notifyProgress(job)
++            }
++          }
++          val code = connection.responseCode
++          val body =
++            (if (code >= 400) connection.errorStream else connection.inputStream)
++              ?.bufferedReader()
++              ?.use { it.readText() }
++              ?: ""
++          connection.disconnect()
++          val json = runCatching { JSONObject(body) }.getOrNull()
++          when {
++            code == 409 && json?.has("offset") == true -> offset = json.getLong("offset")
++            code in 200..299 -> {
++              failures = 0
++              offset = json?.optLong("offset", offset + length) ?: (offset + length)
++              job.sent = offset
++              if (json?.optBoolean("done") == true) {
++                job.relativePath = json.optString("relativePath")
++                return
++              }
++            }
++            code in 400..499 ->
++              throw IllegalStateException(json?.optString("error") ?: "Сервер ответил $code")
++            else -> throw java.io.IOException("Сервер ответил $code")
++          }
++        } catch (error: IllegalStateException) {
++          throw error
++        } catch (error: Exception) {
++          // нет связи или сервер временно недоступен — пауза и продолжение с места обрыва
++          failures += 1
++          if (failures > MAX_FAILURES) throw IllegalStateException("Нет связи с сервером слишком долго")
++          notifyText("${job.name}: жду связь…")
++          Thread.sleep(RETRY_MS[minOf(failures - 1, RETRY_MS.size - 1)])
++          needStatus = true
++        }
++      }
++    }
++  }
++
++  private fun queryOffset(url: String): Long {
++    val connection = (URL(url).openConnection() as HttpURLConnection)
++    connection.connectTimeout = 20_000
++    connection.readTimeout = 30_000
++    val code = connection.responseCode
++    val body =
++      (if (code >= 400) connection.errorStream else connection.inputStream)
++        ?.bufferedReader()
++        ?.use { it.readText() }
++        ?: ""
++    connection.disconnect()
++    val json = runCatching { JSONObject(body) }.getOrNull()
++    if (code == 404) {
++      throw IllegalStateException(json?.optString("error") ?: "Ссылка загрузки устарела")
++    }
++    if (code !in 200..299) throw java.io.IOException("Сервер ответил $code")
++    return json?.optLong("offset", 0) ?: 0
++  }
++
++  private fun notifyProgress(job: Job) {
++    val now = System.currentTimeMillis()
++    if (now - lastNotify < 500) return
++    lastNotify = now
++    val percent = if (job.size > 0) (job.sent * 100 / job.size).toInt() else 100
++    val waiting = queue.size
++    val title = if (waiting > 0) "${job.name} — $percent% (ещё $waiting)" else "${job.name} — $percent%"
++    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++    manager.notify(NOTIFICATION_ID, buildNotification(title, 100, percent, false))
++  }
++
++  private fun notifyText(text: String) {
++    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++    manager.notify(NOTIFICATION_ID, buildNotification(text, 0, 0, true))
++  }
++
++  private fun ensureChannel() {
++    if (Build.VERSION.SDK_INT < 26) return
++    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++    if (manager.getNotificationChannel(CHANNEL) == null) {
++      manager.createNotificationChannel(
++        NotificationChannel(CHANNEL, "Загрузка файлов", NotificationManager.IMPORTANCE_LOW),
++      )
++    }
++  }
++
++  private fun buildNotification(
++    text: String,
++    max: Int,
++    progress: Int,
++    indeterminate: Boolean,
++    ongoing: Boolean = true,
++  ): Notification {
++    val builder =
++      if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
++      else @Suppress("DEPRECATION") Notification.Builder(this)
++    val launch = packageManager.getLaunchIntentForPackage(packageName)
++    val pending =
++      launch?.let {
++        android.app.PendingIntent.getActivity(
++          this,
++          0,
++          it,
++          android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
++        )
++      }
++    builder
++      .setSmallIcon(android.R.drawable.stat_sys_upload)
++      .setContentTitle("T3 Code — загрузка")
++      .setContentText(text)
++      .setOngoing(ongoing)
++      .setOnlyAlertOnce(true)
++    if (pending != null) builder.setContentIntent(pending)
++    if (ongoing) builder.setProgress(max, progress, indeterminate)
++    if (!ongoing) builder.setSmallIcon(android.R.drawable.stat_sys_upload_done).setAutoCancel(true)
++    return builder.build()
++  }
++
++  private fun startForegroundCompat(notification: Notification) {
++    if (Build.VERSION.SDK_INT >= 29) {
++      startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
++    } else {
++      startForeground(NOTIFICATION_ID, notification)
++    }
++  }
++}
+diff --git a/apps/mobile/modules/t3patch-upload/expo-module.config.json b/apps/mobile/modules/t3patch-upload/expo-module.config.json
+new file mode 100644
+index 0000000000..35763287f2
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-upload/expo-module.config.json
+@@ -0,0 +1,4 @@
++{
++  "platforms": ["android"],
++  "android": { "modules": ["expo.modules.t3patchupload.T3patchUploadModule"] }
++}
+diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+index 1ef4c7bc37..65316a016b 100644
+--- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
++++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+@@ -416,8 +416,16 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+   // t3-patch: файловые операции проводника — после изменения обновить дерево
+   const refreshEntries = entriesQuery.refresh;
+   const t3patchWorkspaceMenu = useMemo(
+-    () => (environmentId === null ? undefined : { environmentId, onChanged: refreshEntries }),
+-    [environmentId, refreshEntries],
++    () =>
++      environmentId === null
++        ? undefined
++        : {
++            environmentId,
++            onChanged: refreshEntries,
++            // вложения из поля ввода этого треда тоже можно положить в папку
++            ...(threadId !== null ? { draftKey: scopedThreadKey(environmentId, threadId) } : {}),
++          },
++    [environmentId, refreshEntries, threadId],
+   );
+   // t3-patch: «Вставить в сообщение» — ссылка на файл в поле ввода этого треда, назад к треду
+   const t3patchInsertPath = useCallback(
+diff --git a/apps/mobile/src/sergey/NewTaskFilesScreen.tsx b/apps/mobile/src/sergey/NewTaskFilesScreen.tsx
+index a45d74292b..83dd4b7dd6 100644
+--- a/apps/mobile/src/sergey/NewTaskFilesScreen.tsx
++++ b/apps/mobile/src/sergey/NewTaskFilesScreen.tsx
+@@ -12,7 +12,9 @@ import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+ import { View } from "react-native";
+ 
+ import { SymbolView } from "../components/AppSymbol";
+-import { AppTextInput as TextInput } from "../components/AppText";
++import { AppText as Text, AppTextInput as TextInput } from "../components/AppText";
++import { isFileBackedComposerAttachment } from "../lib/composerImages";
++import { useComposerDraft } from "../state/use-composer-drafts";
+ import { FileTreeBrowser } from "../features/files/FileTreeBrowser";
+ import { useFileTreeEntries } from "../features/files/useFileTreeEntries";
+ import { t3patchInsertFileLink } from "./fileLinkInsert";
+@@ -39,10 +41,12 @@ export function T3patchNewTaskFilesScreen(props: Props) {
+     navigation.setOptions({ title: projectName ?? "Файлы" });
+   }, [navigation, projectName]);
+ 
++  const draft = useComposerDraft(draftKey ?? null);
++  const draftFileCount = draft.attachments.filter(isFileBackedComposerAttachment).length;
+   const refreshEntries = entriesQuery.refresh;
+   const workspaceMenu = useMemo(
+-    () => ({ environmentId, onChanged: refreshEntries }),
+-    [environmentId, refreshEntries],
++    () => ({ environmentId, onChanged: refreshEntries, ...(draftKey ? { draftKey } : {}) }),
++    [draftKey, environmentId, refreshEntries],
+   );
+ 
+   const handleSelectFile = useCallback(
+@@ -87,6 +91,12 @@ export function T3patchNewTaskFilesScreen(props: Props) {
+           onChangeText={setSearchQuery}
+         />
+       </View>
++      {draftFileCount > 0 ? (
++        <Text className="mx-4 mb-2 text-xs leading-snug text-foreground-muted">
++          Вложений в черновике: {draftFileCount}. Чтобы положить их в папку, нажмите на неё и
++          подержите → «Загрузить сюда вложения».
++        </Text>
++      ) : null}
+       <FileTreeBrowser
+         key={JSON.stringify([environmentId, cwd])}
+         cwd={cwd}
+diff --git a/apps/mobile/src/sergey/pathActions.ts b/apps/mobile/src/sergey/pathActions.ts
+index 023c30abf3..d4eba063f5 100644
+--- a/apps/mobile/src/sergey/pathActions.ts
++++ b/apps/mobile/src/sergey/pathActions.ts
+@@ -15,12 +15,21 @@ import { Alert } from "react-native";
+ import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+ import { type T3patchAction, t3patchPromptText, t3patchShowActions } from "./ActionSheet";
+ import { t3patchFullPath } from "./paths";
+-import { t3patchEnqueueUploads, t3patchPickFiles, t3patchWorkspace } from "./workspaceUploads";
++import { isFileBackedComposerAttachment } from "../lib/composerImages";
++import { getComposerDraftSnapshot } from "../state/use-composer-drafts";
++import {
++  t3patchDraftFiles,
++  t3patchEnqueueUploads,
++  t3patchPickFiles,
++  t3patchWorkspace,
++} from "./workspaceUploads";
+ 
+ export interface T3patchPathMenuWorkspace {
+   readonly environmentId: EnvironmentId;
+   /** Обновить дерево после изменения. */
+   readonly onChanged: () => void;
++  /** Черновик нового треда: его вложения (в том числе из «Поделиться») можно загрузить в папку. */
++  readonly draftKey?: string;
+ }
+ 
+ const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+@@ -30,6 +39,37 @@ function reportError(title: string, error: unknown) {
+   Alert.alert(title, error instanceof Error ? error.message : String(error));
+ }
+ 
++/** «Загрузить сюда вложения (N)» — файлы из черновика нового треда, например из «Поделиться». */
++function draftUploadAction(
++  cwd: string,
++  relativePath: string,
++  workspace: T3patchPathMenuWorkspace,
++): T3patchAction[] {
++  const { draftKey, environmentId, onChanged } = workspace;
++  if (!draftKey) return [];
++  const count = getComposerDraftSnapshot(draftKey).attachments.filter(
++    isFileBackedComposerAttachment,
++  ).length;
++  if (count === 0) return [];
++  return [
++    {
++      label: `Загрузить сюда вложения (${count})`,
++      onPress: () => {
++        void t3patchDraftFiles(draftKey).then((files) => {
++          if (files.length === 0) return;
++          t3patchEnqueueUploads({
++            environmentId,
++            cwd,
++            directory: relativePath,
++            files,
++            onUploaded: onChanged,
++          });
++        });
++      },
++    },
++  ];
++}
++
+ function workspaceActions(
+   cwd: string,
+   relativePath: string,
+@@ -39,6 +79,7 @@ function workspaceActions(
+   const { environmentId, onChanged } = workspace;
+   const directoryActions: T3patchAction[] = isDirectory
+     ? [
++        ...draftUploadAction(cwd, relativePath, workspace),
+         {
+           label: "Загрузить сюда",
+           onPress: () => {
+diff --git a/apps/mobile/src/sergey/workspaceUploads.tsx b/apps/mobile/src/sergey/workspaceUploads.tsx
+index fa3c618d98..16622c0b23 100644
+--- a/apps/mobile/src/sergey/workspaceUploads.tsx
++++ b/apps/mobile/src/sergey/workspaceUploads.tsx
+@@ -13,6 +13,7 @@ import {
+   squashAtomCommandFailure,
+ } from "@t3tools/client-runtime/state/runtime";
+ import * as Option from "effect/Option";
++import { requireOptionalNativeModule } from "expo";
+ import { useEffect, useSyncExternalStore } from "react";
+ import { Alert, Pressable, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";
+@@ -22,13 +23,23 @@ import { appAtomRegistry } from "../state/atom-registry";
+ import { serverEnvironment } from "../state/server";
+ import { beginForegroundHandoff } from "../lib/foreground-handoff";
+ import { environmentSession } from "../state/session";
++import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
++import { isFileBackedComposerAttachment } from "../lib/composerImages";
++import {
++  getComposerDraftSnapshot,
++  removeComposerDraftAttachment,
++} from "../state/use-composer-drafts";
+ 
+ function failureMessage(error: unknown): string {
+   if (error && typeof error === "object" && "message" in error) return String(error.message);
+   return String(error);
+ }
+ 
+-async function call<I, A>(
++const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
++const NOT_CONNECTED = /not connected|not available|unavailable|disconnected|reconnect/i;
++const CONNECT_WAIT_MS = 45_000;
++
++async function callOnce<I, A>(
+   command: AtomCommand<{ environmentId: EnvironmentId; input: I }, A, unknown>,
+   environmentId: EnvironmentId,
+   input: I,
+@@ -47,16 +58,38 @@ async function call<I, A>(
+       appAtomRegistry,
+       command,
+       { environmentId, input },
+-      {
+-        reportFailure: false,
+-        reportDefect: false,
+-      },
++      { reportFailure: false, reportDefect: false },
+     ),
+   ]).finally(() => clearTimeout(timer));
+   if (result._tag === "Success") return result.value;
+   throw new Error(failureMessage(squashAtomCommandFailure(result)));
+ }
+ 
++/**
++ * Запрос к серверу с ожиданием соединения. После окна выбора файла приложение несколько
++ * секунд заново подключается к серверу, и запрос сразу получал «… is not connected».
++ */
++async function call<I, A>(
++  command: AtomCommand<{ environmentId: EnvironmentId; input: I }, A, unknown>,
++  environmentId: EnvironmentId,
++  input: I,
++): Promise<A> {
++  const deadline = Date.now() + CONNECT_WAIT_MS;
++  for (;;) {
++    try {
++      return await callOnce(command, environmentId, input);
++    } catch (error) {
++      if (!NOT_CONNECTED.test(failureMessage(error)) || Date.now() > deadline) {
++        if (NOT_CONNECTED.test(failureMessage(error))) {
++          throw new Error("Нет соединения с сервером — дождитесь подключения и повторите.");
++        }
++        throw error;
++      }
++      await sleep(1_500);
++    }
++  }
++}
++
+ export const t3patchWorkspace = {
+   mkdir: (environmentId: EnvironmentId, cwd: string, relativePath: string) =>
+     call(serverEnvironment.t3patchWorkspaceMkdir, environmentId, { cwd, relativePath }),
+@@ -70,7 +103,6 @@ export const t3patchWorkspace = {
+ 
+ const CHUNK_BYTES = 4 * 1024 * 1024;
+ const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 20_000, 30_000];
+-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+ 
+ function serverUrl(environmentId: EnvironmentId, relativeUrl: string): string {
+   const connection = appAtomRegistry.get(
+@@ -87,6 +119,8 @@ export interface T3patchPickedFile {
+   readonly uri: string;
+   readonly name: string;
+   readonly size: number;
++  /** После успешной загрузки (например, убрать вложение из черновика). */
++  readonly afterUpload?: () => void;
+ }
+ 
+ interface UploadItem {
+@@ -194,6 +228,57 @@ async function drain() {
+   running = false;
+ }
+ 
++interface NativeUploader {
++  enqueue(jobJson: string): void;
++  status(): string;
++  forget(id: string): void;
++}
++
++function nativeUploader(): NativeUploader | null {
++  try {
++    return requireOptionalNativeModule<NativeUploader>("T3patchUpload");
++  } catch {
++    return null;
++  }
++}
++
++/** Следить за задачей фоновой службы: ход — в карточку, итог — в статус. */
++async function followNativeJob(
++  native: NativeUploader,
++  jobId: string,
++  item: UploadItem,
++  onUploaded: () => void,
++): Promise<void> {
++  for (;;) {
++    await sleep(700);
++    let job: { sent: number; state: string; error: string | null } | undefined;
++    try {
++      job = (JSON.parse(native.status()) as Record<string, typeof job>)[jobId];
++    } catch {
++      job = undefined;
++    }
++    if (!job) continue;
++    item.sent = Math.min(job.sent, item.size);
++    if (job.state === "done") {
++      item.sent = item.size;
++      item.status = "done";
++      native.forget(jobId);
++      emit();
++      onUploaded();
++      return;
++    }
++    if (job.state === "error") {
++      item.status = "error";
++      item.error = job.error ?? "Ошибка загрузки";
++      native.forget(jobId);
++      emit();
++      Alert.alert(`Не загружено: ${item.name}`, item.error);
++      return;
++    }
++    emit();
++  }
++}
++
+ export function t3patchEnqueueUploads(input: {
+   readonly environmentId: EnvironmentId;
+   readonly cwd: string;
+@@ -226,12 +311,33 @@ export function t3patchEnqueueUploads(input: {
+         );
+         item.status = "uploading";
+         emit();
++        const native = nativeUploader();
++        if (native) {
++          // Файл отдаётся службе Android: грузит в фоне, даже когда приложение свёрнуто.
++          // Ход берём у неё (опрос), очередь приложения сразу идёт к следующему файлу.
++          const jobId = `${Date.now()}-${item.id}`;
++          native.enqueue(
++            JSON.stringify({
++              id: jobId,
++              url: serverUrl(input.environmentId, upload.relativeUrl),
++              uri: picked.uri,
++              name: picked.name,
++              size: picked.size,
++            }),
++          );
++          void followNativeJob(native, jobId, item, () => {
++            picked.afterUpload?.();
++            input.onUploaded();
++          });
++          return;
++        }
+         await sendFile(input.environmentId, upload.relativeUrl, picked, (sent) => {
+           item.sent = Math.min(sent, item.size);
+           emit();
+         });
+         item.sent = item.size;
+         item.status = "done";
++        picked.afterUpload?.();
+         input.onUploaded();
+       } catch (error) {
+         item.status = "error";
+@@ -245,6 +351,32 @@ export function t3patchEnqueueUploads(input: {
+   void drain();
+ }
+ 
++/** Вложения черновика (в том числе пришедшие через «Поделиться») — как файлы для загрузки. */
++export async function t3patchDraftFiles(draftKey: string): Promise<T3patchPickedFile[]> {
++  const { File, Paths } = await import("expo-file-system");
++  return getComposerDraftSnapshot(draftKey)
++    .attachments.filter(isFileBackedComposerAttachment)
++    .map((attachment) => {
++      const uri =
++        resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
++        attachment.fileUri;
++      let size = "sizeBytes" in attachment ? Number(attachment.sizeBytes) || 0 : 0;
++      if (!size) {
++        try {
++          size = new File(uri).size ?? 0;
++        } catch {
++          size = 0;
++        }
++      }
++      return {
++        uri,
++        name: attachment.name,
++        size,
++        afterUpload: () => removeComposerDraftAttachment(draftKey, attachment.id),
++      };
++    });
++}
++
+ /** Выбрать файлы на телефоне (файлы, фото из галереи — через системный выбор). */
+ export async function t3patchPickFiles(): Promise<T3patchPickedFile[]> {
+   // Как штатное прикрепление в чате: окно выбора — «передача» другому приложению.
+-- 
+2.43.0
+

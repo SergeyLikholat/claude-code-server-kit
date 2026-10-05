@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  t3-patch: просмотр xlsx/xls/ods и docx/doc/rtf/odt для Android-приложения T3.
+  Приложение открывает страницу во встроенном браузере: office-view.html#src=<ссылка /api/assets/…>
+  Данные файла страница берёт только по подписанной ссылке своего же сервера.
+-->
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Просмотр файла</title>
+    <link rel="stylesheet" href="office-view.css" />
+  </head>
+  <body>
+    <div id="status" class="status" role="status">Загрузка…</div>
+    <nav id="tabs" class="tabs" hidden></nav>
+    <div id="cellbar" class="cellbar" hidden>
+      <span id="address" class="address">—</span>
+      <span id="celltext" class="celltext muted">Нажми на ячейку, чтобы увидеть текст целиком</span>
+    </div>
+    <main id="content" class="content"></main>
+    <script src="office-view.js" charset="utf-8"></script>
+  </body>
+</html>

@@ -1,0 +1,155 @@
+From 611c4ecf5a1e34f79225b980252e54c14ba73a57 Mon Sep 17 00:00:00 2001
+From: Dara Adedeji <76637177+SunkenInTime@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:46:03 -0400
+Subject: [PATCH 2005/2006] fix(mobile): keep the Android composer placeholder
+ on one line (#12605)
+
+(cherry picked from commit b44c1ce5d25ee0d5a5be82e380618a886c19ea96)
+---
+ .../t3composereditor/T3ComposerEditorView.kt  | 36 ++++++++++-
+ .../ComposerPlaceholderTest.kt                | 59 +++++++++++++++++++
+ 2 files changed, 94 insertions(+), 1 deletion(-)
+ create mode 100644 apps/mobile/modules/t3-composer-editor/android/src/test/java/expo/modules/t3composereditor/ComposerPlaceholderTest.kt
+
+diff --git a/apps/mobile/modules/t3-composer-editor/android/src/main/java/expo/modules/t3composereditor/T3ComposerEditorView.kt b/apps/mobile/modules/t3-composer-editor/android/src/main/java/expo/modules/t3composereditor/T3ComposerEditorView.kt
+index a4720a4613..35d796b787 100644
+--- a/apps/mobile/modules/t3-composer-editor/android/src/main/java/expo/modules/t3composereditor/T3ComposerEditorView.kt
++++ b/apps/mobile/modules/t3-composer-editor/android/src/main/java/expo/modules/t3composereditor/T3ComposerEditorView.kt
+@@ -12,6 +12,7 @@ import android.text.Editable
+ import android.text.InputType
+ import android.text.InputFilter
+ import android.text.Spanned
++import android.text.TextUtils
+ import android.text.TextWatcher
+ import android.text.style.ReplacementSpan
+ import android.util.TypedValue
+@@ -254,7 +255,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
+   }
+ 
+   fun setPlaceholder(placeholder: String) {
+-    editor.hint = placeholder
++    editor.placeholder = placeholder
+   }
+ 
+   fun setClipboardFragment(fragment: String) {
+@@ -267,12 +268,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
+     } else {
+       Typeface.DEFAULT
+     }
++    editor.applyPlaceholder()
+   }
+ 
+   fun setFontSize(fontSize: Float) {
+     editor.textSize = fontSize
+     applyLineHeight()
+     applyTokenSpans()
++    editor.applyPlaceholder()
+   }
+ 
+   fun setLineHeight(lineHeight: Float) {
+@@ -587,6 +590,37 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
+   var maxInputChars = Int.MAX_VALUE
+   var clipboardFragment = ""
+ 
++  /**
++   * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
++   * so a long placeholder wraps once a wide system font or a large font scale (Samsung defaults)
++   * runs out of width, and the resting composer grows to two lines. The hint is instead cut to
++   * one line with an ellipsis for whatever width the editor is measured at.
++   */
++  var placeholder = ""
++    set(value) {
++      field = value
++      applyPlaceholder()
++    }
++
++  fun applyPlaceholder(availableWidth: Int = width - compoundPaddingLeft - compoundPaddingRight) {
++    val next =
++      if (availableWidth > 0) {
++        TextUtils.ellipsize(placeholder, paint, availableWidth.toFloat(), TextUtils.TruncateAt.END)
++      } else {
++        placeholder
++      }
++    if (hint?.toString() != next.toString()) hint = next
++  }
++
++  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
++    if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
++      applyPlaceholder(
++        MeasureSpec.getSize(widthMeasureSpec) - compoundPaddingLeft - compoundPaddingRight
++      )
++    }
++    super.onMeasure(widthMeasureSpec, heightMeasureSpec)
++  }
++
+   private fun deleteChip(backwards: Boolean): Boolean {
+     val content = text
+     val start = minOf(selectionStart, selectionEnd)
+diff --git a/apps/mobile/modules/t3-composer-editor/android/src/test/java/expo/modules/t3composereditor/ComposerPlaceholderTest.kt b/apps/mobile/modules/t3-composer-editor/android/src/test/java/expo/modules/t3composereditor/ComposerPlaceholderTest.kt
+new file mode 100644
+index 0000000000..82bcbeb59a
+--- /dev/null
++++ b/apps/mobile/modules/t3-composer-editor/android/src/test/java/expo/modules/t3composereditor/ComposerPlaceholderTest.kt
+@@ -0,0 +1,59 @@
++package expo.modules.t3composereditor
++
++import android.view.View
++import android.view.ViewGroup
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [36], manifest = Config.NONE)
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++class ComposerPlaceholderTest {
++  private val placeholder = "Ask the repo agent, or run a command…"
++  private val editor = SelectionAwareEditText(RuntimeEnvironment.getApplication()).apply {
++    layoutParams = ViewGroup.LayoutParams(
++      ViewGroup.LayoutParams.MATCH_PARENT,
++      ViewGroup.LayoutParams.MATCH_PARENT,
++    )
++    textSize = 16f
++    placeholder = this@ComposerPlaceholderTest.placeholder
++  }
++
++  private fun measureAt(width: Int) {
++    editor.measure(
++      View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
++      View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
++    )
++    editor.layout(0, 0, width, editor.measuredHeight)
++  }
++
++  @Test
++  fun narrowEditorCutsThePlaceholderToOneLine() {
++    val fullWidth = editor.paint.measureText(placeholder)
++    val width = (fullWidth / 2).toInt()
++    measureAt(width)
++
++    val hint = editor.hint.toString()
++    assertTrue(hint, hint.endsWith("…") && hint.length < placeholder.length)
++    assertTrue(hint, editor.paint.measureText(hint) <= width)
++  }
++
++  @Test
++  fun wideEditorKeepsTheWholePlaceholder() {
++    measureAt(editor.paint.measureText(placeholder).toInt() + 20)
++    assertEquals(placeholder, editor.hint.toString())
++  }
++
++  @Test
++  fun placeholderRecoversWhenTheEditorWidens() {
++    measureAt((editor.paint.measureText(placeholder) / 2).toInt())
++    measureAt(editor.paint.measureText(placeholder).toInt() + 20)
++    assertEquals(placeholder, editor.hint.toString())
++  }
++}
+-- 
+2.43.0
+

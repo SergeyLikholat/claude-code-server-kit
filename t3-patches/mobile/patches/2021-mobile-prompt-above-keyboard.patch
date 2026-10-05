@@ -1,0 +1,71 @@
+From d4ac1c836ba81df1c4eb98e266ee2fc5d49a2f0a Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Fri, 2 Oct 2026 09:18:45 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D0=BE=D0=BA=D0=BD=D0=BE=20?=
+ =?UTF-8?q?=D0=B2=D0=B2=D0=BE=D0=B4=D0=B0=20=D0=B8=D0=BC=D0=B5=D0=BD=D0=B8?=
+ =?UTF-8?q?=20=D0=BF=D0=BE=D0=B4=D0=BD=D0=B8=D0=BC=D0=B0=D0=B5=D1=82=D1=81?=
+ =?UTF-8?q?=D1=8F=20=D0=BD=D0=B0=D0=B4=20=D0=BA=D0=BB=D0=B0=D0=B2=D0=B8?=
+ =?UTF-8?q?=D0=B0=D1=82=D1=83=D1=80=D0=BE=D0=B9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/mobile/src/sergey/ActionSheet.tsx | 24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/apps/mobile/src/sergey/ActionSheet.tsx b/apps/mobile/src/sergey/ActionSheet.tsx
+index 26897b6272..883511dd2e 100644
+--- a/apps/mobile/src/sergey/ActionSheet.tsx
++++ b/apps/mobile/src/sergey/ActionSheet.tsx
+@@ -7,7 +7,7 @@
+  * одним хостом `T3patchActionSheetHost` в корне приложения.
+  */
+ import { useEffect, useState, useSyncExternalStore } from "react";
+-import { Modal, Pressable, TextInput, View } from "react-native";
++import { Keyboard, Modal, Pressable, TextInput, View } from "react-native";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";
+ 
+ import { AppText as Text } from "../components/AppText";
+@@ -94,9 +94,29 @@ function PromptBody(props: Extract<NonNullable<SheetState>, { kind: "prompt" }>)
+   );
+ }
+ 
++/**
++ * Высота клавиатуры. Окно Modal на Android не сжимается под клавиатуру (приложение рисуется
++ * под системными панелями), поэтому панель с полем ввода оставалась внизу, под клавиатурой.
++ */
++function useKeyboardHeight(): number {
++  const [height, setHeight] = useState(0);
++  useEffect(() => {
++    const show = Keyboard.addListener("keyboardDidShow", (event) =>
++      setHeight(event.endCoordinates.height),
++    );
++    const hide = Keyboard.addListener("keyboardDidHide", () => setHeight(0));
++    return () => {
++      show.remove();
++      hide.remove();
++    };
++  }, []);
++  return height;
++}
++
+ export function T3patchActionSheetHost() {
+   const current = useSyncExternalStore(subscribe, () => state);
+   const insets = useSafeAreaInsets();
++  const keyboardHeight = useKeyboardHeight();
+   if (!current) return null;
+   const close = () => {
+     if (current.kind === "prompt") current.resolve(null);
+@@ -109,7 +129,7 @@ export function T3patchActionSheetHost() {
+           // нажатие внутри панели не закрывает её
+           onPress={() => undefined}
+           className="rounded-t-3xl bg-sheet px-5 pt-4"
+-          style={{ paddingBottom: insets.bottom + 12 }}
++          style={{ paddingBottom: (keyboardHeight > 0 ? keyboardHeight : insets.bottom) + 12 }}
+         >
+           {current.kind === "prompt" ? (
+             <PromptBody {...current} />
+-- 
+2.43.0
+

@@ -1,0 +1,204 @@
+From 8b6d8b0e52584ccb33d241660959f0ed76ebfcfb Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 22:24:48 +0300
+Subject: [PATCH 6/7] =?UTF-8?q?feat(files):=20=D1=80=D0=B0=D1=81=D1=82?=
+ =?UTF-8?q?=D1=8F=D0=B3=D0=B8=D0=B2=D0=B0=D0=B5=D0=BC=D0=BE=D0=B5=20=D0=B4?=
+ =?UTF-8?q?=D0=B5=D1=80=D0=B5=D0=B2=D0=BE=20=D1=80=D1=8F=D0=B4=D0=BE=D0=BC?=
+ =?UTF-8?q?=20=D1=81=20=D0=BE=D1=82=D0=BA=D1=80=D1=8B=D1=82=D1=8B=D0=BC=20?=
+ =?UTF-8?q?=D0=B4=D0=BE=D0=BA=D1=83=D0=BC=D0=B5=D0=BD=D1=82=D0=BE=D0=BC?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Вместо зашитой ширины w-[min(22rem,46%)] — перетаскиваемый разделитель.
+Хранится доля ширины панели (одинаково разумно на телефоне и компьютере),
+двойное нажатие возвращает штатную ширину; широкая зона захвата под палец.
+---
+ .../src/components/files/FilePreviewPanel.tsx |  13 +-
+ .../sergey/ResizableExplorerPane.tsx          | 136 ++++++++++++++++++
+ 2 files changed, 140 insertions(+), 9 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/ResizableExplorerPane.tsx
+
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index c9e3b1516c..c33904d340 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -77,6 +77,7 @@ import {
+ } from "./fileSurfaceChrome";
+ import SourceFilePreview from "./ReadOnlySourcePreview";
+ import { CloseFileAction } from "~/components/sergey/CloseFileAction";
++import { ResizableExplorerPane } from "~/components/sergey/ResizableExplorerPane";
+ import { OfficePreview } from "~/components/sergey/OfficePreview";
+ import { officeKind } from "~/components/sergey/officeFiles";
+ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+@@ -1284,14 +1285,8 @@ export default function FilePreviewPanel({
+           ) : null}
+         </div>
+         {showExplorer ? (
+-          <aside
+-            className={cn(
+-              "flex min-h-0 shrink-0 bg-background",
+-              relativePath
+-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+-                : "min-w-0 flex-1",
+-            )}
+-          >
++          <ResizableExplorerPane fileOpen={Boolean(relativePath)}>
++            {/* t3-patch: ширина дерева регулируется разделителем */}
+             <FileBrowserPanel
+               key={`${environmentId}:${cwd}`}
+               environmentId={environmentId}
+@@ -1305,7 +1300,7 @@ export default function FilePreviewPanel({
+                 ? { onRefreshSelectedFile: file.refresh }
+                 : {})}
+             />
+-          </aside>
++          </ResizableExplorerPane>
+         ) : null}
+       </div>
+     </div>
+diff --git a/apps/web/src/components/sergey/ResizableExplorerPane.tsx b/apps/web/src/components/sergey/ResizableExplorerPane.tsx
+new file mode 100644
+index 0000000000..2adb7f434e
+--- /dev/null
++++ b/apps/web/src/components/sergey/ResizableExplorerPane.tsx
+@@ -0,0 +1,136 @@
++/**
++ * t3-patch: дерево файлов рядом с открытым документом можно растягивать.
++ *
++ * Штатно ширина дерева зашита классом `w-[min(22rem,46%)]`. Здесь её задаёт
++ * перетаскиваемый разделитель. Хранится доля ширины панели, а не пиксели:
++ * одна и та же настройка разумно выглядит и на телефоне, и на компьютере.
++ * Двойное нажатие на разделитель возвращает штатную ширину.
++ */
++import {
++  type PointerEvent as ReactPointerEvent,
++  type ReactNode,
++  useLayoutEffect,
++  useRef,
++  useState,
++} from "react";
++
++const STORAGE_KEY = "t3patch.fileExplorerFraction";
++const DEFAULT_FRACTION = 0.46;
++const DEFAULT_MAX_PX = 352; // 22rem — как в штатной вёрстке
++const MIN_TREE_PX = 120;
++const MIN_DOCUMENT_PX = 140;
++
++function readFraction(): number | null {
++  try {
++    const value = Number(globalThis.localStorage?.getItem(STORAGE_KEY));
++    return Number.isFinite(value) && value > 0 && value < 1 ? value : null;
++  } catch {
++    return null;
++  }
++}
++
++function saveFraction(value: number | null) {
++  try {
++    if (value === null) globalThis.localStorage?.removeItem(STORAGE_KEY);
++    else globalThis.localStorage?.setItem(STORAGE_KEY, value.toFixed(4));
++  } catch {
++    // хранилище недоступно — ширина действует до перезагрузки
++  }
++}
++
++/** Ширина дерева в пикселях для ширины панели `total`. */
++export function explorerWidthPx(total: number, fraction: number | null): number {
++  const wanted =
++    fraction === null ? Math.min(DEFAULT_MAX_PX, total * DEFAULT_FRACTION) : total * fraction;
++  const max = Math.max(MIN_TREE_PX, total - MIN_DOCUMENT_PX);
++  return Math.round(Math.max(MIN_TREE_PX, Math.min(max, wanted)));
++}
++
++export function ResizableExplorerPane(props: {
++  readonly fileOpen: boolean;
++  readonly children: ReactNode;
++}) {
++  const paneRef = useRef<HTMLElement>(null);
++  const [total, setTotal] = useState(0);
++  const [fraction, setFraction] = useState<number | null>(readFraction);
++  const drag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
++
++  useLayoutEffect(() => {
++    const parent = paneRef.current?.parentElement;
++    if (!parent) return;
++    const update = () => setTotal(parent.getBoundingClientRect().width);
++    update();
++    const observer = new ResizeObserver(update);
++    observer.observe(parent);
++    return () => observer.disconnect();
++  }, [props.fileOpen]);
++
++  if (!props.fileOpen) {
++    return (
++      <aside ref={paneRef} className="flex min-h-0 min-w-0 flex-1 bg-background">
++        {props.children}
++      </aside>
++    );
++  }
++
++  const width = total > 0 ? explorerWidthPx(total, fraction) : undefined;
++
++  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
++    if (!total || width === undefined) return;
++    event.preventDefault();
++    event.currentTarget.setPointerCapture(event.pointerId);
++    drag.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width };
++  };
++  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
++    const state = drag.current;
++    if (!state || state.pointerId !== event.pointerId || !total) return;
++    // Разделитель на левом краю дерева: тянем влево — дерево шире.
++    const next = state.startWidth + (state.startX - event.clientX);
++    setFraction(explorerWidthPx(total, next / total) / total);
++  };
++  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
++    if (drag.current?.pointerId !== event.pointerId) return;
++    drag.current = null;
++    setFraction((current) => {
++      saveFraction(current);
++      return current;
++    });
++  };
++
++  return (
++    <aside
++      ref={paneRef}
++      className={`relative flex min-h-0 shrink-0 border-l border-border/60 bg-background ${
++        width === undefined ? "w-[min(22rem,46%)]" : ""
++      }`}
++      style={width === undefined ? undefined : { width }}
++    >
++      <div
++        role="separator"
++        aria-orientation="vertical"
++        aria-label="Ширина дерева файлов"
++        title="Потяни, чтобы изменить ширину. Двойное нажатие — вернуть исходную"
++        className="group absolute inset-y-0 -left-2 z-20 w-4 cursor-col-resize touch-none select-none"
++        onPointerDown={onPointerDown}
++        onPointerMove={onPointerMove}
++        onPointerUp={endDrag}
++        onPointerCancel={endDrag}
++        onLostPointerCapture={endDrag}
++        onDoubleClick={() => {
++          setFraction(null);
++          saveFraction(null);
++        }}
++      >
++        <span
++          aria-hidden
++          className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-active:bg-primary/60"
++        />
++        <span
++          aria-hidden
++          className="pointer-events-none absolute top-1/2 left-1/2 h-10 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border/80 group-active:bg-primary/70"
++        />
++      </div>
++      {props.children}
++    </aside>
++  );
++}
+-- 
+2.43.0
+

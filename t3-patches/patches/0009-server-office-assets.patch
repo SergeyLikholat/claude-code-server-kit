@@ -1,0 +1,310 @@
+From e702773e6ba5e77193284856ae25d8f6940b62d5 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 08:52:21 +0300
+Subject: [PATCH] =?UTF-8?q?feat(server):=20=D0=BE=D1=84=D0=B8=D1=81=D0=BD?=
+ =?UTF-8?q?=D1=8B=D0=B5=20=D1=84=D0=B0=D0=B9=D0=BB=D1=8B=20=D0=BF=D0=BE=20?=
+ =?UTF-8?q?=D0=BF=D0=BE=D0=B4=D0=BF=D0=B8=D1=81=D0=B0=D0=BD=D0=BD=D1=8B?=
+ =?UTF-8?q?=D0=BC=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA=D0=B0=D0=BC=20=D0=B4?=
+ =?UTF-8?q?=D0=BB=D1=8F=20Android-=D0=BF=D1=80=D0=B8=D0=BB=D0=BE=D0=B6?=
+ =?UTF-8?q?=D0=B5=D0=BD=D0=B8=D1=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Приложение открывает файлы только штатными ссылками /api/assets, а они
+выдавались лишь на картинки, pdf и html. Теперь и на xlsx/xls/ods,
+docx/doc/rtf/odt — по точному пути, как картинки. Маршрут
+/api/t3patch/asset-docx конвертирует .doc/.rtf/.odt в docx по такой же
+ссылке. Просмотр делает страница t3patch-vendor/office-view.html.
+---
+ apps/server/src/assets/AssetAccess.ts         | 38 ++++++----
+ apps/server/src/sergey/fileAccess.ts          | 31 ++++++++
+ .../src/sergey/officeAssets.access.test.ts    | 73 +++++++++++++++++++
+ apps/server/src/sergey/officeAssets.test.ts   | 27 +++++++
+ apps/server/src/sergey/officeAssets.ts        | 24 ++++++
+ apps/server/src/server.ts                     |  2 +
+ 6 files changed, 179 insertions(+), 16 deletions(-)
+ create mode 100644 apps/server/src/sergey/officeAssets.access.test.ts
+ create mode 100644 apps/server/src/sergey/officeAssets.test.ts
+ create mode 100644 apps/server/src/sergey/officeAssets.ts
+
+diff --git a/apps/server/src/assets/AssetAccess.ts b/apps/server/src/assets/AssetAccess.ts
+index 700aeacb19..f61440a09f 100644
+--- a/apps/server/src/assets/AssetAccess.ts
++++ b/apps/server/src/assets/AssetAccess.ts
+@@ -49,6 +49,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
+ import * as ServerConfig from "../config.ts";
+ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
++import { isT3patchOfficeAssetPath } from "../sergey/officeAssets.ts"; // t3-patch
+ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+ import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+ 
+@@ -338,7 +339,10 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
+             }),
+         ),
+       );
+-    if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
++    if (
++      !isWorkspacePreviewEntryPath(resolved.relativePath) &&
++      !isT3patchOfficeAssetPath(resolved.relativePath) // t3-patch
++    ) {
+       return yield* new AssetPreviewTypeValidationError({
+         resource: input.resource,
+       });
+@@ -375,21 +379,23 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
+       ? yield* readImageDimensionsFromHeader(canonicalFile)
+       : null;
+     return {
+-      claims: isWorkspaceImagePreviewPath(resolved.relativePath)
+-        ? {
+-            version: 1 as const,
+-            kind: "workspace-file-exact" as const,
+-            workspaceRoot: canonicalWorkspaceRoot,
+-            relativePath: resolved.relativePath,
+-            expiresAt: input.expiresAt,
+-          }
+-        : {
+-            version: 1 as const,
+-            kind: "workspace-file" as const,
+-            workspaceRoot: canonicalWorkspaceRoot,
+-            baseRelativePath: path.dirname(resolved.relativePath),
+-            expiresAt: input.expiresAt,
+-          },
++      claims:
++        isWorkspaceImagePreviewPath(resolved.relativePath) ||
++        isT3patchOfficeAssetPath(resolved.relativePath) // t3-patch
++          ? {
++              version: 1 as const,
++              kind: "workspace-file-exact" as const,
++              workspaceRoot: canonicalWorkspaceRoot,
++              relativePath: resolved.relativePath,
++              expiresAt: input.expiresAt,
++            }
++          : {
++              version: 1 as const,
++              kind: "workspace-file" as const,
++              workspaceRoot: canonicalWorkspaceRoot,
++              baseRelativePath: path.dirname(resolved.relativePath),
++              expiresAt: input.expiresAt,
++            },
+       fileName: path.basename(resolved.relativePath),
+       imageDimensions,
+     };
+diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
+index b7c78c2f10..2a7a7fef86 100644
+--- a/apps/server/src/sergey/fileAccess.ts
++++ b/apps/server/src/sergey/fileAccess.ts
+@@ -39,12 +39,16 @@ import * as Effect from "effect/Effect";
+ import * as Option from "effect/Option";
+ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+ 
++import { resolveAsset } from "../assets/AssetAccess.ts";
+ import { assetFileResponse, authenticateRawRouteWithScope } from "../http.ts";
+ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+ 
+ export const T3PATCH_FILE_INFO_PATH = "/api/t3patch/file-info";
+ export const T3PATCH_FILE_ROUTE_PREFIX = "/api/t3patch/file";
+ export const T3PATCH_CONVERT_ROUTE_PREFIX = "/api/t3patch/convert";
++// Конвертация по штатной подписанной ссылке /api/assets — для Android-приложения,
++// которое получает файлы только такими ссылками (см. officeAssets.ts).
++export const T3PATCH_ASSET_DOCX_ROUTE_PREFIX = "/api/t3patch/asset-docx";
+ const TOKEN_TTL_MS = 60 * 60 * 1000;
+ // Ключ живёт до перезапуска сервера: ссылки на скачивание короткоживущие, хранить его незачем.
+ const SIGNING_KEY = randomBytes(32);
+@@ -318,3 +322,30 @@ export const t3patchConvertRouteLayer = HttpRouter.add(
+     );
+   }),
+ );
++
++/** GET /api/t3patch/asset-docx/<токен /api/assets>/<имя> → docx из .doc/.rtf/.odt. */
++export const t3patchAssetDocxRouteLayer = HttpRouter.add(
++  "GET",
++  `${T3PATCH_ASSET_DOCX_ROUTE_PREFIX}/*`,
++  Effect.gen(function* () {
++    const request = yield* HttpServerRequest.HttpServerRequest;
++    const url = HttpServerRequest.toURL(request);
++    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
++    const suffix = url.value.pathname.slice(`${T3PATCH_ASSET_DOCX_ROUTE_PREFIX}/`.length);
++    const separator = suffix.indexOf("/");
++    if (separator <= 0) return HttpServerResponse.text("Not Found", { status: 404 });
++    const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
++    if (!asset || !isConvertibleToDocx(asset.path)) {
++      return HttpServerResponse.text("Ссылка устарела или неверна.", { status: 404 });
++    }
++    const converted = yield* Effect.tryPromise(() => convertToDocxCached(asset.path)).pipe(
++      Effect.orElseSucceed(() => null),
++    );
++    if (!converted) {
++      return HttpServerResponse.text("Не удалось сконвертировать документ.", { status: 500 });
++    }
++    return yield* assetFileResponse({ path: converted }).pipe(
++      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
++    );
++  }),
++);
+diff --git a/apps/server/src/sergey/officeAssets.access.test.ts b/apps/server/src/sergey/officeAssets.access.test.ts
+new file mode 100644
+index 0000000000..2608031094
+--- /dev/null
++++ b/apps/server/src/sergey/officeAssets.access.test.ts
+@@ -0,0 +1,73 @@
++// t3-patch: офисные файлы по штатным подписанным ссылкам (патч 0009).
++import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
++import { ThreadId } from "@t3tools/contracts";
++import { describe, expect, it } from "@effect/vitest";
++import * as Effect from "effect/Effect";
++import * as FileSystem from "effect/FileSystem";
++import * as Layer from "effect/Layer";
++import * as Path from "effect/Path";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++import * as ServerConfig from "../config.ts";
++import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
++import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
++import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
++import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "../assets/AssetAccess.ts";
++import * as NativeAppIconResolver from "../assets/NativeAppIconResolver.ts";
++
++const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
++  prefix: "t3-office-asset-test-",
++});
++const testLayer = Layer.mergeAll(
++  NodeHttpPlatform.layer,
++  configLayer,
++  WorkspacePaths.layer,
++  ProjectFaviconResolver.layer.pipe(
++    Layer.provide(WorkspacePaths.layer),
++    Layer.provide(T3ProjectFileLoader.layer),
++  ),
++  NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
++  ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
++).pipe(Layer.provideMerge(NodeServices.layer));
++
++const issue = (root: string, path: string) =>
++  issueAssetUrl({
++    resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path },
++    workspaceRoot: root,
++  });
++
++describe("офисные файлы по подписанным ссылкам", () => {
++  it.effect("выдаёт ссылку на xlsx и отдаёт по ней только сам файл", () =>
++    Effect.gen(function* () {
++      const fileSystem = yield* FileSystem.FileSystem;
++      const path = yield* Path.Path;
++      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-office-" });
++      const sheet = path.join(root, "Смета.xlsx");
++      yield* fileSystem.writeFileString(sheet, "PK");
++      yield* fileSystem.writeFileString(path.join(root, "secret.txt"), "SECRET");
++
++      const result = yield* issue(root, sheet);
++      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
++      const token = suffix.slice(0, suffix.indexOf("/"));
++
++      expect(yield* resolveAsset(token, "Смета.xlsx")).toEqual({
++        kind: "file",
++        path: yield* fileSystem.realPath(sheet),
++      });
++      expect(yield* resolveAsset(token, "secret.txt")).toBeNull();
++    }).pipe(Effect.provide(testLayer)),
++  );
++
++  it.effect("прочие файлы по-прежнему не выдаются", () =>
++    Effect.gen(function* () {
++      const fileSystem = yield* FileSystem.FileSystem;
++      const path = yield* Path.Path;
++      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-office-" });
++      const text = path.join(root, "notes.txt");
++      yield* fileSystem.writeFileString(text, "x");
++      const error = yield* issue(root, text).pipe(Effect.flip);
++      expect(error._tag).toBe("AssetPreviewTypeValidationError");
++    }).pipe(Effect.provide(testLayer)),
++  );
++});
+diff --git a/apps/server/src/sergey/officeAssets.test.ts b/apps/server/src/sergey/officeAssets.test.ts
+new file mode 100644
+index 0000000000..97dab51bda
+--- /dev/null
++++ b/apps/server/src/sergey/officeAssets.test.ts
+@@ -0,0 +1,27 @@
++import { describe, expect, it } from "vitest";
++
++import { isT3patchOfficeAssetPath } from "./officeAssets.ts";
++
++describe("isT3patchOfficeAssetPath", () => {
++  it("пускает офисные форматы в любом регистре", () => {
++    for (const path of [
++      "a.xlsx",
++      "b/c.XLS",
++      "d.ods",
++      "e.docx",
++      "f.DOC",
++      "g.rtf",
++      "h.odt",
++      "i.xlsm",
++      "j.xlsb",
++    ]) {
++      expect(isT3patchOfficeAssetPath(path)).toBe(true);
++    }
++  });
++
++  it("не пускает прочие файлы", () => {
++    for (const path of ["a.txt", "b.env", "c.xlsx.bak", "Makefile", ".xlsx/secret", "d.docx.sh"]) {
++      expect(isT3patchOfficeAssetPath(path)).toBe(false);
++    }
++  });
++});
+diff --git a/apps/server/src/sergey/officeAssets.ts b/apps/server/src/sergey/officeAssets.ts
+new file mode 100644
+index 0000000000..680a706cdc
+--- /dev/null
++++ b/apps/server/src/sergey/officeAssets.ts
+@@ -0,0 +1,24 @@
++/**
++ * t3-patch: офисные файлы по штатным подписанным ссылкам /api/assets.
++ *
++ * Штатно сервер выдаёт такие ссылки только на картинки, pdf и html. Android-приложение
++ * открывает файлы именно через них, поэтому xlsx/docx/doc там недоступны. Этот список
++ * расширяет допустимые типы — файл отдаётся как есть, по точному пути (без соседних
++ * файлов, как у картинок). Просмотр делает страница t3patch-vendor/office-view.html.
++ */
++const OFFICE_ASSET_EXTENSIONS = new Set([
++  ".xlsx",
++  ".xlsm",
++  ".xlsb",
++  ".xls",
++  ".ods",
++  ".docx",
++  ".doc",
++  ".rtf",
++  ".odt",
++]);
++
++export function isT3patchOfficeAssetPath(relativePath: string): boolean {
++  const dot = relativePath.lastIndexOf(".");
++  return dot >= 0 && OFFICE_ASSET_EXTENSIONS.has(relativePath.slice(dot).toLowerCase());
++}
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index 6fd7efd63e..60b31346d2 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -32,6 +32,7 @@ import {
+ } from "./http.ts";
+ import {
+   t3patchConvertRouteLayer,
++  t3patchAssetDocxRouteLayer,
+   t3patchFileInfoRouteLayer,
+   t3patchFileRouteLayer,
+ } from "./sergey/fileAccess.ts";
+@@ -583,6 +584,7 @@ export const makeRoutesLayer = Layer.mergeAll(
+     t3patchFileInfoRouteLayer, // t3-patch
+     t3patchFileRouteLayer, // t3-patch
+     t3patchConvertRouteLayer, // t3-patch
++    t3patchAssetDocxRouteLayer, // t3-patch
+     deviceHubProxyRouteLayer,
+     staticAndDevRouteLayer,
+     websocketRpcRouteLayer,
+-- 
+2.43.0
+

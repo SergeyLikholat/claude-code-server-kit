@@ -1,0 +1,782 @@
+From 00430a5eeebd373bb8fb049283a5849b91e5b795 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 10:59:13 +0300
+Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=BF=D0=B0=D0=BF=D0=BA=D0=B8?=
+ =?UTF-8?q?=20=D0=B8=D0=B7=20=D1=81=D1=81=D1=8B=D0=BB=D0=BE=D0=BA,=20?=
+ =?UTF-8?q?=D0=BF=D0=BE=D0=B2=D1=82=D0=BE=D1=80=D0=BD=D1=8B=D0=B9=20=D0=BA?=
+ =?UTF-8?q?=D0=BB=D0=B8=D0=BA,=20=D0=BF=D0=BE=D0=BD=D1=8F=D1=82=D0=BD?=
+ =?UTF-8?q?=D0=B0=D1=8F=20=D0=BA=D0=B0=D1=80=D1=82=D0=BE=D1=87=D0=BA=D0=B0?=
+ =?UTF-8?q?=20=D0=B2=D0=BC=D0=B5=D1=81=D1=82=D0=BE=20=D0=BE=D1=88=D0=B8?=
+ =?UTF-8?q?=D0=B1=D0=BA=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Ссылка из чата на папку открывала её как файл и падала с ошибкой чтения.
+  Теперь папка открывается в проводнике: предки подгружаются и раскрываются,
+  строка выделена и прокручена в видимую часть.
+- После «Закрыть файл» строка оставалась выделенной, и повторный клик по ней
+  ничего не делал (файл открывается по смене выделения). Теперь клик по уже
+  выделенному файлу открывает его снова.
+- Для файлов, которые T3 не показывает (apk, zip…), вместо сырой красной
+  ошибки — карточка: имя, размер, дата, полный путь и действия «Скачать»,
+  «Копировать путь», «Копировать полный путь», «Показать в проводнике».
+- Абсолютный путь снаружи проекта (/root/Obsidian/...) сервер находит через
+  окно кабинета (!Obsidian/...) — файл открывается как обычный файл проекта.
+- Типы для подключения русификации (index.d.mts) — проверка типов vite.config.
+---
+ apps/server/src/sergey/fileAccess.test.ts     |  20 ++
+ apps/server/src/sergey/fileAccess.ts          |  42 +++-
+ apps/web/src/components/ChatMarkdown.tsx      |   6 +
+ .../src/components/files/FileBrowserPanel.tsx |  15 +-
+ .../src/components/files/FilePreviewPanel.tsx |  12 +-
+ .../components/sergey/FileUnavailableCard.tsx | 187 ++++++++++++++++++
+ .../src/components/sergey/explorerReveal.ts   | 150 ++++++++++++++
+ apps/web/src/components/sergey/fileActions.ts |   4 +-
+ .../components/sergey/fileUnavailable.test.ts |  89 +++++++++
+ .../src/components/sergey/reopenOnClick.ts    |  61 ++++++
+ apps/web/t3patch-i18n/index.d.mts             |   2 +
+ 11 files changed, 581 insertions(+), 7 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/FileUnavailableCard.tsx
+ create mode 100644 apps/web/src/components/sergey/explorerReveal.ts
+ create mode 100644 apps/web/src/components/sergey/fileUnavailable.test.ts
+ create mode 100644 apps/web/src/components/sergey/reopenOnClick.ts
+ create mode 100644 apps/web/t3patch-i18n/index.d.mts
+
+diff --git a/apps/server/src/sergey/fileAccess.test.ts b/apps/server/src/sergey/fileAccess.test.ts
+index fcca56c925..598c353cfb 100644
+--- a/apps/server/src/sergey/fileAccess.test.ts
++++ b/apps/server/src/sergey/fileAccess.test.ts
+@@ -8,6 +8,7 @@ import {
+   convertToDocxCached,
+   isConvertibleToDocx,
+   issueFileToken,
++  mapIntoWorkspace,
+   parseMountInfo,
+   resolveBindMounts,
+   verifyFileToken,
+@@ -98,3 +99,22 @@ describe("конвертация старых форматов в docx", () => {
+     120_000,
+   );
+ });
++
++describe("путь снаружи проекта через окно", () => {
++  const mounts = parseMountInfo(MOUNTINFO);
++
++  it("/root/Obsidian/... открывается через окно !Obsidian кабинета", () => {
++    expect(
++      mapIntoWorkspace("/root/Obsidian/ОБМЕН/T3.apk", "/root/projects/tk-vector", mounts),
++    ).toBe("/root/projects/tk-vector/!Obsidian/ОБМЕН/T3.apk");
++    expect(mapIntoWorkspace("/root/Obsidian", "/root/projects/tk-vector", mounts)).toBe(
++      "/root/projects/tk-vector/!Obsidian",
++    );
++  });
++
++  it("без окна в этом кабинете — null", () => {
++    expect(mapIntoWorkspace("/root/Obsidian/a.md", "/root/projects/other", mounts)).toBeNull();
++    expect(mapIntoWorkspace("/etc/passwd", "/root/projects/tk-vector", mounts)).toBeNull();
++    expect(mapIntoWorkspace("/root/ObsidianX/a.md", "/root/projects/tk-vector", mounts)).toBeNull();
++  });
++});
+diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
+index 2a7a7fef86..040b3c1272 100644
+--- a/apps/server/src/sergey/fileAccess.ts
++++ b/apps/server/src/sergey/fileAccess.ts
+@@ -126,6 +126,35 @@ export function resolveBindMounts(absolutePath: string, mounts: readonly MountEn
+   return NodePath.join(whole.mountPoint, owner.root, rest);
+ }
+ 
++/**
++ * Обратное к resolveBindMounts: абсолютный путь снаружи проекта → путь через окно внутри
++ * проекта. Для `/root/Obsidian/a.xlsx` и кабинета, где `/root/Obsidian` смонтирован в
++ * `<root>/!Obsidian`, вернёт `<root>/!Obsidian/a.xlsx`. Если окна нет — null.
++ * Так ссылка из чата на файл базы открывается в любом кабинете.
++ */
++export function mapIntoWorkspace(
++  absolutePath: string,
++  workspaceRoot: string,
++  mounts: readonly MountEntry[],
++): string | null {
++  const windows = mounts
++    .filter((mount) => mount.root !== "/" && isWithin(workspaceRoot, mount.mountPoint))
++    .map((mount) => {
++      const whole = mounts.find((entry) => entry.device === mount.device && entry.root === "/");
++      return whole
++        ? { mountPoint: mount.mountPoint, source: NodePath.join(whole.mountPoint, mount.root) }
++        : null;
++    })
++    .filter((entry): entry is { mountPoint: string; source: string } => entry !== null)
++    .filter((entry) => isWithin(entry.source, absolutePath))
++    // самое глубокое совпадение источника — самое точное окно
++    .toSorted((left, right) => right.source.length - left.source.length);
++  const window = windows[0];
++  return window
++    ? NodePath.join(window.mountPoint, NodePath.relative(window.source, absolutePath))
++    : null;
++}
++
+ async function readMounts(): Promise<MountEntry[]> {
+   try {
+     return parseMountInfo(await readFile("/proc/self/mountinfo", "utf8"));
+@@ -151,11 +180,22 @@ export const t3patchFileInfoRouteLayer = HttpRouter.add(
+       return json({ error: "Нужны cwd и relativePath." }, 400);
+     }
+     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
++    const requested = body.relativePath;
+     const resolved = yield* Effect.gen(function* () {
+       const root = yield* workspacePaths.normalizeWorkspaceRoot(body.cwd as string);
++      // Абсолютный путь снаружи проекта (ссылка из чата на /root/Obsidian/...) — через окно.
++      let relativePath = requested;
++      if (NodePath.isAbsolute(requested) && !isWithin(root, requested)) {
++        const mapped = mapIntoWorkspace(
++          requested,
++          root,
++          yield* Effect.tryPromise(() => readMounts()).pipe(Effect.orElseSucceed(() => [])),
++        );
++        if (mapped) relativePath = NodePath.relative(root, mapped);
++      }
+       const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+         workspaceRoot: root,
+-        relativePath: body.relativePath as string,
++        relativePath,
+       });
+       return { root, target };
+     }).pipe(Effect.orElseSucceed(() => null));
+diff --git a/apps/web/src/components/ChatMarkdown.tsx b/apps/web/src/components/ChatMarkdown.tsx
+index b0209754b0..86fc2c3d4c 100644
+--- a/apps/web/src/components/ChatMarkdown.tsx
++++ b/apps/web/src/components/ChatMarkdown.tsx
+@@ -160,6 +160,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
+ import { cn } from "../lib/utils";
+ import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+ import { useRightPanelStore } from "../rightPanelStore";
++import { t3patchOpenFolder } from "./sergey/explorerReveal"; // t3-patch
+ import { readThreadShell, useProjects } from "../state/entities";
+ import { serverEnvironment } from "../state/server";
+ import { shellEnvironment } from "../state/shell";
+@@ -2511,6 +2512,11 @@ function useChatMarkdownState({
+       const isLatestLookup = claimWorkspaceBasenameLookup();
+       const openAt = (path: string) =>
+         useRightPanelStore.getState().openFile(threadRef, path, line);
++      // t3-patch: ссылка на папку (со слешем в конце) — открыть её в проводнике, а не как файл
++      if (cwd && panelPath.endsWith("/")) {
++        void t3patchOpenFolder(threadRef, cwd, panelPath);
++        return;
++      }
+       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+         openAt(panelPath);
+         return;
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index fa48064ce4..33e6b1db15 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -7,7 +7,7 @@ import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+ import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+ import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+-import { useEffect, useMemo, useRef, useState } from "react";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ 
+ import { Button } from "~/components/ui/button";
+ import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
+@@ -19,6 +19,8 @@ import { useTheme } from "~/hooks/useTheme";
+ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+ import { readLocalApi } from "~/localApi";
+ import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
++import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
++import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
+ import { T3_PIERRE_ICONS } from "~/pierre-icons";
+ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+ 
+@@ -460,6 +462,17 @@ export default function FileBrowserPanel({
+     };
+   }, [dragMention]);
+ 
++  // t3-patch: ссылка из чата на папку — переход к папке; повторный клик по выделенному файлу — открыть снова
++  useT3patchExplorerReveal(cwd, model, load);
++  const onOpenFileRef = useRef(onOpenFile);
++  onOpenFileRef.current = onOpenFile;
++  const isTreeFile = useCallback((path: string) => entryKindsRef.current.get(path) === "file", []);
++  const reopenTreeFile = useCallback((path: string) => {
++    treeSelectionPathRef.current = path;
++    onOpenFileRef.current(path);
++  }, []);
++  useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
++
+   return (
+     <div
+       ref={panelRef}
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index c33904d340..5d2e9faae9 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -80,6 +80,7 @@ import { CloseFileAction } from "~/components/sergey/CloseFileAction";
+ import { ResizableExplorerPane } from "~/components/sergey/ResizableExplorerPane";
+ import { OfficePreview } from "~/components/sergey/OfficePreview";
+ import { officeKind } from "~/components/sergey/officeFiles";
++import { FileUnavailableCard } from "~/components/sergey/FileUnavailableCard";
+ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
+ import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
+@@ -1229,9 +1230,14 @@ export default function FilePreviewPanel({
+           ) : relativePath && !isHostFile && officeKind(relativePath) ? (
+             <OfficePreview key={relativePath} cwd={cwd} relativePath={relativePath} /> // t3-patch
+           ) : relativePath && file.error && file.data === null ? (
+-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+-              {file.error}
+-            </div>
++            // t3-patch: понятная карточка вместо сырой ошибки; папки и пути снаружи — в проводник
++            <FileUnavailableCard
++              key={relativePath}
++              threadRef={threadRef}
++              cwd={cwd}
++              relativePath={relativePath}
++              error={file.error}
++            />
+           ) : relativePath && file.data === null ? (
+             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+               <Spinner className="size-5" />
+diff --git a/apps/web/src/components/sergey/FileUnavailableCard.tsx b/apps/web/src/components/sergey/FileUnavailableCard.tsx
+new file mode 100644
+index 0000000000..03a11f5697
+--- /dev/null
++++ b/apps/web/src/components/sergey/FileUnavailableCard.tsx
+@@ -0,0 +1,187 @@
++/**
++ * t3-patch: вместо красной строки «Failed to read workspace file…» — понятная карточка.
++ *
++ * Панель файла штатно показывает только текст, таблицы, документы, картинки, PDF,
++ * аудио и видео. Для остального (apk, zip, exe…) она выводила сырую ошибку чтения.
++ * Такие файлы и не нужно открывать — нужно понятно сказать, что это за файл, и дать
++ * действия: скачать, скопировать путь, показать в проводнике.
++ *
++ * Заодно два случая, когда «файл» на деле не файл:
++ * - папка (ссылка из чата на каталог) — открываем её в проводнике;
++ * - абсолютный путь снаружи проекта (`/root/Obsidian/...`) — сервер находит окно
++ *   (`!Obsidian/...`) и файл открывается через него, как обычный файл проекта.
++ */
++import type { ScopedThreadRef } from "@t3tools/contracts";
++import { DownloadIcon, FileIcon, FolderOpenIcon, LinkIcon } from "lucide-react";
++import { useEffect, useState } from "react";
++
++import { Button } from "~/components/ui/button";
++import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
++import { Spinner } from "~/components/ui/spinner";
++import { useRightPanelStore } from "~/rightPanelStore";
++import {
++  copyWithToast,
++  fetchT3PatchFileInfo,
++  startDownload,
++  type T3PatchFileInfo,
++} from "./fileActions";
++import { t3patchOpenFolder } from "./explorerReveal";
++
++type State =
++  | { readonly kind: "loading" }
++  | { readonly kind: "file"; readonly info: T3PatchFileInfo }
++  | { readonly kind: "missing"; readonly reason: string }
++  | { readonly kind: "redirected" };
++
++const basename = (path: string) => path.replace(/\/+$/, "").split("/").pop() || path;
++const parentOf = (path: string) => path.replace(/\/+$/, "").split("/").slice(0, -1).join("/");
++
++export function formatT3patchFileSize(bytes: number): string {
++  if (bytes < 1024) return `${bytes} Б`;
++  const units = ["КБ", "МБ", "ГБ"];
++  let value = bytes / 1024;
++  let unit = 0;
++  while (value >= 1024 && unit < units.length - 1) {
++    value /= 1024;
++    unit++;
++  }
++  return `${value.toFixed(value < 10 ? 1 : 0).replace(".", ",")} ${units[unit]}`;
++}
++
++/** Почему файл не показан — по тексту ошибки чтения, по-человечески. */
++export function describeT3patchUnreadable(error: string): string {
++  if (/binary/i.test(error)) {
++    return "Это двоичный файл. В T3 открываются текст, таблицы, документы, картинки, PDF, аудио и видео — остальное можно скачать и открыть на устройстве.";
++  }
++  return "Этот тип файла T3 не показывает. Его можно скачать и открыть на устройстве.";
++}
++
++export function FileUnavailableCard(props: {
++  readonly threadRef: ScopedThreadRef;
++  readonly cwd: string;
++  readonly relativePath: string;
++  readonly error: string;
++}) {
++  const { threadRef, cwd, relativePath, error } = props;
++  const [state, setState] = useState<State>({ kind: "loading" });
++
++  useEffect(() => {
++    let cancelled = false;
++    const surfaceId = `file:${relativePath}` as const;
++    fetchT3PatchFileInfo(cwd, relativePath).then(
++      (info) => {
++        if (cancelled) return;
++        if (info.isDirectory) {
++          setState({ kind: "redirected" });
++          void t3patchOpenFolder(threadRef, cwd, info.relativePath, surfaceId);
++          return;
++        }
++        // Абсолютный путь снаружи проекта, найденный через окно, — открыть как файл проекта.
++        if (relativePath.startsWith("/") && info.relativePath !== relativePath) {
++          setState({ kind: "redirected" });
++          const store = useRightPanelStore.getState();
++          store.openFile(threadRef, info.relativePath);
++          store.closeSurface(threadRef, surfaceId);
++          return;
++        }
++        setState({ kind: "file", info });
++      },
++      (failure: unknown) => {
++        if (cancelled) return;
++        setState({
++          kind: "missing",
++          reason: failure instanceof Error ? failure.message : String(failure),
++        });
++      },
++    );
++    return () => {
++      cancelled = true;
++    };
++  }, [cwd, relativePath, threadRef]);
++
++  if (state.kind === "loading" || state.kind === "redirected") {
++    return (
++      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
++        <Spinner className="size-5" />
++      </div>
++    );
++  }
++
++  const name = basename(relativePath);
++  const info = state.kind === "file" ? state.info : null;
++  const fullPath = info?.realPath ?? relativePath;
++
++  return (
++    <Empty className="min-h-0 flex-1 overflow-y-auto">
++      <EmptyMedia variant="icon">
++        <FileIcon className="size-4.5 text-muted-foreground" />
++      </EmptyMedia>
++      <EmptyTitle className="max-w-full text-base leading-snug [overflow-wrap:anywhere]">
++        {name}
++      </EmptyTitle>
++      {info ? (
++        <p className="text-xs text-muted-foreground">
++          {formatT3patchFileSize(info.size)} ·{" "}
++          {new Date(info.mtimeMs).toLocaleString("ru-RU", {
++            dateStyle: "medium",
++            timeStyle: "short",
++          })}
++        </p>
++      ) : null}
++      <EmptyDescription className="max-w-md">
++        {info
++          ? describeT3patchUnreadable(error)
++          : "Файл не найден или лежит вне этого проекта — открыть его здесь нельзя."}
++      </EmptyDescription>
++      <code className="max-w-full rounded bg-muted/60 px-2 py-1 text-[11px] break-all text-muted-foreground select-text">
++        {fullPath}
++      </code>
++      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
++        {info?.downloadUrl ? (
++          <Button size="sm" onClick={() => startDownload(info.downloadUrl!)}>
++            <DownloadIcon />
++            Скачать
++          </Button>
++        ) : null}
++        <Button
++          size="sm"
++          variant="outline"
++          onClick={() => void copyWithToast(info?.relativePath ?? relativePath, "Путь скопирован")}
++        >
++          <LinkIcon />
++          Копировать путь
++        </Button>
++        {info ? (
++          <Button
++            size="sm"
++            variant="outline"
++            onClick={() => void copyWithToast(info.realPath, "Полный путь скопирован")}
++          >
++            <LinkIcon />
++            Копировать полный путь
++          </Button>
++        ) : null}
++        {info ? (
++          <Button
++            size="sm"
++            variant="outline"
++            onClick={() =>
++              void t3patchOpenFolder(
++                threadRef,
++                cwd,
++                parentOf(info.relativePath),
++                `file:${relativePath}`,
++              )
++            }
++          >
++            <FolderOpenIcon />
++            Показать в проводнике
++          </Button>
++        ) : null}
++      </div>
++      {state.kind === "missing" ? (
++        <p className="mt-1 text-[11px] text-muted-foreground/70">{state.reason}</p>
++      ) : null}
++    </Empty>
++  );
++}
+diff --git a/apps/web/src/components/sergey/explorerReveal.ts b/apps/web/src/components/sergey/explorerReveal.ts
+new file mode 100644
+index 0000000000..2d5aae40e8
+--- /dev/null
++++ b/apps/web/src/components/sergey/explorerReveal.ts
+@@ -0,0 +1,150 @@
++/**
++ * t3-patch: открыть папку в проводнике (дерево раскрыто до неё, строка выделена).
++ *
++ * Штатно ссылка на папку из чата и «папка» в панели файла открываются как файл —
++ * вкладка пытается прочитать папку и падает с ошибкой. Здесь папка открывается в
++ * проводнике: предки подгружаются и раскрываются, строка прокручивается в видимую
++ * часть. Запрос живёт в модуле, потому что проводник может смонтироваться позже,
++ * чем пришла команда (вкладка «Проводник» открывается тем же действием).
++ */
++import type { ScopedThreadRef } from "@t3tools/contracts";
++import { useEffect, useRef } from "react";
++
++import { toastManager } from "~/components/ui/toast";
++import { useRightPanelStore } from "~/rightPanelStore";
++import { fetchT3PatchFileInfo } from "./fileActions";
++
++interface RevealRequest {
++  readonly cwd: string;
++  readonly path: string;
++  readonly id: number;
++  readonly at: number;
++}
++
++/** Запрос старше этого срока проводник уже не выполняет — чтобы не прыгнуть к папке спустя час. */
++const REQUEST_TTL_MS = 15_000;
++const ITEM_WAIT_STEPS = 40;
++const ITEM_WAIT_STEP_MS = 50;
++
++let latest: RevealRequest | null = null;
++let nextId = 1;
++const listeners = new Set<(request: RevealRequest) => void>();
++
++const trimSlashes = (path: string) => path.replace(/\/+$/, "");
++
++export function t3patchRevealInExplorer(cwd: string, path: string): void {
++  const request = { cwd: trimSlashes(cwd), path: trimSlashes(path), id: nextId++, at: Date.now() };
++  latest = request;
++  for (const listener of listeners) listener(request);
++}
++
++/** Относительный путь папки внутри проекта; абсолютный снаружи — через окно (сервер). */
++async function workspaceRelative(cwd: string, path: string): Promise<string> {
++  const trimmed = trimSlashes(path);
++  if (!trimmed.startsWith("/")) return trimmed;
++  const root = trimSlashes(cwd);
++  if (trimmed === root) return "";
++  if (trimmed.startsWith(`${root}/`)) return trimmed.slice(root.length + 1);
++  return (await fetchT3PatchFileInfo(cwd, trimmed)).relativePath;
++}
++
++/**
++ * Закрыть вкладку «файла»-папки (если есть), открыть проводник и перейти к папке.
++ * `path` — как пришёл: относительный, абсолютный, со слешем в конце или без.
++ */
++export async function t3patchOpenFolder(
++  threadRef: ScopedThreadRef,
++  cwd: string,
++  path: string,
++  closeSurfaceId?: `file:${string}`,
++): Promise<void> {
++  let relative: string;
++  try {
++    relative = await workspaceRelative(cwd, path);
++  } catch (error) {
++    toastManager.add({
++      type: "error",
++      title: "Папка не открылась",
++      description: error instanceof Error ? error.message : String(error),
++    });
++    return;
++  }
++  const store = useRightPanelStore.getState();
++  if (closeSurfaceId) store.closeSurface(threadRef, closeSurfaceId);
++  store.open(threadRef, "files");
++  t3patchRevealInExplorer(cwd, relative);
++}
++
++/** То, что хук использует у модели дерева @pierre/trees. */
++interface TreeItem {
++  expand?: () => void;
++  select?: () => void;
++  deselect?: () => void;
++}
++interface TreeModel {
++  getItem(path: string): TreeItem | null | undefined;
++  getSelectedPaths(): readonly string[];
++  scrollToPath(path: string, options?: { focus?: boolean; offset?: "center" }): void;
++  closeSearch(): void;
++}
++
++const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
++
++async function waitForItem(model: TreeModel, path: string): Promise<TreeItem | null> {
++  for (let step = 0; step < ITEM_WAIT_STEPS; step++) {
++    const item = model.getItem(`${path}/`) ?? model.getItem(path);
++    if (item) return item;
++    await sleep(ITEM_WAIT_STEP_MS);
++  }
++  return null;
++}
++
++export async function t3patchRevealInTree(
++  model: TreeModel,
++  load: (path: string) => Promise<unknown>,
++  path: string,
++): Promise<void> {
++  const segments = path.split("/").filter(Boolean);
++  model.closeSearch();
++  // Предков и саму папку — по очереди: дерево подгружает содержимое лениво.
++  for (let index = 0; index <= segments.length; index++) {
++    await load(segments.slice(0, index).join("/"));
++  }
++  if (segments.length === 0) return;
++  for (let index = 1; index <= segments.length; index++) {
++    const current = segments.slice(0, index).join("/");
++    const item = await waitForItem(model, current);
++    item?.expand?.();
++  }
++  const target = model.getItem(`${path}/`) ?? model.getItem(path);
++  if (!target) return;
++  for (const selected of model.getSelectedPaths()) model.getItem(selected)?.deselect?.();
++  target.select?.();
++  model.scrollToPath(model.getItem(`${path}/`) ? `${path}/` : path, {
++    focus: true,
++    offset: "center",
++  });
++}
++
++/** Проводник выполняет запросы перехода к папке для своего проекта. */
++export function useT3patchExplorerReveal(
++  cwd: string,
++  model: TreeModel,
++  load: (path: string) => Promise<unknown>,
++): void {
++  const handledRef = useRef(0);
++  useEffect(() => {
++    const root = trimSlashes(cwd);
++    const run = (request: RevealRequest | null) => {
++      if (!request || request.cwd !== root || request.id <= handledRef.current) return;
++      if (Date.now() - request.at > REQUEST_TTL_MS) return;
++      handledRef.current = request.id;
++      void t3patchRevealInTree(model, load, request.path);
++    };
++    run(latest);
++    listeners.add(run);
++    return () => {
++      listeners.delete(run);
++    };
++  }, [cwd, load, model]);
++}
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 4cfc6bf2d1..7b5902918c 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -55,7 +55,7 @@ export async function fetchT3PatchFileInfo(
+   return body;
+ }
+ 
+-async function copyWithToast(text: string, title: string) {
++export async function copyWithToast(text: string, title: string) {
+   try {
+     await writeTextToClipboard(text);
+     toastManager.add({ type: "success", title, description: text });
+@@ -69,7 +69,7 @@ async function copyWithToast(text: string, title: string) {
+   }
+ }
+ 
+-function startDownload(url: string) {
++export function startDownload(url: string) {
+   const link = document.createElement("a");
+   link.href = resolvePrimaryEnvironmentHttpUrl(url);
+   link.rel = "noopener";
+diff --git a/apps/web/src/components/sergey/fileUnavailable.test.ts b/apps/web/src/components/sergey/fileUnavailable.test.ts
+new file mode 100644
+index 0000000000..c7faf8a620
+--- /dev/null
++++ b/apps/web/src/components/sergey/fileUnavailable.test.ts
+@@ -0,0 +1,89 @@
++import { scopeThreadRef } from "@t3tools/client-runtime/environment";
++import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
++import { describe, expect, it } from "vite-plus/test";
++
++import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
++
++import { t3patchOpenFolder, t3patchRevealInTree } from "./explorerReveal";
++import { describeT3patchUnreadable, formatT3patchFileSize } from "./FileUnavailableCard";
++import { t3patchRowPathFromEvent } from "./reopenOnClick";
++
++describe("карточка файла, который T3 не показывает", () => {
++  it("размер по-русски", () => {
++    expect(formatT3patchFileSize(512)).toBe("512 Б");
++    expect(formatT3patchFileSize(1536)).toBe("1,5 КБ");
++    expect(formatT3patchFileSize(93_615_903)).toBe("89 МБ");
++  });
++
++  it("причина — по тексту ошибки чтения", () => {
++    expect(describeT3patchUnreadable("… is binary and cannot be previewed as text.")).toMatch(
++      /двоичный/,
++    );
++    expect(describeT3patchUnreadable("Failed to read workspace file 'a.apk'")).toMatch(/скачать/);
++  });
++});
++
++describe("строка дерева по событию", () => {
++  const eventWith = (...nodes: unknown[]) => ({ composedPath: () => nodes }) as unknown as Event;
++  const row = (path: string) => ({
++    getAttribute: (name: string) => (name === "data-item-path" ? path : null),
++  });
++
++  it("путь файла и папки (слеш в конце снимается)", () => {
++    expect(t3patchRowPathFromEvent(eventWith({}, row("docs/a.md"), {}))).toBe("docs/a.md");
++    expect(t3patchRowPathFromEvent(eventWith(row("docs/")))).toBe("docs");
++  });
++
++  it("клик мимо строк — null", () => {
++    expect(t3patchRowPathFromEvent(eventWith({}, { getAttribute: () => null }))).toBeNull();
++  });
++});
++
++describe("переход к папке в дереве", () => {
++  function fakeTree(paths: string[]) {
++    const expanded: string[] = [];
++    const selected = new Set<string>(["old.md"]);
++    let scrolled: string | null = null;
++    const item = (path: string) => ({
++      expand: () => expanded.push(path),
++      select: () => selected.add(path),
++      deselect: () => selected.delete(path),
++    });
++    return {
++      expanded,
++      selected,
++      scrolled: () => scrolled,
++      model: {
++        getItem: (path: string) => (paths.includes(path) ? item(path) : null),
++        getSelectedPaths: () => [...selected],
++        scrollToPath: (path: string) => {
++          scrolled = path;
++        },
++        closeSearch: () => {},
++      },
++    };
++  }
++
++  it("подгружает предков по очереди, раскрывает, выделяет и прокручивает", async () => {
++    const loaded: string[] = [];
++    const tree = fakeTree(["old.md", "a/", "a/b/", "a/b/c/"]);
++    await t3patchRevealInTree(tree.model, async (path) => void loaded.push(path), "a/b/c");
++    expect(loaded).toEqual(["", "a", "a/b", "a/b/c"]);
++    expect(tree.expanded).toEqual(["a/", "a/b/", "a/b/c/"]);
++    expect([...tree.selected]).toEqual(["a/b/c/"]);
++    expect(tree.scrolled()).toBe("a/b/c/");
++  });
++});
++
++describe("открыть папку из ссылки", () => {
++  const ref = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-folder"));
++  const panel = () => selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
++
++  it("вкладка-«файл» папки закрывается, открывается проводник", async () => {
++    useRightPanelStore.getState().openFile(ref, "docs/");
++    await t3patchOpenFolder(ref, "/root/p", "docs/", "file:docs/");
++    const state = panel();
++    expect(state.surfaces.some((surface) => surface.id === "file:docs/")).toBe(false);
++    expect(state.activeSurfaceId).toBe("files");
++  });
++});
+diff --git a/apps/web/src/components/sergey/reopenOnClick.ts b/apps/web/src/components/sergey/reopenOnClick.ts
+new file mode 100644
+index 0000000000..4da63bdc69
+--- /dev/null
++++ b/apps/web/src/components/sergey/reopenOnClick.ts
+@@ -0,0 +1,61 @@
++/**
++ * t3-patch: повторный клик по уже выделенному файлу в дереве снова открывает его.
++ *
++ * Штатно файл открывается по событию «выделение изменилось». После «Закрыть файл»
++ * строка остаётся выделенной, клик по ней выделение не меняет — события нет, и
++ * файл не открывается, пока не кликнешь куда-то ещё. Здесь запоминаем, была ли
++ * строка выделена ещё до нажатия, и если да — открываем файл по клику сами.
++ */
++import { type RefObject, useEffect } from "react";
++
++interface SelectionModel {
++  getSelectedPaths(): readonly string[];
++}
++
++/** Путь строки дерева из события: строки лежат в открытом shadow DOM с атрибутом data-item-path. */
++export function t3patchRowPathFromEvent(event: Event): string | null {
++  for (const node of event.composedPath()) {
++    const element = node as { getAttribute?: (name: string) => string | null };
++    const path =
++      typeof element.getAttribute === "function" ? element.getAttribute("data-item-path") : null;
++    if (path) return path.replace(/\/$/, "");
++  }
++  return null;
++}
++
++export function useT3patchReopenOnClick(
++  panelRef: RefObject<HTMLElement | null>,
++  model: SelectionModel,
++  isFile: (path: string) => boolean,
++  open: (path: string) => void,
++): void {
++  useEffect(() => {
++    const panel = panelRef.current;
++    if (panel === null) return;
++    let pending: string | null = null;
++    const onPointerDown = (event: PointerEvent) => {
++      pending = null;
++      // Только обычный клик: правая кнопка — меню, модификаторы — множественное выделение.
++      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
++        return;
++      const path = t3patchRowPathFromEvent(event);
++      if (!path || !isFile(path)) return;
++      const alreadySelected = model
++        .getSelectedPaths()
++        .some((selected) => selected.replace(/\/$/, "") === path);
++      if (alreadySelected) pending = path;
++    };
++    const onClick = (event: MouseEvent) => {
++      const path = pending;
++      pending = null;
++      if (path && t3patchRowPathFromEvent(event) === path) open(path);
++    };
++    // capture: состояние выделения нужно снять до того, как дерево обработает нажатие
++    panel.addEventListener("pointerdown", onPointerDown, true);
++    panel.addEventListener("click", onClick);
++    return () => {
++      panel.removeEventListener("pointerdown", onPointerDown, true);
++      panel.removeEventListener("click", onClick);
++    };
++  }, [isFile, model, open, panelRef]);
++}
+diff --git a/apps/web/t3patch-i18n/index.d.mts b/apps/web/t3patch-i18n/index.d.mts
+new file mode 100644
+index 0000000000..75aa8e3023
+--- /dev/null
++++ b/apps/web/t3patch-i18n/index.d.mts
+@@ -0,0 +1,2 @@
++// t3-patch: типы для подключения русификации (index.mjs) — чтобы vite.config.ts проходил проверку типов.
++export function t3patchRuBabelPlugins(): Promise<Array<[unknown, { dict: unknown }]>>;
+-- 
+2.43.0
+

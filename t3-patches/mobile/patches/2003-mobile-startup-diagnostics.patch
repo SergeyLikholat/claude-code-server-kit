@@ -1,0 +1,253 @@
+From a7e06f2a93ced6da727df91ababdf118b5f1a7e4 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 10:08:22 +0300
+Subject: [PATCH 2003/2006] =?UTF-8?q?feat(mobile):=20=D0=B4=D0=B8=D0=B0?=
+ =?UTF-8?q?=D0=B3=D0=BD=D0=BE=D1=81=D1=82=D0=B8=D0=BA=D0=B0=20=D0=B7=D0=B0?=
+ =?UTF-8?q?=D0=BF=D1=83=D1=81=D0=BA=D0=B0=20=E2=80=94=20=D0=BE=D1=88=D0=B8?=
+ =?UTF-8?q?=D0=B1=D0=BA=D0=B0=20=D0=B2=D0=B8=D0=B4=D0=BD=D0=B0=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=20=D1=8D=D0=BA=D1=80=D0=B0=D0=BD=D0=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Если при старте падает JS, заставка не убирается и приложение просто висит:
+нативного сбоя нет, Android молчит, а logcat с телефона не достать. Теперь
+ошибки старта (глобальный обработчик, граница React, console.error) убирают
+заставку и печатаются на экране. Сторож: если за 15 секунд приложение не
+дошло до первого экрана, показывается то же окно.
+---
+ apps/mobile/index.ts                          |   7 +-
+ apps/mobile/src/App.tsx                       |   6 +-
+ apps/mobile/src/sergey/startupDiagnostics.tsx | 174 ++++++++++++++++++
+ 3 files changed, 184 insertions(+), 3 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/startupDiagnostics.tsx
+
+diff --git a/apps/mobile/index.ts b/apps/mobile/index.ts
+index 9b887f58a2..cb03ae18d9 100644
+--- a/apps/mobile/index.ts
++++ b/apps/mobile/index.ts
+@@ -3,7 +3,10 @@ import "react-native-gesture-handler";
+ import { LogBox } from "react-native";
+ import { featureFlags } from "react-native-screens";
+ 
+-import App from "./src/App";
++// t3-patch: ошибки запуска видны на экране, а не только в logcat, до которого с телефона не добраться
++import { installT3patchStartupDiagnostics, t3patchWrapRoot } from "./src/sergey/startupDiagnostics";
++
++installT3patchStartupDiagnostics();
+ 
+ // Required for react-native-screens' iOS FormSheet sizing fix when a nested
+ // native stack is rendered inside a non-fitToContents formSheet.
+@@ -13,4 +16,4 @@ if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
+   LogBox.ignoreAllLogs();
+ }
+ 
+-registerRootComponent(App);
++registerRootComponent(t3patchWrapRoot(() => require("./src/App").default)); // t3-patch
+diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
+index 897dae47d5..9a9c3fc5c6 100644
+--- a/apps/mobile/src/App.tsx
++++ b/apps/mobile/src/App.tsx
+@@ -25,6 +25,7 @@ import { appBlurTargetRef } from "./lib/appBlurTarget";
+ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
+ 
+ import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
++import { t3patchMarkReady } from "./sergey/startupDiagnostics"; // t3-patch
+ 
+ import "../global.css";
+ 
+@@ -56,7 +57,10 @@ function SplashScreenCoordinator() {
+   const { isReady } = useAppearancePreferences();
+ 
+   useEffect(() => {
+-    if (isReady) void SplashScreen.hide();
++    if (isReady) {
++      t3patchMarkReady(); // t3-patch: сторож диагностики запуска
++      void SplashScreen.hide();
++    }
+   }, [isReady]);
+ 
+   return null;
+diff --git a/apps/mobile/src/sergey/startupDiagnostics.tsx b/apps/mobile/src/sergey/startupDiagnostics.tsx
+new file mode 100644
+index 0000000000..3d6b9120a3
+--- /dev/null
++++ b/apps/mobile/src/sergey/startupDiagnostics.tsx
+@@ -0,0 +1,174 @@
++/**
++ * t3-patch: диагностика запуска приложения.
++ *
++ * Если при старте падает JS, заставка не убирается и приложение висит: нативного сбоя нет,
++ * Android ничего не показывает, а logcat с телефона не достать. Этот модуль ловит ошибки
++ * (глобальный обработчик, границу React и `console.error`), убирает заставку и печатает
++ * причину прямо на экране — её видно на скриншоте.
++ *
++ * Сторож: если через 15 секунд приложение так и не сообщило о готовности, экран тоже
++ * показывается — так видно зависание без исключения.
++ */
++import * as SplashScreen from "expo-splash-screen";
++import { Component, type ComponentType, type ReactNode } from "react";
++import { ScrollView, Text, View } from "react-native";
++
++const READY_TIMEOUT_MS = 15_000;
++const MAX_RECORDS = 30;
++
++interface Record {
++  readonly kind: string;
++  readonly text: string;
++}
++
++const records: Record[] = [];
++const listeners = new Set<() => void>();
++
++function add(kind: string, text: string): void {
++  if (records.length >= MAX_RECORDS) return;
++  records.push({ kind, text: text.slice(0, 2000) });
++  for (const listener of listeners) listener();
++}
++
++const describe = (value: unknown): string => {
++  if (value instanceof Error) {
++    return `${value.name}: ${value.message}\n${(value.stack ?? "").split("\n").slice(0, 12).join("\n")}`;
++  }
++  if (typeof value === "string") return value;
++  try {
++    return JSON.stringify(value);
++  } catch {
++    return String(value);
++  }
++};
++
++/** Приложение дошло до первого экрана — сторожу срабатывать не нужно. */
++export function t3patchMarkReady(): void {
++  (globalThis as { __t3patchReady?: boolean }).__t3patchReady = true;
++}
++
++export function installT3patchStartupDiagnostics(): void {
++  const errorUtils = (
++    globalThis as {
++      ErrorUtils?: { getGlobalHandler?: () => unknown; setGlobalHandler?: (h: unknown) => void };
++    }
++  ).ErrorUtils;
++  const previous = errorUtils?.getGlobalHandler?.();
++  errorUtils?.setGlobalHandler?.((error: unknown, isFatal?: boolean) => {
++    add(isFatal ? "Фатальная ошибка" : "Ошибка", describe(error));
++    if (typeof previous === "function")
++      (previous as (e: unknown, f?: boolean) => void)(error, isFatal);
++  });
++
++  const consoleError = console.error.bind(console);
++  console.error = (...args: unknown[]) => {
++    add("console.error", args.map(describe).join(" "));
++    consoleError(...args);
++  };
++}
++
++function DiagnosticsScreen(props: { readonly reason: string }) {
++  return (
++    <View style={{ flex: 1, backgroundColor: "#140000", paddingTop: 56, paddingHorizontal: 16 }}>
++      <Text
++        selectable
++        style={{ color: "#ff8a80", fontSize: 16, fontWeight: "700", marginBottom: 8 }}
++      >
++        T3 · диагностика запуска
++      </Text>
++      <Text selectable style={{ color: "#ffd0c8", fontSize: 13, marginBottom: 12 }}>
++        {props.reason}
++      </Text>
++      <ScrollView style={{ flex: 1 }}>
++        {records.length === 0 ? (
++          <Text selectable style={{ color: "#ffd0c8", fontSize: 12 }}>
++            Ошибок не поймано — приложение не дошло до первого экрана и не сообщило о готовности.
++          </Text>
++        ) : (
++          records.map((record, index) => (
++            <View key={index} style={{ marginBottom: 14 }}>
++              <Text selectable style={{ color: "#ff8a80", fontSize: 12, fontWeight: "700" }}>
++                {index + 1}. {record.kind}
++              </Text>
++              <Text selectable style={{ color: "#ffece8", fontSize: 11, fontFamily: "monospace" }}>
++                {record.text}
++              </Text>
++            </View>
++          ))
++        )}
++      </ScrollView>
++    </View>
++  );
++}
++
++const hideSplash = () => {
++  try {
++    SplashScreen.hide();
++  } catch {
++    // Модуль заставки может быть недоступен — диагностику это не отменяет.
++  }
++};
++
++class StartupBoundary extends Component<
++  { readonly children: ReactNode },
++  { reason: string | null }
++> {
++  private timer: ReturnType<typeof setTimeout> | null = null;
++
++  override state = { reason: null as string | null };
++
++  static getDerivedStateFromError(error: unknown) {
++    add("Ошибка при отрисовке", describe(error));
++    return { reason: "Приложение упало при отрисовке первого экрана." };
++  }
++
++  override componentDidMount() {
++    listeners.add(this.onRecord);
++    this.timer = setTimeout(() => {
++      if ((globalThis as { __t3patchReady?: boolean }).__t3patchReady) return;
++      hideSplash();
++      this.setState({ reason: "За 15 секунд приложение не дошло до первого экрана." });
++    }, READY_TIMEOUT_MS);
++  }
++
++  override componentDidUpdate() {
++    if (this.state.reason !== null) hideSplash();
++  }
++
++  override componentWillUnmount() {
++    listeners.delete(this.onRecord);
++    if (this.timer !== null) clearTimeout(this.timer);
++  }
++
++  private onRecord = () => {
++    this.forceUpdate();
++  };
++
++  override render() {
++    if (this.state.reason !== null) return <DiagnosticsScreen reason={this.state.reason} />;
++    return this.props.children;
++  }
++}
++
++/** Оборачивает корневой компонент; при сбое импорта самого приложения показывает причину. */
++export function t3patchWrapRoot(load: () => ComponentType): ComponentType {
++  let App: ComponentType | null = null;
++  let importError: string | null = null;
++  try {
++    App = load();
++  } catch (error) {
++    add("Ошибка загрузки приложения", describe(error));
++    importError = "Код приложения не загрузился.";
++  }
++  return function T3patchRoot() {
++    if (App === null) {
++      hideSplash();
++      return <DiagnosticsScreen reason={importError ?? "Код приложения не загрузился."} />;
++    }
++    return (
++      <StartupBoundary>
++        <App />
++      </StartupBoundary>
++    );
++  };
++}
+-- 
+2.43.0
+

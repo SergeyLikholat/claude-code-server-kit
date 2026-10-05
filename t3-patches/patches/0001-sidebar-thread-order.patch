@@ -1,0 +1,314 @@
+From 491cd0e49bc3f5915c43ab19c6e83d523987998d Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 20:23:17 +0300
+Subject: [PATCH 1/7] =?UTF-8?q?feat(sidebar):=20=D0=BF=D0=B5=D1=80=D0=B5?=
+ =?UTF-8?q?=D0=BA=D0=BB=D1=8E=D1=87=D0=B0=D1=82=D0=B5=D0=BB=D1=8C=20=D0=BF?=
+ =?UTF-8?q?=D0=BE=D1=80=D1=8F=D0=B4=D0=BA=D0=B0=20=D1=82=D1=80=D0=B5=D0=B4?=
+ =?UTF-8?q?=D0=BE=D0=B2=20=E2=80=94=20=D1=80=D1=83=D1=87=D0=BD=D0=BE=D0=B9?=
+ =?UTF-8?q?=20=D0=B8=D0=BB=D0=B8=20=D0=BF=D0=BE=20=D0=BF=D0=BE=D1=81=D0=BB?=
+ =?UTF-8?q?=D0=B5=D0=B4=D0=BD=D0=B5=D0=BC=D1=83=20=D1=81=D0=BE=D0=BE=D0=B1?=
+ =?UTF-8?q?=D1=89=D0=B5=D0=BD=D0=B8=D1=8E?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Плоский сайдбар штатно держит порядок создания и ручного перетаскивания.
+Добавлен режим «по последнему сообщению пользователя», как Last user message
+в LegacySidebar. Выбор хранится в localStorage под своим ключом.
+В этом режиме перестановка внутри активных отключена.
+---
+ apps/web/src/components/Sidebar.tsx           | 20 +++-
+ .../sergey/FlatThreadOrderToggle.tsx          | 39 ++++++++
+ .../components/sergey/flatThreadOrder.test.ts | 51 ++++++++++
+ .../src/components/sergey/flatThreadOrder.ts  | 95 +++++++++++++++++++
+ .../sidebar/SidebarThreadHeader.tsx           |  2 +
+ 5 files changed, 204 insertions(+), 3 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/FlatThreadOrderToggle.tsx
+ create mode 100644 apps/web/src/components/sergey/flatThreadOrder.test.ts
+ create mode 100644 apps/web/src/components/sergey/flatThreadOrder.ts
+
+diff --git a/apps/web/src/components/Sidebar.tsx b/apps/web/src/components/Sidebar.tsx
+index e5a86ff98a..1ade338a53 100644
+--- a/apps/web/src/components/Sidebar.tsx
++++ b/apps/web/src/components/Sidebar.tsx
+@@ -234,6 +234,7 @@ import {
+ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
+ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
++import { sortThreadsByLatestMessage, useFlatThreadOrder } from "./sergey/flatThreadOrder";
+ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
+ import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+ import {
+@@ -2508,6 +2509,7 @@ export default function Sidebar() {
+         override holds until all of them appear in canonical state. */
+     readonly assignedKeys: ReadonlyMap<string, string>;
+   } | null>(null);
++  const flatThreadOrder = useFlatThreadOrder(); // t3-patch: порядок тредов
+   const {
+     pinnedThreads,
+     draggableThreadKeys,
+@@ -2584,7 +2586,10 @@ export default function Sidebar() {
+     // sort, or mixed-version fleets would render different pinned orders on
+     // web and mobile from the same data.
+     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
+-    const sortedActive = sortThreadsForSidebar(active);
++    const sortedActive =
++      flatThreadOrder === "latest"
++        ? sortThreadsByLatestMessage(active)
++        : sortThreadsForSidebar(active);
+     return {
+       pinnedThreads:
+         optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
+@@ -2595,7 +2600,8 @@ export default function Sidebar() {
+               getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+             }),
+       draggableThreadKeys: draggable,
+-      activeReorderableThreadKeys: activeReorderable,
++      activeReorderableThreadKeys:
++        flatThreadOrder === "latest" ? new Set<string>() : activeReorderable,
+       activeThreads:
+         optimisticDrop?.section !== "active" || optimisticDrop.order === null
+           ? sortedActive
+@@ -2613,7 +2619,15 @@ export default function Sidebar() {
+       settledThreads: sortSettledThreadsForSidebar(settled),
+       snoozeNow: preciseNow,
+     };
+-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
++  }, [
++    flatThreadOrder,
++    nowMinute,
++    optimisticDrop,
++    scopedProjectKeys,
++    serverConfigs,
++    snoozeWakeTick,
++    threads,
++  ]);
+ 
+   const threadSearchInputRef = useRef<HTMLInputElement>(null);
+   const [threadSearchQuery, setThreadSearchQuery] = useState("");
+diff --git a/apps/web/src/components/sergey/FlatThreadOrderToggle.tsx b/apps/web/src/components/sergey/FlatThreadOrderToggle.tsx
+new file mode 100644
+index 0000000000..4c0bdf280e
+--- /dev/null
++++ b/apps/web/src/components/sergey/FlatThreadOrderToggle.tsx
+@@ -0,0 +1,39 @@
++import { ClockArrowDownIcon, GripVerticalIcon } from "lucide-react";
++import type { ComponentType, ReactNode } from "react";
++
++import { setFlatThreadOrder, useFlatThreadOrder } from "./flatThreadOrder";
++
++type HeaderIconButton = ComponentType<{
++  label: string;
++  tooltip?: ReactNode;
++  onClick?: () => void;
++  children: ReactNode;
++}>;
++
++/** Кнопка в шапке плоского сайдбара: ручной порядок ↔ по последнему сообщению.
++    Кнопку-иконку шапки получает параметром, чтобы не импортировать файл,
++    который сам подключает этот компонент. */
++export function FlatThreadOrderToggle({ Button }: { Button: HeaderIconButton }) {
++  const order = useFlatThreadOrder();
++  const latest = order === "latest";
++  return (
++    <Button
++      label={latest ? "Порядок: по последнему сообщению" : "Порядок: ручной"}
++      tooltip={
++        <span className="flex flex-col gap-0.5">
++          <span>
++            {latest ? "Сверху — треды с последним сообщением" : "Ручной порядок (перетаскивание)"}
++          </span>
++          <span className="text-muted-foreground">
++            {latest
++              ? "Нажми, чтобы вернуть ручной порядок"
++              : "Нажми, чтобы сортировать по последнему сообщению"}
++          </span>
++        </span>
++      }
++      onClick={() => setFlatThreadOrder(latest ? "manual" : "latest")}
++    >
++      {latest ? <ClockArrowDownIcon /> : <GripVerticalIcon />}
++    </Button>
++  );
++}
+diff --git a/apps/web/src/components/sergey/flatThreadOrder.test.ts b/apps/web/src/components/sergey/flatThreadOrder.test.ts
+new file mode 100644
+index 0000000000..1fbbe62bd4
+--- /dev/null
++++ b/apps/web/src/components/sergey/flatThreadOrder.test.ts
+@@ -0,0 +1,51 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import { latestActivityMs, sortThreadsByLatestMessage } from "./flatThreadOrder";
++
++const thread = (
++  id: string,
++  createdAt: string,
++  updatedAt: string,
++  latestUserMessageAt: string | null,
++) => ({ id, createdAt, updatedAt, latestUserMessageAt });
++
++describe("sortThreadsByLatestMessage", () => {
++  it("поднимает тред с самым свежим сообщением, даже если он создан раньше всех", () => {
++    const old = thread(
++      "old",
++      "2026-09-20T10:00:00Z",
++      "2026-09-20T10:00:00Z",
++      "2026-09-24T12:00:00Z",
++    );
++    const fresh = thread(
++      "fresh",
++      "2026-09-24T09:00:00Z",
++      "2026-09-24T09:00:00Z",
++      "2026-09-24T09:05:00Z",
++    );
++    expect(sortThreadsByLatestMessage([fresh, old]).map((t) => t.id)).toEqual(["old", "fresh"]);
++  });
++
++  it("без сообщений берёт время обновления, затем создания", () => {
++    const a = thread("a", "2026-09-20T10:00:00Z", "2026-09-23T10:00:00Z", null);
++    const b = thread("b", "2026-09-22T10:00:00Z", "not-a-date", null);
++    expect(latestActivityMs(b)).toBe(Date.parse("2026-09-22T10:00:00Z"));
++    expect(sortThreadsByLatestMessage([b, a]).map((t) => t.id)).toEqual(["a", "b"]);
++  });
++
++  it("при равном времени порядок стабилен по id", () => {
++    const x = thread("x", "2026-09-24T10:00:00Z", "2026-09-24T10:00:00Z", null);
++    const y = thread("y", "2026-09-24T10:00:00Z", "2026-09-24T10:00:00Z", null);
++    expect(sortThreadsByLatestMessage([y, x]).map((t) => t.id)).toEqual(["x", "y"]);
++  });
++
++  it("не мутирует входной массив", () => {
++    const input = [
++      thread("a", "2026-09-20T10:00:00Z", "2026-09-20T10:00:00Z", null),
++      thread("b", "2026-09-21T10:00:00Z", "2026-09-21T10:00:00Z", null),
++    ];
++    const copy = [...input];
++    sortThreadsByLatestMessage(input);
++    expect(input).toEqual(copy);
++  });
++});
+diff --git a/apps/web/src/components/sergey/flatThreadOrder.ts b/apps/web/src/components/sergey/flatThreadOrder.ts
+new file mode 100644
+index 0000000000..d75cd8e4e4
+--- /dev/null
++++ b/apps/web/src/components/sergey/flatThreadOrder.ts
+@@ -0,0 +1,95 @@
++/**
++ * Порядок тредов в плоском сайдбаре: штатный «ручной» или по последнему
++ * сообщению пользователя (как «Last user message» в LegacySidebar).
++ *
++ * Штатно активные треды стоят в порядке создания и ручного перетаскивания —
++ * активность их не двигает (см. sortActiveThreadsByOrderKey). Этот режим
++ * добавляет альтернативу, не трогая штатную логику.
++ *
++ * Выбор хранится в localStorage устройства, как остальные клиентские
++ * настройки, но под своим ключом: так патч не меняет общую схему настроек.
++ */
++import { useSyncExternalStore } from "react";
++
++export type FlatThreadOrder = "manual" | "latest";
++
++const STORAGE_KEY = "t3patch.flatThreadOrder";
++const listeners = new Set<() => void>();
++
++function readOrder(): FlatThreadOrder {
++  try {
++    return globalThis.localStorage?.getItem(STORAGE_KEY) === "latest" ? "latest" : "manual";
++  } catch {
++    return "manual";
++  }
++}
++
++export function setFlatThreadOrder(order: FlatThreadOrder): void {
++  try {
++    globalThis.localStorage?.setItem(STORAGE_KEY, order);
++  } catch {
++    // приватный режим или переполненное хранилище: режим действует до перезагрузки
++  }
++  cachedOrder = order;
++  for (const listener of listeners) listener();
++}
++
++let cachedOrder: FlatThreadOrder = readOrder();
++
++function subscribe(listener: () => void): () => void {
++  listeners.add(listener);
++  const onStorage = (event: StorageEvent) => {
++    if (event.key !== STORAGE_KEY) return;
++    cachedOrder = readOrder();
++    listener();
++  };
++  globalThis.addEventListener?.("storage", onStorage);
++  return () => {
++    listeners.delete(listener);
++    globalThis.removeEventListener?.("storage", onStorage);
++  };
++}
++
++export function useFlatThreadOrder(): FlatThreadOrder {
++  return useSyncExternalStore(
++    subscribe,
++    () => cachedOrder,
++    () => "manual",
++  );
++}
++
++function toMs(value: string | null | undefined): number | null {
++  if (!value) return null;
++  const ms = Date.parse(value);
++  return Number.isNaN(ms) ? null : ms;
++}
++
++/** Время для сортировки: последнее сообщение пользователя, иначе последнее
++    обновление, иначе создание — тот же запасной порядок, что у legacy. */
++export function latestActivityMs(thread: {
++  readonly latestUserMessageAt?: string | null | undefined;
++  readonly updatedAt: string;
++  readonly createdAt: string;
++}): number {
++  return (
++    toMs(thread.latestUserMessageAt) ??
++    toMs(thread.updatedAt) ??
++    toMs(thread.createdAt) ??
++    Number.NEGATIVE_INFINITY
++  );
++}
++
++/** Новые сверху; при равенстве — стабильно по id, чтобы строки не прыгали. */
++export function sortThreadsByLatestMessage<
++  T extends {
++    readonly id: string;
++    readonly latestUserMessageAt?: string | null | undefined;
++    readonly updatedAt: string;
++    readonly createdAt: string;
++  },
++>(threads: readonly T[]): T[] {
++  const stamps = new Map(threads.map((thread) => [thread, latestActivityMs(thread)]));
++  return [...threads].sort(
++    (left, right) => stamps.get(right)! - stamps.get(left)! || left.id.localeCompare(right.id),
++  );
++}
+diff --git a/apps/web/src/components/sidebar/SidebarThreadHeader.tsx b/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
+index 6f9a686e52..cd673e945f 100644
+--- a/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
++++ b/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
+@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
+ import { Input } from "../ui/input";
+ import { SidebarMenuButton } from "../ui/sidebar";
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
++import { FlatThreadOrderToggle } from "../sergey/FlatThreadOrderToggle";
+ 
+ export interface SidebarThreadHeaderProps {
+   /** Lands on the search field so a popup can anchor to its width. */
+@@ -134,6 +135,7 @@ export function SidebarThreadHeader({
+             </SidebarHeaderIconButton>
+           </>
+         ) : null}
++        <FlatThreadOrderToggle Button={SidebarHeaderIconButton} />
+         <SidebarHeaderIconButton
+           label="New thread"
+           tooltip={
+-- 
+2.43.0
+

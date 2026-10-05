@@ -1,0 +1,2 @@
+SheetJS 0.20.3 — https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js (Apache-2.0)
+mammoth 1.12.3 — https://unpkg.com/mammoth@1.12.3/mammoth.browser.min.js (BSD-2-Clause)

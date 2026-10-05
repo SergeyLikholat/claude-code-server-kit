@@ -1,0 +1,55 @@
+From ed95f12b9df1b5085e40cba796b183098ea595ef Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sun, 4 Oct 2026 01:18:47 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20=C2=ABT3=20Biz=C2=BB=20=D0=B2=20?=
+ =?UTF-8?q?=D0=BB=D0=BE=D0=B3=D0=BE=D1=82=D0=B8=D0=BF=D0=B5=20=D0=B1=D0=BE?=
+ =?UTF-8?q?=D0=BA=D0=BE=D0=B2=D0=BE=D0=B9=20=D0=BF=D0=B0=D0=BD=D0=B5=D0=BB?=
+ =?UTF-8?q?=D0=B8=20=D0=B8=20=D0=BC=D0=B0=D1=81=D1=82=D0=B5=D1=80=D0=B5=20?=
+ =?UTF-8?q?=D0=BF=D1=80=D0=B8=D0=B2=D0=B5=D1=82=D1=81=D1=82=D0=B2=D0=B8?=
+ =?UTF-8?q?=D1=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/onboarding/WelcomeWizard.tsx | 2 +-
+ apps/web/src/components/sidebar/SidebarChrome.tsx    | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/apps/web/src/components/onboarding/WelcomeWizard.tsx b/apps/web/src/components/onboarding/WelcomeWizard.tsx
+index 5c6517e154..648e3a36aa 100644
+--- a/apps/web/src/components/onboarding/WelcomeWizard.tsx
++++ b/apps/web/src/components/onboarding/WelcomeWizard.tsx
+@@ -194,7 +194,7 @@ export function WelcomeWizard({
+             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
+               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
+               <span className="text-[1.4rem] font-medium tracking-tight text-muted-foreground">
+-                Code
++                Biz
+               </span>
+             </div>
+           }
+diff --git a/apps/web/src/components/sidebar/SidebarChrome.tsx b/apps/web/src/components/sidebar/SidebarChrome.tsx
+index 5a332b8605..f4902e7f82 100644
+--- a/apps/web/src/components/sidebar/SidebarChrome.tsx
++++ b/apps/web/src/components/sidebar/SidebarChrome.tsx
+@@ -92,6 +92,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+       to="/"
+     >
+       {/* Center the visible capitals, without the font's ascender/descender space. */}
++      {/* t3-patch: своя редакция — «T3 Biz» */}
+       <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
+         <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+         <span
+@@ -100,7 +101,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+             onBackdrop ? "text-white/70" : "text-muted-foreground",
+           )}
+         >
+-          Code
++          Biz
+         </span>
+       </span>
+     </Link>
+-- 
+2.43.0
+

@@ -1,0 +1,241 @@
+From 0b27112be846ccce571ee75707713aa57ae78091 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Wed, 30 Sep 2026 08:53:09 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D1=81=D0=B2=D0=BE=D1=91=20?=
+ =?UTF-8?q?=D0=BE=D0=BA=D0=BD=D0=BE=20=D0=BF=D1=80=D0=BE=D1=81=D0=BC=D0=BE?=
+ =?UTF-8?q?=D1=82=D1=80=D0=B0=20=D0=BA=D0=B0=D1=80=D1=82=D0=B8=D0=BD=D0=BE?=
+ =?UTF-8?q?=D0=BA=20=D0=B2=D0=BC=D0=B5=D1=81=D1=82=D0=BE=20react-native-im?=
+ =?UTF-8?q?age-viewing=20(=D1=87=D1=91=D1=80=D0=BD=D1=8B=D0=B9=20=D1=8D?=
+ =?UTF-8?q?=D0=BA=D1=80=D0=B0=D0=BD,=20=D0=BD=D0=B5=D0=B4=D0=BE=D1=81?=
+ =?UTF-8?q?=D1=82=D1=83=D0=BF=D0=BD=D1=8B=D0=B9=20=D0=BA=D1=80=D0=B5=D1=81?=
+ =?UTF-8?q?=D1=82=D0=B8=D0=BA)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/mobile/src/components/FilePreview.tsx    |  15 +-
+ .../src/components/MediaImagePreview.tsx      |  17 +--
+ apps/mobile/src/sergey/ImageViewer.tsx        | 132 ++++++++++++++++++
+ 3 files changed, 143 insertions(+), 21 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/ImageViewer.tsx
+
+diff --git a/apps/mobile/src/components/FilePreview.tsx b/apps/mobile/src/components/FilePreview.tsx
+index a255f50ccd..69648f51d4 100644
+--- a/apps/mobile/src/components/FilePreview.tsx
++++ b/apps/mobile/src/components/FilePreview.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useEffectEvent } from "react";
+ import { Alert, Modal, Pressable, View } from "react-native";
+-import ImageViewing from "react-native-image-viewing";
++import { T3patchImageViewer } from "../sergey/ImageViewer"; // t3-patch
+ 
+ import { openAttachmentInViewer } from "../lib/attachmentDownload";
+ import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+@@ -72,14 +72,7 @@ export function FilePreview(props: {
+ }) {
+   if (props.source.kind !== "image") return <DocumentPreview {...props} />;
+   if (props.source.actionsSource) return <MediaImagePreview {...props} />;
+-  return (
+-    <ImageViewing
+-      images={[{ uri: props.source.uri }]}
+-      imageIndex={0}
+-      visible
+-      onRequestClose={props.onRequestClose}
+-      swipeToCloseEnabled
+-      doubleTapToZoomEnabled
+-    />
+-  );
++  // t3-patch: своё окно просмотра (sergey/ImageViewer.tsx) вместо react-native-image-viewing,
++  // которое на Android показывало чёрный экран.
++  return <T3patchImageViewer uri={props.source.uri} onClose={props.onRequestClose} />;
+ }
+diff --git a/apps/mobile/src/components/MediaImagePreview.tsx b/apps/mobile/src/components/MediaImagePreview.tsx
+index 03e317c296..7e0c800737 100644
+--- a/apps/mobile/src/components/MediaImagePreview.tsx
++++ b/apps/mobile/src/components/MediaImagePreview.tsx
+@@ -1,6 +1,5 @@
+ import { createContext, useContext } from "react";
+ import { Pressable, View } from "react-native";
+-import ImageViewing from "react-native-image-viewing";
+ import { useSafeAreaInsets } from "react-native-safe-area-context";
+ 
+ import { useMediaActions } from "../lib/mediaActions";
+@@ -9,6 +8,7 @@ import { SymbolView } from "./AppSymbol";
+ import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+ import { MediaActionsMenu } from "./MediaActionsMenu";
+ import { MediaSourceCaption } from "./MediaSourceCaption";
++import { T3patchImageViewer } from "../sergey/ImageViewer"; // t3-patch
+ 
+ type MediaImagePreviewProps = {
+   readonly source: ResolvedFilePreviewSource;
+@@ -31,6 +31,7 @@ function ImagePreviewHeader() {
+         <Pressable
+           accessibilityRole="button"
+           accessibilityLabel="Close image"
++          hitSlop={12} // t3-patch: попасть по крестику легче
+           onPress={props.onRequestClose}
+           className="min-h-11 min-w-11 items-center justify-center"
+         >
+@@ -46,15 +47,11 @@ function ImagePreviewHeader() {
+ export function MediaImagePreview(props: MediaImagePreviewProps) {
+   return (
+     <ImagePreviewContext value={props}>
+-      <ImageViewing
+-        images={[{ uri: props.source.uri }]}
+-        imageIndex={0}
+-        visible
+-        presentationStyle="fullScreen"
+-        onRequestClose={props.onRequestClose}
+-        swipeToCloseEnabled
+-        doubleTapToZoomEnabled
+-        HeaderComponent={ImagePreviewHeader}
++      {/* t3-patch: своё окно просмотра вместо react-native-image-viewing (чёрный экран на Android) */}
++      <T3patchImageViewer
++        uri={props.source.uri}
++        onClose={props.onRequestClose}
++        header={<ImagePreviewHeader />}
+       />
+     </ImagePreviewContext>
+   );
+diff --git a/apps/mobile/src/sergey/ImageViewer.tsx b/apps/mobile/src/sergey/ImageViewer.tsx
+new file mode 100644
+index 0000000000..5ebf60fa77
+--- /dev/null
++++ b/apps/mobile/src/sergey/ImageViewer.tsx
+@@ -0,0 +1,132 @@
++/**
++ * t3-patch: своё окно просмотра картинки вместо react-native-image-viewing.
++ *
++ * Библиотека на Android показывала чёрный экран (картинка не рисовалась, и `headers: {}` не
++ * помог), а её крестик уходил под строку состояния. Здесь: expo-image во весь экран
++ * (contain), увеличение двумя пальцами и двойным касанием, перетаскивание увеличенной
++ * картинки, шапка ниже строки состояния. Не открылась картинка — причина видна текстом.
++ */
++import { Image } from "expo-image";
++import { type ReactNode, useState } from "react";
++import { Modal, Pressable, View } from "react-native";
++import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
++import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
++import { useSafeAreaInsets } from "react-native-safe-area-context";
++
++import { SymbolView } from "../components/AppSymbol";
++import { AppText as Text } from "../components/AppText";
++
++const MAX_SCALE = 6;
++const DOUBLE_TAP_SCALE = 2.5;
++
++export function T3patchCloseButton(props: { readonly onClose: () => void }) {
++  return (
++    <Pressable
++      accessibilityRole="button"
++      accessibilityLabel="Закрыть"
++      hitSlop={12}
++      onPress={props.onClose}
++      className="size-12 items-center justify-center rounded-full bg-black/50 active:opacity-70"
++    >
++      <SymbolView name="xmark" size={20} tintColor="#ffffff" type="monochrome" />
++    </Pressable>
++  );
++}
++
++export function T3patchImageViewer(props: {
++  readonly uri: string;
++  readonly onClose: () => void;
++  /** Своя шапка (название, меню) — отступ под строку состояния делает сама; по умолчанию — крестик. */
++  readonly header?: ReactNode;
++}) {
++  const insets = useSafeAreaInsets();
++  const [error, setError] = useState<string | null>(null);
++  const scale = useSharedValue(1);
++  const savedScale = useSharedValue(1);
++  const x = useSharedValue(0);
++  const y = useSharedValue(0);
++  const savedX = useSharedValue(0);
++  const savedY = useSharedValue(0);
++
++  const pinch = Gesture.Pinch()
++    .onUpdate((event) => {
++      scale.value = Math.min(MAX_SCALE, Math.max(1, savedScale.value * event.scale));
++    })
++    .onEnd(() => {
++      savedScale.value = scale.value;
++      if (scale.value <= 1) {
++        x.value = withTiming(0);
++        y.value = withTiming(0);
++        savedX.value = 0;
++        savedY.value = 0;
++      }
++    });
++  const pan = Gesture.Pan()
++    .averageTouches(true)
++    .onUpdate((event) => {
++      if (scale.value <= 1) return;
++      x.value = savedX.value + event.translationX;
++      y.value = savedY.value + event.translationY;
++    })
++    .onEnd(() => {
++      savedX.value = x.value;
++      savedY.value = y.value;
++    });
++  const doubleTap = Gesture.Tap()
++    .numberOfTaps(2)
++    .onEnd(() => {
++      const zoomIn = scale.value <= 1;
++      const target = zoomIn ? DOUBLE_TAP_SCALE : 1;
++      scale.value = withTiming(target);
++      savedScale.value = target;
++      if (!zoomIn) {
++        x.value = withTiming(0);
++        y.value = withTiming(0);
++        savedX.value = 0;
++        savedY.value = 0;
++      }
++    });
++  const gesture = Gesture.Simultaneous(pinch, pan, doubleTap);
++  const imageStyle = useAnimatedStyle(() => ({
++    transform: [{ translateX: x.value }, { translateY: y.value }, { scale: scale.value }],
++  }));
++
++  return (
++    <Modal
++      visible
++      animationType="fade"
++      statusBarTranslucent
++      navigationBarTranslucent
++      onRequestClose={props.onClose}
++    >
++      <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
++        <GestureDetector gesture={gesture}>
++          <Animated.View style={[{ flex: 1 }, imageStyle]}>
++            <Image
++              source={{ uri: props.uri }}
++              style={{ flex: 1 }}
++              contentFit="contain"
++              onError={(event) => setError(event.error)}
++            />
++          </Animated.View>
++        </GestureDetector>
++        {error ? (
++          <View className="absolute inset-x-6 top-1/2 items-center">
++            <Text className="text-center text-sm text-white">Картинка не открылась: {error}</Text>
++          </View>
++        ) : null}
++        <View className="absolute inset-x-0 top-0" pointerEvents="box-none">
++          {props.header ?? (
++            <View
++              className="flex-row justify-end px-2"
++              style={{ paddingTop: insets.top + 4 }}
++              pointerEvents="box-none"
++            >
++              <T3patchCloseButton onClose={props.onClose} />
++            </View>
++          )}
++        </View>
++      </GestureHandlerRootView>
++    </Modal>
++  );
++}
+-- 
+2.43.0
+

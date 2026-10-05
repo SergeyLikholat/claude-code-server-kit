@@ -1,0 +1,53 @@
+From 7541247c88a12014ca542b638277472a3b484fd1 Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sun, 4 Oct 2026 23:45:31 +0300
+Subject: [PATCH] =?UTF-8?q?feat(server):=20=D0=BD=D0=B0=D0=B7=D0=B2=D0=B0?=
+ =?UTF-8?q?=D0=BD=D0=B8=D1=8F=20=D1=82=D1=80=D0=B5=D0=B4=D0=BE=D0=B2=20?=
+ =?UTF-8?q?=D0=BF=D0=BE-=D1=80=D1=83=D1=81=D1=81=D0=BA=D0=B8=20=E2=80=94?=
+ =?UTF-8?q?=20=D0=BF=D1=80=D0=B0=D0=B2=D0=B8=D0=BB=D0=BE=20=D0=B2=20=D1=81?=
+ =?UTF-8?q?=D0=B0=D0=BC=D0=BE=D0=BC=20=D0=B7=D0=B0=D0=BF=D1=80=D0=BE=D1=81?=
+ =?UTF-8?q?=D0=B5,=20=D0=B1=D0=B5=D0=B7=20=D0=BE=D0=B1=D1=91=D1=80=D1=82?=
+ =?UTF-8?q?=D0=BA=D0=B8=20=D0=BD=D0=B0=D0=B4=20claude?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/textGeneration/TextGenerationPrompts.ts    | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/apps/server/src/textGeneration/TextGenerationPrompts.ts b/apps/server/src/textGeneration/TextGenerationPrompts.ts
+index bf572a4bdb..8d573a52c3 100644
+--- a/apps/server/src/textGeneration/TextGenerationPrompts.ts
++++ b/apps/server/src/textGeneration/TextGenerationPrompts.ts
+@@ -311,6 +311,19 @@ function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
+   return suffix;
+ }
+ 
++// t3-patch: названия тредов по-русски. Раньше это дописывала обёртка над claude
++// (providers.claudeAgent.binaryPath), но с ней T3 не узнаёт способ установки CLI и не даёт
++// обновить его из настроек. Правило теперь в самом запросе — для любого провайдера.
++const T3PATCH_RUSSIAN_TITLE_RULES = `
++
++Additional instructions:
++- Write the title in Russian. Every editorial rule above still applies, including the length limit.
++- 3-7 Russian words, fewer than 40 characters.
++- Use sentence case: capitalize only the first word and proper nouns. Never use English Title Case.
++- Keep file paths, commands, identifiers and proper names in their original form (t3, Multica, n8n, КС-2, openpyxl).
++- Do not transliterate English technical terms that have a settled Russian equivalent; use the Russian one.
++- No trailing punctuation.`;
++
+ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
+   let prompt: string;
+   if (input.previousTitle === undefined) {
+@@ -320,6 +333,7 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
+     const message = preserveMessageEnd(input.message);
+     prompt = `${regenerateThreadTitlePrompt(input.previousTitle)}\n\nThread contents:\n${message}${threadTitlePromptSuffix(input)}`;
+   }
++  prompt += T3PATCH_RUSSIAN_TITLE_RULES; // t3-patch
+   const outputSchema = Schema.Struct({
+     title: Schema.String,
+     needsRefinement: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+-- 
+2.43.0
+

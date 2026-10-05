@@ -41,3 +41,8 @@ notes/
 
 # Архивы готовой сборки T3 (t3-patches/package.sh) — раздаются отдельно, не через git
 t3-patches/dist/
+# Собранные APK (раздаются отдельно), кеши и служебные отчёты набора патчей T3
+t3-patches/apk/
+t3-patches/i18n/__pycache__/
+t3-patches/i18n/catalog.json
+t3-patches/mobile/rejected/

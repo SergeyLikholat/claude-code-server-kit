@@ -1,0 +1,351 @@
+From b197b693e1c027be64aabcbd98f865fa37cf9a5b Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 24 Sep 2026 21:55:10 +0300
+Subject: [PATCH 5/7] =?UTF-8?q?feat(files):=20=D0=BF=D1=80=D0=BE=D1=81?=
+ =?UTF-8?q?=D0=BC=D0=BE=D1=82=D1=80=20=D1=81=D1=82=D0=B0=D1=80=D1=8B=D1=85?=
+ =?UTF-8?q?=20=D1=84=D0=BE=D1=80=D0=BC=D0=B0=D1=82=D0=BE=D0=B2=20.doc,=20.?=
+ =?UTF-8?q?rtf,=20.odt=20=D0=B8=20.xlsb?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+.doc/.rtf/.odt сервер конвертирует в docx через LibreOffice (свой профиль,
+очередь, кэш по пути+размеру+дате в ~/.cache/t3patch-convert, чистка старше
+30 дней), дальше работает просмотрщик docx. .xlsb читает SheetJS напрямую.
+---
+ apps/server/src/sergey/fileAccess.test.ts     |  36 +++++
+ apps/server/src/sergey/fileAccess.ts          | 127 +++++++++++++++++-
+ apps/server/src/server.ts                     |   7 +-
+ .../src/components/sergey/OfficePreview.tsx   |  27 +++-
+ apps/web/src/components/sergey/fileActions.ts |   2 +
+ apps/web/src/components/sergey/officeFiles.ts |   7 +-
+ 6 files changed, 195 insertions(+), 11 deletions(-)
+
+diff --git a/apps/server/src/sergey/fileAccess.test.ts b/apps/server/src/sergey/fileAccess.test.ts
+index 862498ea94..fcca56c925 100644
+--- a/apps/server/src/sergey/fileAccess.test.ts
++++ b/apps/server/src/sergey/fileAccess.test.ts
+@@ -1,6 +1,12 @@
++// @effect-diagnostics globalDate:off
++// @effect-diagnostics nodeBuiltinImport:off
+ import { describe, expect, it } from "vite-plus/test";
+ 
++import { existsSync, readdirSync } from "node:fs";
++
+ import {
++  convertToDocxCached,
++  isConvertibleToDocx,
+   issueFileToken,
+   parseMountInfo,
+   resolveBindMounts,
+@@ -62,3 +68,33 @@ describe("настоящий путь через bind-монтирования",
+     expect(resolveBindMounts("/root/projects/x/docs/f.pdf", mounts)).toBe("/root/My Docs/f.pdf");
+   });
+ });
++
++describe("конвертация старых форматов в docx", () => {
++  it("распознаёт форматы", () => {
++    expect(isConvertibleToDocx("/a/Письмо.DOC")).toBe(true);
++    expect(isConvertibleToDocx("/a/b.rtf")).toBe(true);
++    expect(isConvertibleToDocx("/a/b.docx")).toBe(false);
++    expect(isConvertibleToDocx("/a/b.xls")).toBe(false);
++  });
++
++  const sample = (() => {
++    const dir = "/root/Obsidian/4. Ресурсы/Почитать/Сергей Лукьяненко/Публицистика";
++    if (!existsSync(dir)) return null;
++    const name = readdirSync(dir).find((file) => file.toLowerCase().endsWith(".doc"));
++    return name ? `${dir}/${name}` : null;
++  })();
++
++  it.skipIf(sample === null)(
++    "настоящий .doc превращается в docx, повторный вызов берёт кэш",
++    async () => {
++      const first = await convertToDocxCached(sample!);
++      expect(first.endsWith(".docx")).toBe(true);
++      expect(existsSync(first)).toBe(true);
++      const started = performance.now();
++      const second = await convertToDocxCached(sample!);
++      expect(second).toBe(first);
++      expect(performance.now() - started).toBeLessThan(500);
++    },
++    120_000,
++  );
++});
+diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
+index 7d3083bd1d..b7c78c2f10 100644
+--- a/apps/server/src/sergey/fileAccess.ts
++++ b/apps/server/src/sergey/fileAccess.ts
+@@ -18,8 +18,20 @@
+  * WorkspacePaths, а настоящий путь файла обязан лежать внутри настоящего
+  * корня проекта — симлинк наружу не пройдёт.
+  */
+-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+-import { readFile, realpath, stat } from "node:fs/promises";
++import { execFile } from "node:child_process";
++import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
++import {
++  mkdir,
++  mkdtemp,
++  readdir,
++  readFile,
++  realpath,
++  rename,
++  rm,
++  stat,
++  utimes,
++} from "node:fs/promises";
++import * as NodeOs from "node:os";
+ import * as NodePath from "node:path";
+ 
+ import { AuthOrchestrationReadScope } from "@t3tools/contracts";
+@@ -32,6 +44,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+ 
+ export const T3PATCH_FILE_INFO_PATH = "/api/t3patch/file-info";
+ export const T3PATCH_FILE_ROUTE_PREFIX = "/api/t3patch/file";
++export const T3PATCH_CONVERT_ROUTE_PREFIX = "/api/t3patch/convert";
+ const TOKEN_TTL_MS = 60 * 60 * 1000;
+ // Ключ живёт до перезапуска сервера: ссылки на скачивание короткоживущие, хранить его незачем.
+ const SIGNING_KEY = randomBytes(32);
+@@ -164,6 +177,12 @@ export const t3patchFileInfoRouteLayer = HttpRouter.add(
+               NodePath.basename(realTarget),
+             )}`
+           : null,
++        convertUrl:
++          stats.isFile() && isConvertibleToDocx(realTarget)
++            ? `${T3PATCH_CONVERT_ROUTE_PREFIX}/${issueFileToken(realTarget)}/${encodeURIComponent(
++                `${NodePath.parse(realTarget).name}.docx`,
++              )}`
++            : null,
+       };
+     }).pipe(Effect.orElseSucceed(() => null));
+     if (!info) return json({ error: "Файл не найден или вне проекта." }, 404);
+@@ -195,3 +214,107 @@ export const t3patchFileRouteLayer = HttpRouter.add(
+     );
+   }),
+ );
++
++/**
++ * Старые форматы Word (.doc), а также .rtf и .odt браузер прочитать не может —
++ * их конвертирует в .docx LibreOffice на сервере, дальше работает тот же
++ * просмотрщик docx. Результат кэшируется по пути, размеру и дате изменения.
++ */
++const CONVERTIBLE_TO_DOCX = new Set([".doc", ".rtf", ".odt"]);
++const CONVERT_TIMEOUT_MS = 90_000;
++const CONVERT_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
++
++export const isConvertibleToDocx = (filePath: string) =>
++  CONVERTIBLE_TO_DOCX.has(NodePath.extname(filePath).toLowerCase());
++
++const convertCacheDir = () => NodePath.join(NodeOs.homedir(), ".cache", "t3patch-convert");
++
++// Один профиль LibreOffice на все конвертации — поэтому строго по очереди.
++let conversionQueue: Promise<unknown> = Promise.resolve();
++
++function runSoffice(args: readonly string[]): Promise<void> {
++  return new Promise((resolve, reject) => {
++    execFile("soffice", [...args], { timeout: CONVERT_TIMEOUT_MS }, (error) =>
++      error ? reject(error) : resolve(),
++    );
++  });
++}
++
++async function pruneConvertCache(dir: string, now: number): Promise<void> {
++  for (const name of await readdir(dir).catch(() => [] as string[])) {
++    if (!name.endsWith(".docx")) continue;
++    const file = NodePath.join(dir, name);
++    const info = await stat(file).catch(() => null);
++    if (info && now - info.mtimeMs > CONVERT_CACHE_MAX_AGE_MS) await rm(file, { force: true });
++  }
++}
++
++export async function convertToDocxCached(sourcePath: string): Promise<string> {
++  const source = await stat(sourcePath);
++  const dir = convertCacheDir();
++  const key = createHash("sha256")
++    .update(`${sourcePath}\0${source.size}\0${source.mtimeMs}`)
++    .digest("hex")
++    .slice(0, 32);
++  const target = NodePath.join(dir, `${key}.docx`);
++  const cached = await stat(target).catch(() => null);
++  if (cached?.isFile()) {
++    const now = new Date();
++    await utimes(target, now, now).catch(() => undefined); // свежее использование — не чистить
++    return target;
++  }
++  const job = conversionQueue.then(async () => {
++    await mkdir(dir, { recursive: true });
++    const outDir = await mkdtemp(NodePath.join(dir, "out-"));
++    try {
++      await runSoffice([
++        `-env:UserInstallation=file://${NodePath.join(dir, "lo-profile")}`,
++        "--headless",
++        "--norestore",
++        "--nologo",
++        "--convert-to",
++        "docx",
++        "--outdir",
++        outDir,
++        sourcePath,
++      ]);
++      const produced = (await readdir(outDir)).find((name) => name.endsWith(".docx"));
++      if (!produced) throw new Error("LibreOffice не создал docx");
++      await rename(NodePath.join(outDir, produced), target);
++      await pruneConvertCache(dir, Date.now());
++      return target;
++    } finally {
++      await rm(outDir, { recursive: true, force: true });
++    }
++  });
++  conversionQueue = job.catch(() => undefined);
++  return job;
++}
++
++export const t3patchConvertRouteLayer = HttpRouter.add(
++  "GET",
++  `${T3PATCH_CONVERT_ROUTE_PREFIX}/*`,
++  Effect.gen(function* () {
++    const request = yield* HttpServerRequest.HttpServerRequest;
++    const url = HttpServerRequest.toURL(request);
++    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
++    const suffix = url.value.pathname.slice(`${T3PATCH_CONVERT_ROUTE_PREFIX}/`.length);
++    const filePath = verifyFileToken(suffix.split("/")[0] ?? "");
++    if (!filePath || !isConvertibleToDocx(filePath)) {
++      return HttpServerResponse.text("Ссылка устарела или неверна.", { status: 404 });
++    }
++    const converted = yield* Effect.tryPromise(() => convertToDocxCached(filePath)).pipe(
++      Effect.orElseSucceed(() => null),
++    );
++    if (!converted) {
++      return HttpServerResponse.text("Не удалось сконвертировать документ.", { status: 500 });
++    }
++    return yield* assetFileResponse({
++      path: converted,
++      download: true,
++      fileName: `${NodePath.parse(filePath).name}.docx`,
++    }).pipe(
++      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
++    );
++  }),
++);
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index 27767f359b..6fd7efd63e 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -30,7 +30,11 @@ import {
+   browserApiCorsLayer,
+   httpCompressionLayer,
+ } from "./http.ts";
+-import { t3patchFileInfoRouteLayer, t3patchFileRouteLayer } from "./sergey/fileAccess.ts";
++import {
++  t3patchConvertRouteLayer,
++  t3patchFileInfoRouteLayer,
++  t3patchFileRouteLayer,
++} from "./sergey/fileAccess.ts";
+ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+ import { fixPath } from "./os-jank.ts";
+ import { websocketRpcRouteLayer } from "./ws.ts";
+@@ -578,6 +582,7 @@ export const makeRoutesLayer = Layer.mergeAll(
+     attachmentUploadRouteLayer,
+     t3patchFileInfoRouteLayer, // t3-patch
+     t3patchFileRouteLayer, // t3-patch
++    t3patchConvertRouteLayer, // t3-patch
+     deviceHubProxyRouteLayer,
+     staticAndDevRouteLayer,
+     websocketRpcRouteLayer,
+diff --git a/apps/web/src/components/sergey/OfficePreview.tsx b/apps/web/src/components/sergey/OfficePreview.tsx
+index 7178d57b0b..d3412e4104 100644
+--- a/apps/web/src/components/sergey/OfficePreview.tsx
++++ b/apps/web/src/components/sergey/OfficePreview.tsx
+@@ -14,7 +14,7 @@ import {
+ } from "./officeFiles";
+ 
+ type State =
+-  | { readonly status: "loading" }
++  | { readonly status: "loading"; readonly converting?: boolean }
+   | { readonly status: "error"; readonly message: string; readonly downloadUrl: string | null }
+   | { readonly status: "sheets"; readonly sheets: SheetPreview[]; readonly downloadUrl: string }
+   | { readonly status: "doc"; readonly html: string; readonly downloadUrl: string };
+@@ -41,12 +41,24 @@ export function OfficePreview(props: { readonly cwd: string; readonly relativePa
+             `Файл ${formatMb(info.size)} — больше ${formatMb(OFFICE_PREVIEW_MAX_BYTES)}, просмотр отключён. Скачай его.`,
+           );
+         }
+-        const response = await fetch(resolvePrimaryEnvironmentHttpUrl(downloadUrl));
+-        if (!response.ok) throw new Error(`Сервер ответил ${response.status}`);
+-        const data = await response.arrayBuffer();
+         const kind = officeKind(props.relativePath);
++        let sourceUrl = downloadUrl;
++        if (kind === "converted-doc") {
++          if (!info.convertUrl) throw new Error("Сервер не умеет конвертировать этот формат.");
++          sourceUrl = info.convertUrl;
++          if (!cancelled) setState({ status: "loading", converting: true });
++        }
++        const response = await fetch(resolvePrimaryEnvironmentHttpUrl(sourceUrl));
++        if (!response.ok) {
++          throw new Error(
++            kind === "converted-doc"
++              ? "Не удалось сконвертировать документ — скачай его и открой в Word."
++              : `Сервер ответил ${response.status}`,
++          );
++        }
++        const data = await response.arrayBuffer();
+         const next: State =
+-          kind === "doc"
++          kind === "doc" || kind === "converted-doc"
+             ? { status: "doc", html: await readDocHtml(data), downloadUrl }
+             : { status: "sheets", sheets: await readSheets(data), downloadUrl };
+         if (!cancelled) setState(next);
+@@ -78,8 +90,11 @@ export function OfficePreview(props: { readonly cwd: string; readonly relativePa
+ 
+   if (state.status === "loading") {
+     return (
+-      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
++      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
+         <Spinner className="size-5" />
++        {state.converting ? (
++          <span className="text-xs">Конвертирую старый формат — до 10–15 секунд в первый раз…</span>
++        ) : null}
+       </div>
+     );
+   }
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 275011851b..4cfc6bf2d1 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -18,6 +18,8 @@ export interface T3PatchFileInfo {
+   readonly size: number;
+   readonly mtimeMs: number;
+   readonly downloadUrl: string | null;
++  /** Для .doc/.rtf/.odt — ссылка на docx, сконвертированный LibreOffice на сервере. */
++  readonly convertUrl?: string | null;
+ }
+ 
+ const MENU_COPY_PATH = "t3patch-copy-path";
+diff --git a/apps/web/src/components/sergey/officeFiles.ts b/apps/web/src/components/sergey/officeFiles.ts
+index 5484c2a165..903ca52d1d 100644
+--- a/apps/web/src/components/sergey/officeFiles.ts
++++ b/apps/web/src/components/sergey/officeFiles.ts
+@@ -11,15 +11,18 @@ import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary/target"
+ export const OFFICE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+ export const SHEET_PREVIEW_MAX_ROWS = 5000;
+ 
+-const SHEET_EXTENSIONS = [".xlsx", ".xlsm", ".xls", ".ods"];
++const SHEET_EXTENSIONS = [".xlsx", ".xlsm", ".xlsb", ".xls", ".ods"];
+ const DOC_EXTENSIONS = [".docx"];
++// Старые форматы: сервер конвертирует их в docx через LibreOffice.
++const CONVERTED_DOC_EXTENSIONS = [".doc", ".rtf", ".odt"];
+ 
+-export type OfficeKind = "sheet" | "doc";
++export type OfficeKind = "sheet" | "doc" | "converted-doc";
+ 
+ export function officeKind(path: string): OfficeKind | null {
+   const lower = path.toLowerCase();
+   if (SHEET_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "sheet";
+   if (DOC_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "doc";
++  if (CONVERTED_DOC_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "converted-doc";
+   return null;
+ }
+ 
+-- 
+2.43.0
+

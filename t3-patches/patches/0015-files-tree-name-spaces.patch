@@ -1,0 +1,38 @@
+From 5c4896f62e329cea788a3e432eea9cd725859952 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 15:46:16 +0300
+Subject: [PATCH] =?UTF-8?q?fix(files):=20=D0=BF=D1=80=D0=BE=D0=B1=D0=B5?=
+ =?UTF-8?q?=D0=BB=D1=8B=20=D0=B2=20=D1=81=D0=BE=D0=BA=D1=80=D0=B0=D1=89?=
+ =?UTF-8?q?=D1=91=D0=BD=D0=BD=D1=8B=D1=85=20=D0=B8=D0=BC=D0=B5=D0=BD=D0=B0?=
+ =?UTF-8?q?=D1=85=20=D0=B4=D0=B5=D1=80=D0=B5=D0=B2=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Длинное имя дерево сокращает посередине и делит на две половины. Если
+граница приходилась на пробел, он оказывался на краю блока и пропадал:
+«Отверстия в блоке» → «Отверстияв блоке». white-space: pre сохраняет
+пробелы; перенос строки по-прежнему не нужен — имя в одну строку.
+---
+ apps/web/src/pierre-tree-theme.ts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/apps/web/src/pierre-tree-theme.ts b/apps/web/src/pierre-tree-theme.ts
+index 1c7bd7f2d5..af537c56c7 100644
+--- a/apps/web/src/pierre-tree-theme.ts
++++ b/apps/web/src/pierre-tree-theme.ts
+@@ -11,6 +11,11 @@ export const PIERRE_TREE_UNSAFE_CSS = `
+     --trees-font-size-override: 12px;
+   }
+   button[data-type='item'] { border-radius: 5px; }
++  /* t3-patch: длинное имя дерево сокращает посередине и режет на две половины; пробел на стыке
++     браузер съедал («Отверстияв блоке»). pre сохраняет пробелы, строка по-прежнему не переносится. */
++  [data-truncate-content] {
++    white-space: pre;
++  }
+ `;
+ 
+ /** Host styles that keep a Pierre tree on the active color scheme and foreground. */
+-- 
+2.43.0
+

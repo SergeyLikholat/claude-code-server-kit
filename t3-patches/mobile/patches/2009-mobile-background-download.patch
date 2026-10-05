@@ -1,0 +1,219 @@
+From 765970824990e84bb5ed521b98a5398556c6fbb2 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 14:36:33 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=81=D0=BA=D0=B0=D1=87=D0=B8?=
+ =?UTF-8?q?=D0=B2=D0=B0=D0=BD=D0=B8=D0=B5=20=D0=B2=20=D1=84=D0=BE=D0=BD?=
+ =?UTF-8?q?=D0=B5=20=D1=81=D0=B8=D1=81=D1=82=D0=B5=D0=BC=D0=BD=D1=8B=D0=BC?=
+ =?UTF-8?q?=20=D0=B4=D0=B8=D1=81=D0=BF=D0=B5=D1=82=D1=87=D0=B5=D1=80=D0=BE?=
+ =?UTF-8?q?=D0=BC=20=D0=B7=D0=B0=D0=B3=D1=80=D1=83=D0=B7=D0=BE=D0=BA=20And?=
+ =?UTF-8?q?roid?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+«Скачать» больше не открывает браузер на весь экран: файл отдаётся
+DownloadManager — качается в фоне с уведомлением в шторке и ложится в
+«Загрузки». Уведомление о завершении открывает файл (apk — установщиком).
+Свой модуль modules/t3patch-download; без него — прежний путь через браузер.
+---
+ .../t3patch-download/android/build.gradle     | 19 +++++++++
+ .../android/src/main/AndroidManifest.xml      |  1 +
+ .../t3patchdownload/T3patchDownloadModule.kt  | 40 +++++++++++++++++++
+ .../t3patch-download/expo-module.config.json  |  4 ++
+ apps/mobile/src/sergey/FileUnavailable.tsx    | 17 ++++++--
+ apps/mobile/src/sergey/download.ts            | 35 ++++++++++++++++
+ 6 files changed, 113 insertions(+), 3 deletions(-)
+ create mode 100644 apps/mobile/modules/t3patch-download/android/build.gradle
+ create mode 100644 apps/mobile/modules/t3patch-download/android/src/main/AndroidManifest.xml
+ create mode 100644 apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+ create mode 100644 apps/mobile/modules/t3patch-download/expo-module.config.json
+ create mode 100644 apps/mobile/src/sergey/download.ts
+
+diff --git a/apps/mobile/modules/t3patch-download/android/build.gradle b/apps/mobile/modules/t3patch-download/android/build.gradle
+new file mode 100644
+index 0000000000..b5487fb7b1
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-download/android/build.gradle
+@@ -0,0 +1,19 @@
++// t3-patch: скачивание файлов системным «Диспетчером загрузок» Android.
++apply plugin: 'com.android.library'
++apply plugin: 'org.jetbrains.kotlin.android'
++
++group = 'com.t3tools.t3patchdownload'
++version = '0.0.0'
++
++android {
++  namespace 'expo.modules.t3patchdownload'
++  compileSdk rootProject.ext.compileSdkVersion
++  defaultConfig {
++    minSdkVersion rootProject.ext.minSdkVersion
++    targetSdkVersion rootProject.ext.targetSdkVersion
++  }
++}
++
++dependencies {
++  implementation project(':expo-modules-core')
++}
+diff --git a/apps/mobile/modules/t3patch-download/android/src/main/AndroidManifest.xml b/apps/mobile/modules/t3patch-download/android/src/main/AndroidManifest.xml
+new file mode 100644
+index 0000000000..94cbbcfc39
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-download/android/src/main/AndroidManifest.xml
+@@ -0,0 +1 @@
++<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+diff --git a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+new file mode 100644
+index 0000000000..3a05b6be7e
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+@@ -0,0 +1,40 @@
++package expo.modules.t3patchdownload
++
++import android.app.DownloadManager
++import android.content.Context
++import android.net.Uri
++import android.os.Environment
++import android.webkit.MimeTypeMap
++import expo.modules.kotlin.exception.Exceptions
++import expo.modules.kotlin.modules.Module
++import expo.modules.kotlin.modules.ModuleDefinition
++
++/**
++ * t3-patch: скачивание файла системным «Диспетчером загрузок» Android.
++ *
++ * Файл качается в фоне с уведомлением в шторке и ложится в «Загрузки» под своим именем;
++ * приложение при этом свободно. Ссылка — подписанная ссылка сервера (/api/assets), поэтому
++ * диспетчеру не нужны заголовки входа. Тип файла задаётся по расширению — так уведомление о
++ * завершении открывает файл правильной программой (apk — установщиком).
++ */
++class T3patchDownloadModule : Module() {
++  override fun definition() = ModuleDefinition {
++    Name("T3patchDownload")
++
++    Function("enqueue") { url: String, fileName: String ->
++      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
++      val safeName = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "download" }
++      val extension = safeName.substringAfterLast('.', "").lowercase()
++      val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
++      val request =
++        DownloadManager.Request(Uri.parse(url))
++          .setTitle(safeName)
++          .setDescription("T3 Code")
++          .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
++          .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeName)
++      if (mimeType != null) request.setMimeType(mimeType)
++      val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
++      manager.enqueue(request)
++    }
++  }
++}
+diff --git a/apps/mobile/modules/t3patch-download/expo-module.config.json b/apps/mobile/modules/t3patch-download/expo-module.config.json
+new file mode 100644
+index 0000000000..d66b5b5330
+--- /dev/null
++++ b/apps/mobile/modules/t3patch-download/expo-module.config.json
+@@ -0,0 +1,4 @@
++{
++  "platforms": ["android"],
++  "android": { "modules": ["expo.modules.t3patchdownload.T3patchDownloadModule"] }
++}
+diff --git a/apps/mobile/src/sergey/FileUnavailable.tsx b/apps/mobile/src/sergey/FileUnavailable.tsx
+index 41ae7f2bf4..c7130f42fd 100644
+--- a/apps/mobile/src/sergey/FileUnavailable.tsx
++++ b/apps/mobile/src/sergey/FileUnavailable.tsx
+@@ -7,15 +7,15 @@
+  *   открывается во внешнем браузере — он и скачивает), «Копировать путь», «Копировать полный путь».
+  */
+ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+-import { useEffect } from "react";
++import { useEffect, useState } from "react";
+ import { ActivityIndicator, Pressable, View } from "react-native";
+ 
+ import { AppText as Text } from "../components/AppText";
+ import { useWorkspaceFileAssetUrlState } from "../features/files/workspaceFileAssetUrl";
+ import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+-import { tryOpenExternalUrl } from "../lib/openExternalUrl";
+ import { projectEnvironment } from "../state/projects";
+ import { useEnvironmentQuery } from "../state/query";
++import { type T3patchDownloadResult, t3patchDownloadFile } from "./download";
+ import { t3patchFullPath } from "./paths";
+ 
+ const basename = (path: string) => path.replace(/\/+$/, "").split("/").pop() || path;
+@@ -88,6 +88,7 @@ export function T3patchFileUnavailable(props: {
+     draftCwd: props.threadId === null ? cwd : null,
+   });
+   const downloadUrl = asset._tag === "Success" ? asset.url : null;
++  const [downloadState, setDownloadState] = useState<T3patchDownloadResult | null>(null);
+   // Сервер отказал в ссылке (файл удалён, вне проекта, скрытый, сервер без патча 0011).
+   const downloadFailed = asset._tag === "Failure";
+   const disconnected = asset._tag === "Failure" && asset.reason === "disconnected";
+@@ -128,6 +129,15 @@ export function T3patchFileUnavailable(props: {
+       <Text selectable className="text-center font-mono text-xs text-foreground-muted">
+         {t3patchFullPath(cwd, relativePath)}
+       </Text>
++      {downloadState === "background" ? (
++        <Text className="text-center text-xs text-foreground-muted">
++          Загрузка началась в фоне — ход виден в шторке уведомлений, файл появится в «Загрузках».
++        </Text>
++      ) : downloadState === "failed" ? (
++        <Text className="text-center text-xs text-foreground-muted">
++          Не удалось запустить загрузку. Скопируй путь и забери файл другим способом.
++        </Text>
++      ) : null}
+       {downloadFailed ? (
+         <Text className="text-center text-xs text-foreground-muted">{failureText}</Text>
+       ) : null}
+@@ -137,7 +147,8 @@ export function T3patchFileUnavailable(props: {
+           label={downloadUrl ? "Скачать" : downloadFailed ? "Скачать нельзя" : "Готовлю ссылку…"}
+           disabled={downloadUrl === null}
+           onPress={() => {
+-            if (downloadUrl) void tryOpenExternalUrl(downloadUrl, "file-preview");
++            if (!downloadUrl) return;
++            void t3patchDownloadFile(downloadUrl, basename(relativePath)).then(setDownloadState);
+           }}
+         />
+         <ActionButton label="Копировать путь" onPress={() => copyTextWithHaptic(relativePath)} />
+diff --git a/apps/mobile/src/sergey/download.ts b/apps/mobile/src/sergey/download.ts
+new file mode 100644
+index 0000000000..aa14a522c9
+--- /dev/null
++++ b/apps/mobile/src/sergey/download.ts
+@@ -0,0 +1,35 @@
++/**
++ * t3-patch: скачать файл в фоне — системным «Диспетчером загрузок» Android
++ * (модуль modules/t3patch-download). Файл уходит в «Загрузки», ход виден в шторке,
++ * приложением можно пользоваться дальше. Если модуля нет (iOS, старая сборка) —
++ * ссылка открывается во внешнем браузере, как раньше.
++ */
++import { requireOptionalNativeModule } from "expo";
++import { Platform } from "react-native";
++
++import { tryOpenExternalUrl } from "../lib/openExternalUrl";
++
++interface T3patchDownloadModule {
++  enqueue(url: string, fileName: string): number;
++}
++
++export type T3patchDownloadResult = "background" | "browser" | "failed";
++
++export async function t3patchDownloadFile(
++  url: string,
++  fileName: string,
++): Promise<T3patchDownloadResult> {
++  const native =
++    Platform.OS === "android"
++      ? requireOptionalNativeModule<T3patchDownloadModule>("T3patchDownload")
++      : null;
++  if (native) {
++    try {
++      native.enqueue(url, fileName);
++      return "background";
++    } catch (error) {
++      console.error("t3patch: системная загрузка не запустилась", error);
++    }
++  }
++  return (await tryOpenExternalUrl(url, "file-preview")) ? "browser" : "failed";
++}
+-- 
+2.43.0
+

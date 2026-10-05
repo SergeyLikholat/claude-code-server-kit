@@ -1,0 +1,75 @@
+From 0c0311421cb1efbccce178f595b4d40ecc0c5029 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Tue, 29 Sep 2026 22:46:58 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D0=BF=D0=BE=D0=BB=D0=B5=20?=
+ =?UTF-8?q?=D1=81=20=D0=B2=D0=BB=D0=BE=D0=B6=D0=B5=D0=BD=D0=B8=D1=8F=D0=BC?=
+ =?UTF-8?q?=D0=B8=20=E2=80=94=20=D0=BD=D0=B0=D0=B6=D0=B0=D1=82=D0=B8=D0=B5?=
+ =?UTF-8?q?=20=D0=B2=20=D1=81=D0=B2=D0=BE=D0=B1=D0=BE=D0=B4=D0=BD=D0=BE?=
+ =?UTF-8?q?=D0=B5=20=D0=BC=D0=B5=D1=81=D1=82=D0=BE=20=D1=81=D1=82=D0=B0?=
+ =?UTF-8?q?=D0=B2=D0=B8=D1=82=20=D0=BA=D1=83=D1=80=D1=81=D0=BE=D1=80=20?=
+ =?UTF-8?q?=D0=B2=20=D0=BA=D0=BE=D0=BD=D0=B5=D1=86=20=D1=82=D0=B5=D0=BA?=
+ =?UTF-8?q?=D1=81=D1=82=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/features/threads/ThreadComposer.tsx   | 21 ++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/apps/mobile/src/features/threads/ThreadComposer.tsx b/apps/mobile/src/features/threads/ThreadComposer.tsx
+index 680c9cf0ba..30c0d292df 100644
+--- a/apps/mobile/src/features/threads/ThreadComposer.tsx
++++ b/apps/mobile/src/features/threads/ThreadComposer.tsx
+@@ -285,6 +285,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+   const bodyText = useScaledTextRole("body");
+   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
+   const inputRef = props.editorRef ?? fallbackInputRef;
++  // t3-patch: «продолжить печатать» — фокус и курсор в конец текста. Когда поле забито
++  // плашками вложений, ткнуть в свободное место негде, а нажатие на плашку открывает файл.
++  const t3patchFocusAtEnd = useCallback(() => {
++    inputRef.current?.focus();
++    const end = props.draftMessage.length;
++    requestAnimationFrame(() => inputRef.current?.setSelection({ start: end, end }));
++  }, [inputRef, props.draftMessage.length]);
+   const [isFocused, setIsFocused] = useState(false);
+   const pendingPastedTextAttachmentCountRef = useRef(0);
+   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
+@@ -743,7 +750,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+                 // A rested composer full of chips left almost nowhere to tap to start typing:
+                 // every chip opened its file instead. Collapsed, they focus the editor.
+                 chipsInert={!isExpanded}
+-                onInertChipPress={() => inputRef.current?.focus()}
++                onInertChipPress={t3patchFocusAtEnd}
+                 ref={inputRef}
+                 multiline
+                 value={props.draftMessage}
+@@ -859,8 +866,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+                     size={30}
+                     borderRadius={8}
+                     compact
+-                    onPressPreview={onPressPreview}
+-                    onPressVideo={onPressVideo}
++                    // t3-patch: в свёрнутом поле миниатюра, как и плашка, открывает ввод, а не файл
++                    onPressPreview={() => t3patchFocusAtEnd()}
++                    onPressVideo={() => t3patchFocusAtEnd()}
+                   />
+                 ))}
+                 {stripAttachments.length > 3 ? (
+@@ -948,6 +956,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+                       onPickMedia={props.onPickDraftMedia}
+                       onPickFiles={props.onPickDraftFiles}
+                     />
++                    {/* t3-patch: пустая середина строки — нажатие ставит курсор в конец текста */}
++                    <Pressable
++                      accessibilityRole="button"
++                      accessibilityLabel="Продолжить печатать"
++                      className="h-full min-w-4 flex-1 self-stretch"
++                      onPress={t3patchFocusAtEnd}
++                    />
+                     <View className="min-w-0 shrink">
+                       <ComposerInlineControl
+                         accessibilityLabel="Model and reasoning settings"
+-- 
+2.43.0
+

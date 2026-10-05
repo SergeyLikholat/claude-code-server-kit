@@ -1,0 +1,285 @@
+From 4bba948f2767983e39c72bd3e25b03f1fc341d2e Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 27 Sep 2026 08:59:25 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=93=D0=BE=D1=82=D0=BE?=
+ =?UTF-8?q?=D0=B2=D0=BE=C2=BB=20=D1=83=20=D1=82=D1=80=D0=B5=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=B2,=20=D0=B7=D0=B0=D0=BA=D0=BE=D0=BD=D1=87=D0=B8=D0=B2?=
+ =?UTF-8?q?=D1=88=D0=B8=D1=85=20=D1=80=D0=B0=D0=B1=D0=BE=D1=82=D1=83=20?=
+ =?UTF-8?q?=D0=B1=D0=B5=D0=B7=20=D1=82=D0=B5=D0=B1=D1=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+В приложении не было статуса «завершено, не прочитано» (в браузере это
+«Завершено»): закончившие треды терялись среди остальных. Теперь у
+треда, где агент закончил после твоего последнего открытия, вместо времени
+зелёное «Готово». Журнал открытий хранится на телефоне (kv-store). Порядок
+«по последнему сообщению» учитывает и ответ агента — такие треды выше.
+---
+ .../features/threads/ThreadRouteScreen.tsx    |  8 +++
+ .../features/threads/thread-list-v2-items.tsx | 17 ++++-
+ apps/mobile/src/sergey/sergey.test.ts         | 32 +++++++++
+ apps/mobile/src/sergey/threadOrderSort.ts     | 13 ++--
+ apps/mobile/src/sergey/threadVisits.ts        | 70 +++++++++++++++++++
+ apps/mobile/src/sergey/threadVisitsLogic.ts   | 30 ++++++++
+ 6 files changed, 163 insertions(+), 7 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/threadVisits.ts
+ create mode 100644 apps/mobile/src/sergey/threadVisitsLogic.ts
+
+diff --git a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
+index f78553dbb7..72e0453058 100644
+--- a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
++++ b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
+@@ -90,6 +90,7 @@ import {
+   type ThreadInspectorMode,
+ } from "./thread-inspector-content-stack";
+ import { threadRouteIsHydrating } from "./thread-route-hydration";
++import { t3patchThreadVisitKey, useT3patchMarkThreadVisited } from "../../sergey/threadVisits"; // t3-patch
+ 
+ interface ThreadInspectorSelection {
+   readonly routeThreadIdentity: string | null;
+@@ -174,6 +175,13 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+       ? null
+       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+   const selectedThreadDetailState = useSelectedThreadDetailState();
++  // t3-patch: открытый тред — увиденный (для статуса «Готово» в списке)
++  useT3patchMarkThreadVisited(
++    selectedThread === null
++      ? null
++      : t3patchThreadVisitKey(String(selectedThread.environmentId), String(selectedThread.id)),
++    selectedThread?.latestTurn?.completedAt,
++  );
+ 
+   if (environmentId === null || threadIdRaw === null) {
+     return <OpeningThreadLoadingScreen />;
+diff --git a/apps/mobile/src/features/threads/thread-list-v2-items.tsx b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
+index 02870c3ff2..79123b20c8 100644
+--- a/apps/mobile/src/features/threads/thread-list-v2-items.tsx
++++ b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
+@@ -40,6 +40,12 @@ import {
+ } from "./threadListV2";
+ import { QueuedMessageIcon } from "./queued-message-icon";
+ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
++import {
++  T3PATCH_DONE_STATUS,
++  t3patchHasUnseenCompletion,
++  t3patchThreadVisitKey,
++} from "../../sergey/threadVisitsLogic"; // t3-patch
++import { useT3patchThreadVisits } from "../../sergey/threadVisits"; // t3-patch
+ 
+ /**
+  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
+@@ -460,7 +466,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+     : screenColor;
+ 
+   const status = resolveThreadListV2Status(thread);
+-  const statusLabel = STATUS_LABEL_BY_STATUS[status];
++  // t3-patch: агент закончил, а тред с тех пор не открывали — «Готово», как «Завершено» в браузере
++  const t3patchVisits = useT3patchThreadVisits();
++  const statusLabel =
++    status === "ready" &&
++    t3patchHasUnseenCompletion(
++      thread.latestTurn?.completedAt,
++      t3patchVisits[t3patchThreadVisitKey(String(thread.environmentId), String(thread.id))],
++    )
++      ? T3PATCH_DONE_STATUS
++      : STATUS_LABEL_BY_STATUS[status];
+   // Settled rows label by the same stamp they sort by, so order and label
+   // can't disagree. updatedAt is always present, so the resolver never
+   // returns null here.
+diff --git a/apps/mobile/src/sergey/sergey.test.ts b/apps/mobile/src/sergey/sergey.test.ts
+index 484d310520..8ac0d8c9eb 100644
+--- a/apps/mobile/src/sergey/sergey.test.ts
++++ b/apps/mobile/src/sergey/sergey.test.ts
+@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
+ import { isT3patchOfficePreviewPath, t3patchOfficeViewUri } from "./officePreview";
+ import { t3patchFullPath, t3patchWorkspacePath } from "./paths";
+ import { t3patchSortThreadsByLatest } from "./threadOrderSort";
++import { t3patchHasUnseenCompletion } from "./threadVisitsLogic";
+ 
+ describe("t3patchFullPath", () => {
+   it("склеивает корень проекта и относительный путь", () => {
+@@ -88,3 +89,34 @@ describe("путь из ссылки в путь проекта", () => {
+     );
+   });
+ });
++
++describe("«Готово» — агент закончил после последнего открытия", () => {
++  it("закончил позже открытия — да; раньше — нет", () => {
++    expect(t3patchHasUnseenCompletion("2026-09-27T05:00:00Z", "2026-09-27T04:00:00Z")).toBe(true);
++    expect(t3patchHasUnseenCompletion("2026-09-27T04:00:00Z", "2026-09-27T05:00:00Z")).toBe(false);
++  });
++
++  it("не открывали на этом телефоне или работа не закончена — без пометки", () => {
++    expect(t3patchHasUnseenCompletion("2026-09-27T05:00:00Z", undefined)).toBe(false);
++    expect(t3patchHasUnseenCompletion(null, "2026-09-27T05:00:00Z")).toBe(false);
++  });
++
++  it("порядок учитывает ответ агента: закончивший позже тред выше", () => {
++    const base = { updatedAt: "2026-09-27T00:00:00Z", createdAt: "2026-09-20T00:00:00Z" };
++    const sorted = t3patchSortThreadsByLatest([
++      {
++        id: "user-later",
++        latestUserMessageAt: "2026-09-26T21:17:00Z",
++        latestTurn: { completedAt: "2026-09-26T21:52:00Z" },
++        ...base,
++      },
++      {
++        id: "agent-later",
++        latestUserMessageAt: "2026-09-26T21:12:00Z",
++        latestTurn: { completedAt: "2026-09-26T22:02:00Z" },
++        ...base,
++      },
++    ]);
++    expect(sorted.map((t) => t.id)).toEqual(["agent-later", "user-later"]);
++  });
++});
+diff --git a/apps/mobile/src/sergey/threadOrderSort.ts b/apps/mobile/src/sergey/threadOrderSort.ts
+index 4db6c6e899..87ed6a0913 100644
+--- a/apps/mobile/src/sergey/threadOrderSort.ts
++++ b/apps/mobile/src/sergey/threadOrderSort.ts
+@@ -11,15 +11,15 @@ const toMs = (value: string | null | undefined): number | null => {
+ /** Время для сортировки: последнее сообщение пользователя, иначе обновление, иначе создание. */
+ export function t3patchLatestActivityMs(thread: {
+   readonly latestUserMessageAt?: string | null | undefined;
++  readonly latestTurn?: { readonly completedAt?: string | null | undefined } | null | undefined;
+   readonly updatedAt?: string | null | undefined;
+   readonly createdAt: string;
+ }): number {
+-  return (
+-    toMs(thread.latestUserMessageAt) ??
+-    toMs(thread.updatedAt) ??
+-    toMs(thread.createdAt) ??
+-    Number.NEGATIVE_INFINITY
+-  );
++  // Последнее сообщение — твоё или ответ агента: тред, где агент только что закончил, поднимается.
++  const message = toMs(thread.latestUserMessageAt);
++  const reply = toMs(thread.latestTurn?.completedAt);
++  const latest = message === null ? reply : reply === null ? message : Math.max(message, reply);
++  return latest ?? toMs(thread.updatedAt) ?? toMs(thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+ }
+ 
+ /** Свежие сверху; при равенстве — стабильно по id, чтобы строки не прыгали. */
+@@ -27,6 +27,7 @@ export function t3patchSortThreadsByLatest<
+   T extends {
+     readonly id: string;
+     readonly latestUserMessageAt?: string | null | undefined;
++    readonly latestTurn?: { readonly completedAt?: string | null | undefined } | null | undefined;
+     readonly updatedAt?: string | null | undefined;
+     readonly createdAt: string;
+   },
+diff --git a/apps/mobile/src/sergey/threadVisits.ts b/apps/mobile/src/sergey/threadVisits.ts
+new file mode 100644
+index 0000000000..d450a3bb41
+--- /dev/null
++++ b/apps/mobile/src/sergey/threadVisits.ts
+@@ -0,0 +1,70 @@
++/**
++ * t3-patch: журнал открытий тредов на телефоне — для статуса «Готово».
++ *
++ * Браузер хранит время последнего открытия у себя (uiStateStore), на сервер оно не уходит,
++ * поэтому у приложения свой журнал: локальное хранилище expo-sqlite/kv-store. Открытие и уход
++ * с треда отмечаются; завершение работы, случившееся при открытом треде, тоже считается увиденным.
++ */
++import Storage from "expo-sqlite/kv-store";
++import { useEffect, useSyncExternalStore } from "react";
++
++export { t3patchHasUnseenCompletion, t3patchThreadVisitKey } from "./threadVisitsLogic";
++
++const STORAGE_KEY = "t3patch.threadVisits";
++const MAX_ENTRIES = 500;
++const listeners = new Set<() => void>();
++let visits: Readonly<Record<string, string>> | null = null;
++
++function load(): Readonly<Record<string, string>> {
++  if (visits !== null) return visits;
++  try {
++    const raw = Storage.getItemSync(STORAGE_KEY);
++    visits = raw ? (JSON.parse(raw) as Record<string, string>) : {};
++  } catch {
++    visits = {};
++  }
++  return visits;
++}
++
++export function t3patchMarkThreadVisited(key: string, at = new Date().toISOString()): void {
++  const next: Record<string, string> = { ...load(), [key]: at };
++  const keys = Object.keys(next);
++  if (keys.length > MAX_ENTRIES) {
++    // Старые записи — прочь: журнал не должен расти бесконечно.
++    for (const old of keys
++      .sort((a, b) => next[a]!.localeCompare(next[b]!))
++      .slice(0, keys.length - MAX_ENTRIES)) {
++      delete next[old];
++    }
++  }
++  visits = next;
++  try {
++    Storage.setItemSync(STORAGE_KEY, JSON.stringify(next));
++  } catch {
++    // хранилище недоступно — журнал живёт до перезапуска приложения
++  }
++  for (const listener of listeners) listener();
++}
++
++function subscribe(listener: () => void): () => void {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++export function useT3patchThreadVisits(): Readonly<Record<string, string>> {
++  return useSyncExternalStore(subscribe, load, load);
++}
++
++/** Отмечать тред увиденным, пока он открыт: при входе, при завершении работы и при уходе. */
++export function useT3patchMarkThreadVisited(
++  key: string | null,
++  completedAt: string | null | undefined,
++): void {
++  useEffect(() => {
++    if (key === null) return;
++    t3patchMarkThreadVisited(key);
++    return () => t3patchMarkThreadVisited(key);
++  }, [key, completedAt]);
++}
+diff --git a/apps/mobile/src/sergey/threadVisitsLogic.ts b/apps/mobile/src/sergey/threadVisitsLogic.ts
+new file mode 100644
+index 0000000000..cc32ffd88f
+--- /dev/null
++++ b/apps/mobile/src/sergey/threadVisitsLogic.ts
+@@ -0,0 +1,30 @@
++/**
++ * t3-patch: «Готово» — агент закончил работу после того, как тред открывали последний раз.
++ * Та же логика, что статус «Завершено» в браузере (hasUnseenCompletion в Sidebar.logic.ts).
++ * Чистые функции без нативных модулей — их проверяют тесты.
++ */
++
++/** Ключ треда в журнале открытий: окружение + тред. */
++export const t3patchThreadVisitKey = (environmentId: string, threadId: string) =>
++  `${environmentId}:${threadId}`;
++
++/**
++ * Тред закончил работу, а открывали его раньше. Тред, который ни разу не открывали на этом
++ * устройстве, не помечается — как в браузере: иначе после установки «Готово» висело бы на всех.
++ */
++export function t3patchHasUnseenCompletion(
++  completedAt: string | null | undefined,
++  lastVisitedAt: string | undefined,
++): boolean {
++  if (!completedAt || !lastVisitedAt) return false;
++  const completed = Date.parse(completedAt);
++  const visited = Date.parse(lastVisitedAt);
++  if (Number.isNaN(completed)) return false;
++  if (Number.isNaN(visited)) return true;
++  return completed > visited;
++}
++
++export const T3PATCH_DONE_STATUS = {
++  label: "Готово",
++  className: "text-adaptive-emerald-600-400",
++} as const;
+-- 
+2.43.0
+

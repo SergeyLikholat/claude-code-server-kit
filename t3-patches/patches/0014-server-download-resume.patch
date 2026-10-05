@@ -1,0 +1,103 @@
+From ec67f20cd7e06afaab7e4df4a50205bc6e433d4e Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 25 Sep 2026 15:14:06 +0300
+Subject: [PATCH] =?UTF-8?q?fix(server):=20=D0=B4=D0=BE=D0=BA=D0=B0=D1=87?=
+ =?UTF-8?q?=D0=BA=D0=B0=20=D1=84=D0=B0=D0=B9=D0=BB=D0=BE=D0=B2=20=D0=BF?=
+ =?UTF-8?q?=D0=BE=20=D0=BF=D0=BE=D0=B4=D0=BF=D0=B8=D1=81=D0=B0=D0=BD=D0=BD?=
+ =?UTF-8?q?=D1=8B=D0=BC=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA=D0=B0=D0=BC?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Штатно продолжение загрузки (Range) работало только для аудио и видео.
+Диспетчер загрузок Android после обрыва связи просит продолжение, получал
+файл с начала и падал с ошибкой, счётчик сбрасывался в ноль. Теперь докачка
+работает для всех файлов, кроме картинок и html (их штатно отдают целиком).
+---
+ apps/server/src/http.ts                      |  8 ++-
+ apps/server/src/sergey/downloadRange.test.ts | 54 ++++++++++++++++++++
+ 2 files changed, 61 insertions(+), 1 deletion(-)
+ create mode 100644 apps/server/src/sergey/downloadRange.test.ts
+
+diff --git a/apps/server/src/http.ts b/apps/server/src/http.ts
+index 0fb1aa5afb..4a23468924 100644
+--- a/apps/server/src/http.ts
++++ b/apps/server/src/http.ts
+@@ -179,7 +179,13 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
+   let status = 200;
+   let offset = 0n;
+   let bytesToRead: bigint | undefined;
+-  if (isMedia) {
++  // t3-patch: докачка и для обычных файлов (apk, zip, dwg…). Диспетчер загрузок Android после
++  // обрыва связи просит продолжение (Range); без него загрузка на плохой связи падала и
++  // начиналась с нуля. html не трогаем — это страница, а не загрузка.
++  // Картинки и html по-прежнему целиком — так задумано штатно (превью, а не загрузка).
++  const t3patchType = (asset.mimeType ?? Mime.getType(asset.path) ?? "").toLowerCase();
++  const t3patchRangeable = !/^(?:image\/|text\/html)/.test(t3patchType);
++  if (isMedia || t3patchRangeable) {
+     headers["Accept-Ranges"] = "bytes";
+     // If-Range requires a matching validator. A full response is safe when we cannot validate it.
+     if (method === "GET" && rangeHeader && ifRangeHeader === undefined) {
+diff --git a/apps/server/src/sergey/downloadRange.test.ts b/apps/server/src/sergey/downloadRange.test.ts
+new file mode 100644
+index 0000000000..1ea29bd3fc
+--- /dev/null
++++ b/apps/server/src/sergey/downloadRange.test.ts
+@@ -0,0 +1,54 @@
++// t3-patch: докачка обычных файлов (0014) — Android продолжает загрузку после обрыва связи.
++import { expect, it } from "@effect/vitest";
++import { describe } from "vite-plus/test";
++import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
++import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as Effect from "effect/Effect";
++import * as FileSystem from "effect/FileSystem";
++import * as Layer from "effect/Layer";
++import * as Path from "effect/Path";
++import { HttpServerResponse } from "effect/unstable/http";
++
++import { assetFileResponse } from "../http.ts";
++
++const layer = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
++
++describe("докачка файлов по подписанной ссылке", () => {
++  it.effect("apk: продолжение с нужного байта, метка версии на месте", () =>
++    Effect.gen(function* () {
++      const fs = yield* FileSystem.FileSystem;
++      const path = yield* Path.Path;
++      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-range-" });
++      const file = path.join(dir, "T3.apk");
++      yield* fs.writeFileString(file, "0123456789abcdef");
++      const response = HttpServerResponse.toWeb(
++        yield* assetFileResponse({ path: file }, "bytes=10-", undefined, "GET"),
++      );
++      expect(response.status).toBe(206);
++      expect(response.headers.get("content-range")).toBe("bytes 10-15/16");
++      expect(response.headers.get("accept-ranges")).toBe("bytes");
++      expect(response.headers.get("etag")).toBeTruthy();
++      expect(yield* Effect.promise(() => response.text())).toBe("abcdef");
++    }).pipe(Effect.provide(layer)),
++  );
++
++  it.effect("html отдаётся целиком, как раньше", () =>
++    Effect.gen(function* () {
++      const fs = yield* FileSystem.FileSystem;
++      const path = yield* Path.Path;
++      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-range-" });
++      const file = path.join(dir, "report.html");
++      yield* fs.writeFileString(file, "<p>0123456789</p>");
++      const response = HttpServerResponse.toWeb(
++        yield* assetFileResponse(
++          { path: file, mimeType: "text/html" },
++          "bytes=5-",
++          undefined,
++          "GET",
++        ),
++      );
++      expect(response.status).toBe(200);
++      expect(yield* Effect.promise(() => response.text())).toBe("<p>0123456789</p>");
++    }).pipe(Effect.provide(layer)),
++  );
++});
+-- 
+2.43.0
+

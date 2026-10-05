@@ -1,0 +1,214 @@
+From 8e258fe36b9bb2758702c6b2f06b2aeb44d2acb1 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 27 Sep 2026 11:07:04 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=81=D1=82=D0=B0=D1=82=D1=83?=
+ =?UTF-8?q?=D1=81=D1=8B=20=D1=82=D1=80=D0=B5=D0=B4=D0=BE=D0=B2=20=D0=BA?=
+ =?UTF-8?q?=D0=B0=D0=BA=20=D0=B2=20=D0=B1=D1=80=D0=B0=D1=83=D0=B7=D0=B5?=
+ =?UTF-8?q?=D1=80=D0=B5=20=E2=80=94=20=C2=AB=D0=9D=D0=B0=D0=B1=D0=BB=D1=8E?=
+ =?UTF-8?q?=D0=B4=D0=B5=D0=BD=D0=B8=D0=B5=C2=BB,=20=C2=AB=D0=9F=D0=BB?=
+ =?UTF-8?q?=D0=B0=D0=BD=20=D0=B3=D0=BE=D1=82=D0=BE=D0=B2=C2=BB,=20=D1=84?=
+ =?UTF-8?q?=D0=BE=D0=BD=D0=BE=D0=B2=D0=B0=D1=8F=20=D1=80=D0=B0=D0=B1=D0=BE?=
+ =?UTF-8?q?=D1=82=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../features/threads/thread-list-v2-items.tsx | 21 +++---
+ apps/mobile/src/sergey/sergey.test.ts         | 40 ++++++++++
+ apps/mobile/src/sergey/threadStatusExtra.ts   | 73 +++++++++++++++++++
+ apps/mobile/src/sergey/threadVisitsLogic.ts   |  5 --
+ 4 files changed, 122 insertions(+), 17 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/threadStatusExtra.ts
+
+diff --git a/apps/mobile/src/features/threads/thread-list-v2-items.tsx b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
+index 79123b20c8..d348ee1c8d 100644
+--- a/apps/mobile/src/features/threads/thread-list-v2-items.tsx
++++ b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
+@@ -40,11 +40,8 @@ import {
+ } from "./threadListV2";
+ import { QueuedMessageIcon } from "./queued-message-icon";
+ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+-import {
+-  T3PATCH_DONE_STATUS,
+-  t3patchHasUnseenCompletion,
+-  t3patchThreadVisitKey,
+-} from "../../sergey/threadVisitsLogic"; // t3-patch
++import { t3patchThreadVisitKey } from "../../sergey/threadVisitsLogic"; // t3-patch
++import { t3patchSettledThreadStatus } from "../../sergey/threadStatusExtra"; // t3-patch
+ import { useT3patchThreadVisits } from "../../sergey/threadVisits"; // t3-patch
+ 
+ /**
+@@ -466,15 +463,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+     : screenColor;
+ 
+   const status = resolveThreadListV2Status(thread);
+-  // t3-patch: агент закончил, а тред с тех пор не открывали — «Готово», как «Завершено» в браузере
++  // t3-patch: статусы как в браузере — «План готов», фоновая работа, «Наблюдение» и «Готово»
++  // (агент закончил, а тред с тех пор не открывали)
+   const t3patchVisits = useT3patchThreadVisits();
+   const statusLabel =
+-    status === "ready" &&
+-    t3patchHasUnseenCompletion(
+-      thread.latestTurn?.completedAt,
+-      t3patchVisits[t3patchThreadVisitKey(String(thread.environmentId), String(thread.id))],
+-    )
+-      ? T3PATCH_DONE_STATUS
++    status === "ready"
++      ? t3patchSettledThreadStatus(
++          thread,
++          t3patchVisits[t3patchThreadVisitKey(String(thread.environmentId), String(thread.id))],
++        )
+       : STATUS_LABEL_BY_STATUS[status];
+   // Settled rows label by the same stamp they sort by, so order and label
+   // can't disagree. updatedAt is always present, so the resolver never
+diff --git a/apps/mobile/src/sergey/sergey.test.ts b/apps/mobile/src/sergey/sergey.test.ts
+index 8ac0d8c9eb..41c043bdf1 100644
+--- a/apps/mobile/src/sergey/sergey.test.ts
++++ b/apps/mobile/src/sergey/sergey.test.ts
+@@ -4,6 +4,7 @@ import { isT3patchOfficePreviewPath, t3patchOfficeViewUri } from "./officePrevie
+ import { t3patchFullPath, t3patchWorkspacePath } from "./paths";
+ import { t3patchSortThreadsByLatest } from "./threadOrderSort";
+ import { t3patchHasUnseenCompletion } from "./threadVisitsLogic";
++import { t3patchSettledThreadStatus } from "./threadStatusExtra";
+ 
+ describe("t3patchFullPath", () => {
+   it("склеивает корень проекта и относительный путь", () => {
+@@ -120,3 +121,42 @@ describe("«Готово» — агент закончил после после
+     expect(sorted.map((t) => t.id)).toEqual(["agent-later", "user-later"]);
+   });
+ });
++
++describe("статусы как в браузере", () => {
++  const settled = {
++    session: { status: "ready" },
++    latestTurn: { startedAt: "2026-09-27T10:00:00Z", completedAt: "2026-09-27T10:05:00Z" },
++  };
++
++  it("фоновое наблюдение — «Наблюдение»", () => {
++    expect(
++      t3patchSettledThreadStatus({ ...settled, backgroundLiveness: "monitoring" }, undefined)
++        ?.label,
++    ).toBe("Наблюдение");
++  });
++
++  it("фоновые субагенты — «Работает»", () => {
++    expect(
++      t3patchSettledThreadStatus({ ...settled, backgroundLiveness: "working" }, undefined)?.label,
++    ).toBe("Работает");
++  });
++
++  it("план к исполнению важнее фоновой работы", () => {
++    const thread = {
++      ...settled,
++      interactionMode: "plan",
++      hasActionableProposedPlan: true,
++      backgroundLiveness: "monitoring" as const,
++    };
++    expect(t3patchSettledThreadStatus(thread, undefined)?.label).toBe("План готов");
++  });
++
++  it("наблюдение важнее «Готово», без всего — подписи нет", () => {
++    const visited = "2026-09-27T09:00:00Z";
++    expect(
++      t3patchSettledThreadStatus({ ...settled, backgroundLiveness: "monitoring" }, visited)?.label,
++    ).toBe("Наблюдение");
++    expect(t3patchSettledThreadStatus(settled, visited)?.label).toBe("Готово");
++    expect(t3patchSettledThreadStatus(settled, "2026-09-27T11:00:00Z")).toBeNull();
++  });
++});
+diff --git a/apps/mobile/src/sergey/threadStatusExtra.ts b/apps/mobile/src/sergey/threadStatusExtra.ts
+new file mode 100644
+index 0000000000..5fa21acb5f
+--- /dev/null
++++ b/apps/mobile/src/sergey/threadStatusExtra.ts
+@@ -0,0 +1,73 @@
++/**
++ * t3-patch: статусы треда, которые браузер показывает, а приложение — нет.
++ *
++ * Штатный список в приложении знает только «ждёт подтверждения», «ввод», «работает» и «сбой».
++ * Браузер (resolveThreadStatusPill в Sidebar.logic.ts) после завершения хода показывает ещё:
++ * «План готов» (режим плана, есть план к исполнению), «Работает» для фоновых субагентов,
++ * «Наблюдение» (агент следит за чем-то в фоне — Monitor, цикл проверки) и «Завершено».
++ * Здесь тот же порядок приоритетов. Чистая функция без нативных модулей — её проверяют тесты.
++ */
++import { t3patchHasUnseenCompletion } from "./threadVisitsLogic";
++
++export interface T3patchStatusLabel {
++  readonly label: string;
++  readonly className: string;
++}
++
++export interface T3patchStatusThread {
++  readonly interactionMode?: string | null | undefined;
++  readonly hasActionableProposedPlan?: boolean | undefined;
++  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
++  readonly session?: { readonly status: string } | null | undefined;
++  readonly latestTurn?: {
++    readonly startedAt?: string | null | undefined;
++    readonly completedAt?: string | null | undefined;
++  } | null;
++}
++
++export const T3PATCH_PLAN_READY_STATUS: T3patchStatusLabel = {
++  label: "План готов",
++  className: "text-adaptive-violet-600-400",
++};
++export const T3PATCH_BACKGROUND_WORKING_STATUS: T3patchStatusLabel = {
++  label: "Работает",
++  className: "text-adaptive-sky-600-400",
++};
++export const T3PATCH_MONITORING_STATUS: T3patchStatusLabel = {
++  label: "Наблюдение",
++  className: "text-adaptive-sky-600-400",
++};
++export const T3PATCH_DONE_STATUS: T3patchStatusLabel = {
++  label: "Готово",
++  className: "text-adaptive-emerald-600-400",
++};
++
++/** Ход закончен и сессия не занята — как isLatestTurnSettled в браузере. */
++function latestTurnSettled(thread: T3patchStatusThread): boolean {
++  const turn = thread.latestTurn;
++  if (!turn?.startedAt || !turn.completedAt) return false;
++  return thread.session?.status !== "running";
++}
++
++/**
++ * Статус для треда, который штатная логика считает «готовым» (без подтверждений, ввода,
++ * работы и сбоя). null — подписи нет, в строке остаётся время.
++ */
++export function t3patchSettledThreadStatus(
++  thread: T3patchStatusThread,
++  lastVisitedAt: string | undefined,
++): T3patchStatusLabel | null {
++  if (
++    thread.interactionMode === "plan" &&
++    thread.hasActionableProposedPlan === true &&
++    latestTurnSettled(thread)
++  ) {
++    return T3PATCH_PLAN_READY_STATUS;
++  }
++  if (thread.backgroundLiveness === "working") return T3PATCH_BACKGROUND_WORKING_STATUS;
++  if (thread.backgroundLiveness === "monitoring") return T3PATCH_MONITORING_STATUS;
++  if (t3patchHasUnseenCompletion(thread.latestTurn?.completedAt, lastVisitedAt)) {
++    return T3PATCH_DONE_STATUS;
++  }
++  return null;
++}
+diff --git a/apps/mobile/src/sergey/threadVisitsLogic.ts b/apps/mobile/src/sergey/threadVisitsLogic.ts
+index cc32ffd88f..305a28763e 100644
+--- a/apps/mobile/src/sergey/threadVisitsLogic.ts
++++ b/apps/mobile/src/sergey/threadVisitsLogic.ts
+@@ -23,8 +23,3 @@ export function t3patchHasUnseenCompletion(
+   if (Number.isNaN(visited)) return true;
+   return completed > visited;
+ }
+-
+-export const T3PATCH_DONE_STATUS = {
+-  label: "Готово",
+-  className: "text-adaptive-emerald-600-400",
+-} as const;
+-- 
+2.43.0
+

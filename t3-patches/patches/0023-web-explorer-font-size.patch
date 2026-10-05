@@ -1,0 +1,243 @@
+From e38e96798f4ae6bae1756c3088f3f7791aeea131 Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Sat, 3 Oct 2026 22:51:48 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20=D1=80=D0=B0=D0=B7=D0=BC=D0=B5?=
+ =?UTF-8?q?=D1=80=20=D1=88=D1=80=D0=B8=D1=84=D1=82=D0=B0=20=D0=BF=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=B2=D0=BE=D0=B4=D0=BD=D0=B8=D0=BA=D0=B0=20=E2=80=94=20?=
+ =?UTF-8?q?=D0=B2=20=C2=AB=D0=9D=D0=B0=D1=81=D1=82=D1=80=D0=BE=D0=B9=D0=BA?=
+ =?UTF-8?q?=D0=B8=20=E2=86=92=20=D0=92=D0=BD=D0=B5=D1=88=D0=BD=D0=B8=D0=B9?=
+ =?UTF-8?q?=20=D0=B2=D0=B8=D0=B4=20=E2=86=92=20=D0=A2=D0=B8=D0=BF=D0=BE?=
+ =?UTF-8?q?=D0=B3=D1=80=D0=B0=D1=84=D0=B8=D0=BA=D0=B0=C2=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/components/files/FileBrowserPanel.tsx |  9 ++-
+ .../src/components/files/FilePreviewPanel.tsx |  4 +-
+ .../src/components/sergey/explorerFontSize.ts | 56 +++++++++++++++++++
+ .../components/settings/SettingsPanels.tsx    | 54 ++++++++++++++++++
+ 4 files changed, 121 insertions(+), 2 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/explorerFontSize.ts
+
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 86245bcb1b..d674ee6a11 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -21,6 +21,7 @@ import { readLocalApi } from "~/localApi";
+ import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
+ import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
+ import { useT3patchTouchMenu } from "~/components/sergey/useT3patchTouchMenu"; // t3-patch
++import { useT3patchExplorerFontSize } from "~/components/sergey/explorerFontSize"; // t3-patch
+ import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
+ import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
+ import { T3_PIERRE_ICONS } from "~/pierre-icons";
+@@ -237,6 +238,7 @@ export default function FileBrowserPanel({
+     showEntryContextMenuRef.current = showEntryContextMenu;
+   });
+ 
++  const t3patchExplorerFont = useT3patchExplorerFontSize(); // t3-patch
+   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
+   const dragMention = useMemo(
+     () =>
+@@ -260,6 +262,7 @@ export default function FileBrowserPanel({
+     // долгое нажатие, и меню строки (useT3patchTouchMenu) не открывалось.
+     dragAndDrop: T3PATCH_TOUCH_ONLY ? false : { canDrop: () => false },
+     density: "compact",
++    itemHeight: t3patchExplorerFont.itemHeight, // t3-patch: размер шрифта проводника
+     fileTreeSearchMode: "hide-non-matches",
+     flattenEmptyDirectories: true,
+     initialExpansion: "closed",
+@@ -557,7 +560,11 @@ export default function FileBrowserPanel({
+         model={model}
+         aria-label={`${projectName} files`}
+         className="min-h-0 flex-1 overflow-hidden"
+-        style={pierreTreeStyle(resolvedTheme)}
++        style={{
++          ...pierreTreeStyle(resolvedTheme),
++          // t3-patch: размер шрифта из меню «⋯» (inline-стиль на хосте сильнее :host в теме)
++          ["--trees-font-size-override" as string]: `${t3patchExplorerFont.fontPx}px`,
++        }}
+       />
+     </div>
+   );
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index 5d2e9faae9..f440b74b32 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -95,6 +95,7 @@ import {
+   setProjectFileQueryData,
+   useProjectFileQuery,
+ } from "./projectFilesQueryState";
++import { useT3patchExplorerFontSize } from "../sergey/explorerFontSize"; // t3-patch
+ 
+ interface FilePreviewPanelProps {
+   environmentId: EnvironmentId;
+@@ -953,6 +954,7 @@ export default function FilePreviewPanel({
+     attachment === undefined && !isMedia && !isPdf,
+   );
+   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
++  const t3patchExplorerFont = useT3patchExplorerFontSize(); // t3-patch: проводник пересоздаётся при смене шрифта
+   const showExplorer = shouldShowFileExplorer({
+     relativePath,
+     explorerOpen,
+@@ -1294,7 +1296,7 @@ export default function FilePreviewPanel({
+           <ResizableExplorerPane fileOpen={Boolean(relativePath)}>
+             {/* t3-patch: ширина дерева регулируется разделителем */}
+             <FileBrowserPanel
+-              key={`${environmentId}:${cwd}`}
++              key={`${environmentId}:${cwd}:${t3patchExplorerFont.fontPx}`}
+               environmentId={environmentId}
+               cwd={cwd}
+               projectName={projectName}
+diff --git a/apps/web/src/components/sergey/explorerFontSize.ts b/apps/web/src/components/sergey/explorerFontSize.ts
+new file mode 100644
+index 0000000000..3f55838624
+--- /dev/null
++++ b/apps/web/src/components/sergey/explorerFontSize.ts
+@@ -0,0 +1,56 @@
++/**
++ * t3-patch: размер шрифта в проводнике. Штатно 12 px без настройки — на телефоне мелко.
++ *
++ * Настройка — «Настройки → Внешний вид → Типографика → Шрифт проводника» (SettingsPanels),
++ * рядом со шрифтами интерфейса, кода и терминала. Хранится на устройстве (localStorage).
++ * Высота строки дерева растёт вместе со шрифтом (2 × размер), иначе крупный текст обрезался бы.
++ * Дерево берёт высоту строки только при создании, поэтому проводник при смене размера
++ * пересоздаётся (FilePreviewPanel: key) — раскрытые папки сворачиваются.
++ */
++import { useSyncExternalStore } from "react";
++
++export const T3PATCH_EXPLORER_FONT_MIN = 11;
++export const T3PATCH_EXPLORER_FONT_MAX = 20;
++export const T3PATCH_EXPLORER_FONT_DEFAULT = 12;
++
++const STORAGE_KEY = "t3patch.explorerFontPx";
++const listeners = new Set<() => void>();
++
++function read(): number {
++  try {
++    const value = Number(window.localStorage.getItem(STORAGE_KEY));
++    if (
++      Number.isInteger(value) &&
++      value >= T3PATCH_EXPLORER_FONT_MIN &&
++      value <= T3PATCH_EXPLORER_FONT_MAX
++    ) {
++      return value;
++    }
++  } catch {
++    // нет доступа к localStorage — размер по умолчанию
++  }
++  return T3PATCH_EXPLORER_FONT_DEFAULT;
++}
++
++export function t3patchSetExplorerFontPx(px: number): void {
++  try {
++    if (px === T3PATCH_EXPLORER_FONT_DEFAULT) window.localStorage.removeItem(STORAGE_KEY);
++    else window.localStorage.setItem(STORAGE_KEY, String(px));
++  } catch {
++    // приватный режим браузера: выбор не запомнится
++  }
++  for (const listener of listeners) listener();
++}
++
++function subscribe(listener: () => void): () => void {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++/** Размер шрифта проводника и соответствующая высота строки дерева. */
++export function useT3patchExplorerFontSize(): { readonly fontPx: number; readonly itemHeight: number } {
++  const fontPx = useSyncExternalStore(subscribe, read, () => T3PATCH_EXPLORER_FONT_DEFAULT);
++  return { fontPx, itemHeight: fontPx * 2 };
++}
+diff --git a/apps/web/src/components/settings/SettingsPanels.tsx b/apps/web/src/components/settings/SettingsPanels.tsx
+index 5238cf19e1..c383abba19 100644
+--- a/apps/web/src/components/settings/SettingsPanels.tsx
++++ b/apps/web/src/components/settings/SettingsPanels.tsx
+@@ -170,6 +170,13 @@ import {
+ import { searchableSetting } from "./settingsSearch";
+ import { ProjectFavicon } from "../ProjectFavicon";
+ import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
++import {
++  T3PATCH_EXPLORER_FONT_DEFAULT,
++  T3PATCH_EXPLORER_FONT_MAX,
++  T3PATCH_EXPLORER_FONT_MIN,
++  t3patchSetExplorerFontPx,
++  useT3patchExplorerFontSize,
++} from "../sergey/explorerFontSize"; // t3-patch
+ 
+ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
+   artwork: "Artwork",
+@@ -1649,6 +1656,51 @@ function WordWrapRow() {
+   );
+ }
+ 
++/**
++ * t3-patch: размер шрифта проводника (sergey/explorerFontSize.ts). Только размер — семейство
++ * берётся из шрифта интерфейса.
++ */
++function T3patchExplorerFontRow() {
++  const { fontPx } = useT3patchExplorerFontSize();
++  const sizes = Array.from(
++    { length: T3PATCH_EXPLORER_FONT_MAX - T3PATCH_EXPLORER_FONT_MIN + 1 },
++    (_, index) => T3PATCH_EXPLORER_FONT_MIN + index,
++  );
++  return (
++    <SettingsRow
++      title="Шрифт проводника"
++      description="Имена файлов и папок в проводнике. Высота строк меняется вместе со шрифтом."
++      resetAction={
++        fontPx !== T3PATCH_EXPLORER_FONT_DEFAULT ? (
++          <SettingResetButton
++            label="шрифт проводника"
++            onClick={() => t3patchSetExplorerFontPx(T3PATCH_EXPLORER_FONT_DEFAULT)}
++          />
++        ) : null
++      }
++      control={
++        <Select
++          value={String(fontPx)}
++          onValueChange={(next) => {
++            if (typeof next === "string") t3patchSetExplorerFontPx(Number(next));
++          }}
++        >
++          <SelectTrigger size="sm" className="w-22 shrink-0" aria-label="Размер шрифта проводника">
++            <SelectValue>{fontPx} px</SelectValue>
++          </SelectTrigger>
++          <SelectPopup align="end" alignItemWithTrigger={false}>
++            {sizes.map((px) => (
++              <SelectItem hideIndicator key={px} value={String(px)}>
++                {px} px
++              </SelectItem>
++            ))}
++          </SelectPopup>
++        </Select>
++      }
++    />
++  );
++}
++
+ function FontSettingsGroup() {
+   return (
+     <>
+@@ -1656,6 +1708,7 @@ function FontSettingsGroup() {
+       <PromptFontRow />
+       <CodeFontRow />
+       <TerminalFontRow />
++      <T3patchExplorerFontRow />
+       <FontSmoothingRow />
+     </>
+   );
+@@ -1692,6 +1745,7 @@ function SimpleFontRows() {
+           </>
+         }
+       />
++      <T3patchExplorerFontRow />
+     </>
+   );
+ }
+-- 
+2.43.0
+
