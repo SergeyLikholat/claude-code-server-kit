@@ -1,4 +1,4 @@
-From 49eed55b3fe717757f80f8b893479408614d95cc Mon Sep 17 00:00:00 2001
+From 24578fdaac565bd3e9205b703282f56f2ff48d28 Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Sun, 4 Oct 2026 01:15:17 +0300
 Subject: [PATCH] =?UTF-8?q?feat(web):=20=D0=BC=D0=B5=D0=BD=D1=8E=20=D0=BD?=
@@ -20,15 +20,15 @@ Content-Transfer-Encoding: 8bit
  apps/web/src/components/sergey/fileActions.ts | 11 ++++
  .../components/sergey/useT3patchRootMenu.ts   | 55 +++++++++++++++++++
  .../components/sergey/useT3patchTouchMenu.ts  |  9 ++-
- .../settings/ProviderSettingsPanel.tsx        |  7 ++-
- 5 files changed, 80 insertions(+), 4 deletions(-)
+ .../settings/ProviderSettingsPanel.tsx        |  9 ++-
+ 5 files changed, 82 insertions(+), 4 deletions(-)
  create mode 100644 apps/web/src/components/sergey/useT3patchRootMenu.ts
 
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index d674ee6a11..a07f6965ae 100644
+index a1e2ad0fc6..5a95e7903f 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -21,6 +21,7 @@ import { readLocalApi } from "~/localApi";
+@@ -22,6 +22,7 @@ import { readLocalApi } from "~/localApi";
  import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
  import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
  import { useT3patchTouchMenu } from "~/components/sergey/useT3patchTouchMenu"; // t3-patch
@@ -36,7 +36,7 @@ index d674ee6a11..a07f6965ae 100644
  import { useT3patchExplorerFontSize } from "~/components/sergey/explorerFontSize"; // t3-patch
  import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
  import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
-@@ -488,6 +489,7 @@ export default function FileBrowserPanel({
+@@ -512,6 +513,7 @@ export default function FileBrowserPanel({
    useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
    useT3patchExplorerDrop(panelRef, { environmentId, cwd, refresh }); // t3-patch
    useT3patchTouchMenu(panelRef); // t3-patch: долгое нажатие на телефоне → меню
@@ -151,12 +151,12 @@ index 542800a116..94137e8527 100644
  
  export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): void {
 diff --git a/apps/web/src/components/settings/ProviderSettingsPanel.tsx b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
-index f1966fe454..0d5eaa4b04 100644
+index 6b62b342c4..cd3b5a9caf 100644
 --- a/apps/web/src/components/settings/ProviderSettingsPanel.tsx
 +++ b/apps/web/src/components/settings/ProviderSettingsPanel.tsx
-@@ -973,15 +973,18 @@ export function EnvironmentProviderSettings({
-             modelOrder,
-           })
+@@ -1047,14 +1047,19 @@ export function EnvironmentProviderSettings({
+               }
+             : undefined
          }
 +        // t3-patch: «Обновить» и в списке провайдеров, а не только в открытой карточке — иначе во
 +        // всплывашке «Update available» была лишь команда для терминала (на телефоне до
@@ -169,12 +169,13 @@ index f1966fe454..0d5eaa4b04 100644
                }
              : undefined
          }
-         isUpdating={
--          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
+-        isUpdating={mode === "editor" ? isInstanceUpdateRunning : undefined}
++        isUpdating={
 +          showInlineUpdateButton ? isInstanceUpdateRunning : undefined
-         }
++        }
        />
      );
+   };
 -- 
 2.43.0
 

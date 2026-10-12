@@ -1,4 +1,4 @@
-From e38e96798f4ae6bae1756c3088f3f7791aeea131 Mon Sep 17 00:00:00 2001
+From 4f44003857901c696923e5109ce54e5b8bdae48c Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Sat, 3 Oct 2026 22:51:48 +0300
 Subject: [PATCH] =?UTF-8?q?feat(web):=20=D1=80=D0=B0=D0=B7=D0=BC=D0=B5?=
@@ -21,10 +21,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/web/src/components/sergey/explorerFontSize.ts
 
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index 86245bcb1b..d674ee6a11 100644
+index 21fc49a572..a1e2ad0fc6 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -21,6 +21,7 @@ import { readLocalApi } from "~/localApi";
+@@ -22,6 +22,7 @@ import { readLocalApi } from "~/localApi";
  import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
  import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
  import { useT3patchTouchMenu } from "~/components/sergey/useT3patchTouchMenu"; // t3-patch
@@ -32,7 +32,7 @@ index 86245bcb1b..d674ee6a11 100644
  import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
  import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
  import { T3_PIERRE_ICONS } from "~/pierre-icons";
-@@ -237,6 +238,7 @@ export default function FileBrowserPanel({
+@@ -252,6 +253,7 @@ export default function FileBrowserPanel({
      showEntryContextMenuRef.current = showEntryContextMenu;
    });
  
@@ -40,7 +40,7 @@ index 86245bcb1b..d674ee6a11 100644
    const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
    const dragMention = useMemo(
      () =>
-@@ -260,6 +262,7 @@ export default function FileBrowserPanel({
+@@ -275,6 +277,7 @@ export default function FileBrowserPanel({
      // долгое нажатие, и меню строки (useT3patchTouchMenu) не открывалось.
      dragAndDrop: T3PATCH_TOUCH_ONLY ? false : { canDrop: () => false },
      density: "compact",
@@ -48,7 +48,7 @@ index 86245bcb1b..d674ee6a11 100644
      fileTreeSearchMode: "hide-non-matches",
      flattenEmptyDirectories: true,
      initialExpansion: "closed",
-@@ -557,7 +560,11 @@ export default function FileBrowserPanel({
+@@ -581,7 +584,11 @@ export default function FileBrowserPanel({
          model={model}
          aria-label={`${projectName} files`}
          className="min-h-0 flex-1 overflow-hidden"
@@ -62,10 +62,10 @@ index 86245bcb1b..d674ee6a11 100644
      </div>
    );
 diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
-index 5d2e9faae9..f440b74b32 100644
+index 6e4e1a6301..48551c1edf 100644
 --- a/apps/web/src/components/files/FilePreviewPanel.tsx
 +++ b/apps/web/src/components/files/FilePreviewPanel.tsx
-@@ -95,6 +95,7 @@ import {
+@@ -96,6 +96,7 @@ import {
    setProjectFileQueryData,
    useProjectFileQuery,
  } from "./projectFilesQueryState";
@@ -73,16 +73,16 @@ index 5d2e9faae9..f440b74b32 100644
  
  interface FilePreviewPanelProps {
    environmentId: EnvironmentId;
-@@ -953,6 +954,7 @@ export default function FilePreviewPanel({
-     attachment === undefined && !isMedia && !isPdf,
-   );
+@@ -968,6 +969,7 @@ export default function FilePreviewPanel({
+   // Everything preview-related keys off previewPath; a folder has no preview.
+   const previewPath = isDirectory ? null : relativePath;
    const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
 +  const t3patchExplorerFont = useT3patchExplorerFontSize(); // t3-patch: проводник пересоздаётся при смене шрифта
    const showExplorer = shouldShowFileExplorer({
-     relativePath,
+     relativePath: previewPath,
      explorerOpen,
-@@ -1294,7 +1296,7 @@ export default function FilePreviewPanel({
-           <ResizableExplorerPane fileOpen={Boolean(relativePath)}>
+@@ -1310,7 +1312,7 @@ export default function FilePreviewPanel({
+           <ResizableExplorerPane fileOpen={Boolean(previewPath)}>
              {/* t3-patch: ширина дерева регулируется разделителем */}
              <FileBrowserPanel
 -              key={`${environmentId}:${cwd}`}
@@ -153,10 +153,10 @@ index 0000000000..3f55838624
 +  return { fontPx, itemHeight: fontPx * 2 };
 +}
 diff --git a/apps/web/src/components/settings/SettingsPanels.tsx b/apps/web/src/components/settings/SettingsPanels.tsx
-index 5238cf19e1..c383abba19 100644
+index d44f64356b..f49438aca3 100644
 --- a/apps/web/src/components/settings/SettingsPanels.tsx
 +++ b/apps/web/src/components/settings/SettingsPanels.tsx
-@@ -170,6 +170,13 @@ import {
+@@ -172,6 +172,13 @@ import {
  import { searchableSetting } from "./settingsSearch";
  import { ProjectFavicon } from "../ProjectFavicon";
  import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
@@ -170,7 +170,7 @@ index 5238cf19e1..c383abba19 100644
  
  const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
    artwork: "Artwork",
-@@ -1649,6 +1656,51 @@ function WordWrapRow() {
+@@ -1711,6 +1718,51 @@ function WordWrapRow() {
    );
  }
  
@@ -222,7 +222,7 @@ index 5238cf19e1..c383abba19 100644
  function FontSettingsGroup() {
    return (
      <>
-@@ -1656,6 +1708,7 @@ function FontSettingsGroup() {
+@@ -1718,6 +1770,7 @@ function FontSettingsGroup() {
        <PromptFontRow />
        <CodeFontRow />
        <TerminalFontRow />
@@ -230,7 +230,7 @@ index 5238cf19e1..c383abba19 100644
        <FontSmoothingRow />
      </>
    );
-@@ -1692,6 +1745,7 @@ function SimpleFontRows() {
+@@ -1754,6 +1807,7 @@ function SimpleFontRows() {
            </>
          }
        />

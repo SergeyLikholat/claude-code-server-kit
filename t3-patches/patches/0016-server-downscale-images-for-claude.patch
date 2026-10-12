@@ -1,4 +1,4 @@
-From 774e94dbbee080c1d487ecae00d447e120c7e868 Mon Sep 17 00:00:00 2001
+From 11c13aef3f3449c022b83f82d13b963b167ae5dc Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Sat, 26 Sep 2026 23:19:43 +0300
 Subject: [PATCH] =?UTF-8?q?fix(server):=20=D1=83=D0=BC=D0=B5=D0=BD=D1=8C?=
@@ -24,10 +24,10 @@ and was removed»). Теперь длинная сторона ужимаетс�
  create mode 100644 apps/server/src/sergey/imageDownscale.ts
 
 diff --git a/apps/server/src/provider/Layers/ClaudeAdapter.ts b/apps/server/src/provider/Layers/ClaudeAdapter.ts
-index 3afde2b39a..38350d5bf6 100644
+index e4b4bea1d0..cadce6ca76 100644
 --- a/apps/server/src/provider/Layers/ClaudeAdapter.ts
 +++ b/apps/server/src/provider/Layers/ClaudeAdapter.ts
-@@ -86,6 +86,7 @@ import * as Stream from "effect/Stream";
+@@ -87,6 +87,7 @@ import * as Stream from "effect/Stream";
  import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
  
  import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -35,7 +35,7 @@ index 3afde2b39a..38350d5bf6 100644
  import { ServerConfig } from "../../config.ts";
  import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
  import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-@@ -1561,10 +1562,14 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
+@@ -1668,10 +1669,14 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
        ),
      );
  

@@ -1,8 +1,8 @@
-From 4d85ba6a40af3c20376644e43bd1f3a3411884af Mon Sep 17 00:00:00 2001
+From 5ac6d8534517723aa7623c178a93a0d7ada5e214 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Thu, 24 Sep 2026 20:34:43 +0300
-Subject: [PATCH 3/7] =?UTF-8?q?feat(files):=20=D0=BF=D1=80=D0=BE=D1=81?=
- =?UTF-8?q?=D0=BC=D0=BE=D1=82=D1=80=20xlsx/xls/ods=20=D0=B8=20docx?=
+Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=BF=D1=80=D0=BE=D1=81=D0=BC?=
+ =?UTF-8?q?=D0=BE=D1=82=D1=80=20xlsx/xls/ods=20=D0=B8=20docx?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -20,7 +20,7 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/web/src/components/sergey/officeFiles.ts
 
 diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
-index 37228d69ce..4595b959e6 100644
+index e2d3a2b3c8..e0bdea7f4b 100644
 --- a/apps/web/src/components/files/FilePreviewPanel.tsx
 +++ b/apps/web/src/components/files/FilePreviewPanel.tsx
 @@ -76,6 +76,8 @@ import {
@@ -32,7 +32,7 @@ index 37228d69ce..4595b959e6 100644
  import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
  import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
  import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
-@@ -1219,6 +1221,8 @@ export default function FilePreviewPanel({
+@@ -1235,6 +1237,8 @@ export default function FilePreviewPanel({
                title={relativePath}
                workspaceMutationId={workspaceMutationId}
              />

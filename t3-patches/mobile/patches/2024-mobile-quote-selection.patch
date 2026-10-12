@@ -1,0 +1,410 @@
+From 288cd2bcc5134ad34f3b6a3e12a77bb2cfa1373e Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Mon, 5 Oct 2026 19:04:59 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=A6=D0=B8=D1=82=D0=B8?=
+ =?UTF-8?q?=D1=80=D0=BE=D0=B2=D0=B0=D1=82=D1=8C=C2=BB=20=D0=B2=20=D0=BC?=
+ =?UTF-8?q?=D0=B5=D0=BD=D1=8E=20=D0=B2=D1=8B=D0=B4=D0=B5=D0=BB=D0=B5=D0=BD?=
+ =?UTF-8?q?=D0=B8=D1=8F=20=D0=B8=20=D0=BA=D0=BD=D0=BE=D0=BF=D0=BA=D0=B0=20?=
+ =?UTF-8?q?=D1=86=D0=B8=D1=82=D0=B0=D1=82=D1=8B=20=D1=83=20=D1=81=D0=BE?=
+ =?UTF-8?q?=D0=BE=D0=B1=D1=89=D0=B5=D0=BD=D0=B8=D0=B9=20=E2=80=94=20=D1=86?=
+ =?UTF-8?q?=D0=B8=D1=82=D0=B0=D1=82=D0=B0=20=D0=B2=20=D0=BF=D0=BE=D0=BB?=
+ =?UTF-8?q?=D0=B5=20=D0=B2=D0=B2=D0=BE=D0=B4=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../T3MarkdownTextSelectionModule.kt          | 63 ++++++++++++-
+ .../src/NativeMarkdownSelectableText.tsx      |  9 +-
+ .../src/T3MarkdownTextSelectionModule.ts      | 19 ++++
+ apps/mobile/src/components/AppSymbol.tsx      |  2 +
+ .../src/features/threads/ThreadFeed.tsx       | 11 +++
+ apps/mobile/src/sergey/quoteFormat.test.ts    | 20 ++++
+ apps/mobile/src/sergey/quoteFormat.ts         | 13 +++
+ apps/mobile/src/sergey/quoteInsert.tsx        | 91 +++++++++++++++++++
+ 8 files changed, 222 insertions(+), 6 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/quoteFormat.test.ts
+ create mode 100644 apps/mobile/src/sergey/quoteFormat.ts
+ create mode 100644 apps/mobile/src/sergey/quoteInsert.tsx
+
+diff --git a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
+index 26ceb20232..05a7f8288c 100644
+--- a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
++++ b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
+@@ -118,18 +118,33 @@ private fun contextClipData(selectedText: String, fragment: String): ClipData {
+   )
+ }
+ 
++// t3-patch: пункт «Цитировать» в меню выделения — выделенное уходит цитатой в поле ввода треда
++private const val T3PATCH_QUOTE_ITEM_ID = 0x7301
++
+ private class SanitizingSelectionActionModeCallback(
+   private val textView: TextView,
+   private val delegate: ActionMode.Callback?,
+-  var contextClipboardConfig: String
++  var contextClipboardConfig: String,
++  private val onQuote: (String) -> Unit
+ ) : ActionMode.Callback {
+-  override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean =
+-    delegate?.onCreateActionMode(mode, menu) ?: true
++  override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
++    val created = delegate?.onCreateActionMode(mode, menu) ?: true
++    if (menu.findItem(T3PATCH_QUOTE_ITEM_ID) == null) {
++      menu.add(Menu.NONE, T3PATCH_QUOTE_ITEM_ID, 1, "Цитировать")
++        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
++    }
++    return created
++  }
+ 
+   override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean =
+     delegate?.onPrepareActionMode(mode, menu) ?: false
+ 
+   override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
++    if (item.itemId == T3PATCH_QUOTE_ITEM_ID) {
++      selectedText()?.let(onQuote)
++      mode.finish()
++      return true
++    }
+     if (item.itemId == android.R.id.copy && copySelection()) {
+       mode.finish()
+       return true
+@@ -137,6 +152,16 @@ private class SanitizingSelectionActionModeCallback(
+     return delegate?.onActionItemClicked(mode, item) ?: false
+   }
+ 
++  private fun selectedText(): String? {
++    val start = min(textView.selectionStart, textView.selectionEnd)
++    val end = max(textView.selectionStart, textView.selectionEnd)
++    if (start < 0 || end <= start) return null
++    val originalText = textView.text.subSequence(start, end).toString()
++    val config = runCatching { JSONObject(contextClipboardConfig) }.getOrNull()
++    return (canonicalSelection(originalText, start, end, config?.optJSONArray("ranges"))
++      ?: copyTextWithoutInlineImages(textView.text, start, end)).trim().ifEmpty { null }
++  }
++
+   private fun copySelection(): Boolean {
+     val start = min(textView.selectionStart, textView.selectionEnd)
+     val end = max(textView.selectionStart, textView.selectionEnd)
+@@ -167,6 +192,10 @@ private class SanitizingSelectionActionModeCallback(
+ class T3MarkdownTextSelectionModule : Module() {
+   private val chipImages = LruCache<String, Map<String, Any>>(128)
+ 
++  private fun emitQuote(text: String) {
++    sendEvent("onQuoteSelection", mapOf("text" to text))
++  }
++
+   /**
+    * Metrics of the paragraph font a chip sits in, so the inline box it reports can be sized
+    * from the same ascent and descent the surrounding text lays out with.
+@@ -186,6 +215,27 @@ class T3MarkdownTextSelectionModule : Module() {
+   override fun definition() = ModuleDefinition {
+     Name("T3MarkdownTextSelection")
+ 
++    // t3-patch: «Цитировать» из меню выделения → JS (sergey/quoteInsert.ts)
++    Events("onQuoteSelection")
++
++    // t3-patch: меню с «Цитировать» для обычного текста сообщения. В отличие от
++    // installCopySanitizer не меняет SpannableFactory — раскладка текста остаётся штатной.
++    Function("installQuoteMenu") { reactTag: Int ->
++      val reactContext = appContext.reactContext as? ReactContext ?: return@Function Unit
++      reactContext.runOnUiQueueThread {
++        val textView =
++          runCatching {
++            UIManagerHelper.getUIManagerForReactTag(reactContext, reactTag)?.resolveView(reactTag)
++          }
++            .getOrNull() as? TextView ?: return@runOnUiQueueThread
++        val currentCallback = textView.customSelectionActionModeCallback
++        if (currentCallback is SanitizingSelectionActionModeCallback) return@runOnUiQueueThread
++        textView.customSelectionActionModeCallback =
++          SanitizingSelectionActionModeCallback(textView, currentCallback, "", ::emitQuote)
++      }
++      Unit
++    }
++
+     Function("renderContextChip") { payloadJson: String ->
+       val resources = appContext.reactContext?.resources ?: return@Function null
+       val metrics = resources.displayMetrics
+@@ -269,7 +319,12 @@ class T3MarkdownTextSelectionModule : Module() {
+         }
+         textView.setSpannableFactory(MarkdownSpannableFactory)
+         textView.customSelectionActionModeCallback =
+-          SanitizingSelectionActionModeCallback(textView, currentCallback, contextClipboardConfig)
++          SanitizingSelectionActionModeCallback(
++            textView,
++            currentCallback,
++            contextClipboardConfig,
++            ::emitQuote
++          )
+       }
+     }
+   }
+diff --git a/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx b/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
+index 50a381bae2..d6e44e33f9 100644
+--- a/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
++++ b/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
+@@ -24,6 +24,7 @@ import type {
+ } from "./SelectableMarkdownText.types";
+ import {
+   installMarkdownCopySanitizer,
++  installMarkdownQuoteMenu,
+   renderAndroidContextChip,
+ } from "./T3MarkdownTextSelectionModule";
+ import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+@@ -298,9 +299,13 @@ export function NativeMarkdownSelectableText(props: {
+     : "";
+   const attachAndroidText = useCallback(
+     (textView: RNText | null) => {
+-      if (Platform.OS !== "android" || !containsInlineIcon || !textView) return;
++      if (Platform.OS !== "android" || !textView) return;
+       const reactTag = findNodeHandle(textView);
+-      if (reactTag !== null) installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
++      if (reactTag === null) return;
++      // t3-patch: «Цитировать» в меню выделения — для любого абзаца; со значками — вместе
++      // со штатной чисткой копирования, без них — отдельной установкой (раскладка не меняется)
++      if (containsInlineIcon) installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
++      else installMarkdownQuoteMenu(reactTag);
+     },
+     [containsInlineIcon, contextClipboardConfig],
+   );
+diff --git a/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts b/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
+index 9f1d676179..89f97b60d0 100644
+--- a/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
++++ b/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
+@@ -2,6 +2,12 @@ import { requireOptionalNativeModule } from "expo";
+ 
+ interface T3MarkdownTextSelectionNativeModule {
+   readonly installCopySanitizer: (reactTag: number, contextClipboardConfig: string) => void;
++  /** t3-patch: пункт «Цитировать» в меню выделения обычного текста. */
++  readonly installQuoteMenu?: (reactTag: number) => void;
++  readonly addListener?: (
++    event: "onQuoteSelection",
++    listener: (payload: { readonly text: string }) => void,
++  ) => { remove(): void };
+   readonly renderContextChip?: (payloadJson: string) => {
+     readonly uri: string;
+     readonly width: number;
+@@ -23,3 +29,16 @@ export function installMarkdownCopySanitizer(reactTag: number, contextClipboardC
+ export function renderAndroidContextChip(payloadJson: string) {
+   return nativeModule?.renderContextChip?.(payloadJson) ?? null;
+ }
++
++/** t3-patch: меню выделения с «Цитировать» для текста без встроенных значков. */
++export function installMarkdownQuoteMenu(reactTag: number): void {
++  nativeModule?.installQuoteMenu?.(reactTag);
++}
++
++/** t3-patch: выбрали «Цитировать» в меню выделения — выделенный текст. */
++export function addQuoteSelectionListener(listener: (text: string) => void): () => void {
++  const subscription = nativeModule?.addListener?.("onQuoteSelection", (payload) =>
++    listener(payload.text),
++  );
++  return () => subscription?.remove();
++}
+diff --git a/apps/mobile/src/components/AppSymbol.tsx b/apps/mobile/src/components/AppSymbol.tsx
+index 402d07d13c..f611f1b0a9 100644
+--- a/apps/mobile/src/components/AppSymbol.tsx
++++ b/apps/mobile/src/components/AppSymbol.tsx
+@@ -35,6 +35,7 @@ import IconTicket from "@tabler/icons-react-native/IconTicket";
+ import IconClock from "@tabler/icons-react-native/IconClock";
+ import IconCode from "@tabler/icons-react-native/IconCode";
+ import IconCopy from "@tabler/icons-react-native/IconCopy";
++import IconQuote from "@tabler/icons-react-native/IconQuote"; // t3-patch: «Цитировать»
+ import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
+ import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
+ import IconDots from "@tabler/icons-react-native/IconDots";
+@@ -200,6 +201,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME: Record<string, Icon> = {
+   close: IconX,
+   construction: IconHammer,
+   content_copy: IconCopy,
++  format_quote: IconQuote, // t3-patch
+   desktop_windows: IconDeviceDesktop,
+   edit: IconEdit,
+   error: IconAlertCircle,
+diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
+index c0ab6f726c..f271be895c 100644
+--- a/apps/mobile/src/features/threads/ThreadFeed.tsx
++++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
+@@ -114,6 +114,7 @@ import {
+   type MediaVideoPreviewSource,
+ } from "../../lib/videoPreviewSource";
+ import { CopyTextButton } from "../../components/CopyTextButton";
++import { T3patchQuoteMessageButton, useT3patchQuoteTarget } from "../../sergey/quoteInsert"; // t3-patch
+ import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+ import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
+ import {
+@@ -1608,6 +1609,9 @@ function renderFeedEntry(
+                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
+               </Pressable>
+             ) : null}
++            {message.text.trim().length > 0 ? (
++              <T3patchQuoteMessageButton text={message.text} tintColor={iconSubtleColor} />
++            ) : null}
+             {message.text.trim().length > 0 ? (
+               <CopyTextButton
+                 accessibilityLabel="Copy message"
+@@ -1688,6 +1692,12 @@ function renderFeedEntry(
+               buttonSize={28}
+               iconSize={13}
+             />
++            <T3patchQuoteMessageButton
++              text={renderedText}
++              tintColor={iconSubtleColor}
++              buttonSize={28}
++              iconSize={13}
++            />
+             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+               {timestampLabel}
+             </Text>
+@@ -2349,6 +2359,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+   // ThreadId, and keying resets (or the list mount) on the bare id would
+   // carry stale scroll/follow state across an environment switch.
+   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
++  useT3patchQuoteTarget(feedThreadKey); // t3-patch: «Цитировать» → черновик этого треда
+   // Virtualized groups can unmount without losing the reader's place. This cache
+   // belongs to this thread view only and never causes per-scroll React updates.
+   const workGroupScrollPositions = useMemo(
+diff --git a/apps/mobile/src/sergey/quoteFormat.test.ts b/apps/mobile/src/sergey/quoteFormat.test.ts
+new file mode 100644
+index 0000000000..028e41d6f2
+--- /dev/null
++++ b/apps/mobile/src/sergey/quoteFormat.test.ts
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from "vite-plus/test";
++
++import { t3patchQuoteText } from "./quoteFormat";
++
++describe("t3patchQuoteText", () => {
++  it("в пустой черновик — блок цитаты и пустая строка после", () => {
++    expect(t3patchQuoteText("", "срок 10 дней")).toBe("> срок 10 дней\n\n");
++  });
++  it("многострочное выделение — «> » у каждой строки, пустые строки остаются в цитате", () => {
++    expect(t3patchQuoteText("", "первая\n\nвторая")).toBe("> первая\n>\n> вторая\n\n");
++  });
++  it("после текста отделяется пустой строкой", () => {
++    expect(t3patchQuoteText("Уточни", "цитата")).toBe("\n\n> цитата\n\n");
++    expect(t3patchQuoteText("Уточни\n", "цитата")).toBe("\n> цитата\n\n");
++    expect(t3patchQuoteText("> прошлая\n\n", "вторая")).toBe("> вторая\n\n");
++  });
++  it("пустое выделение — ничего не вставляет", () => {
++    expect(t3patchQuoteText("x", "   \n ")).toBe("");
++  });
++});
+diff --git a/apps/mobile/src/sergey/quoteFormat.ts b/apps/mobile/src/sergey/quoteFormat.ts
+new file mode 100644
+index 0000000000..0c77f1dfea
+--- /dev/null
++++ b/apps/mobile/src/sergey/quoteFormat.ts
+@@ -0,0 +1,13 @@
++/** t3-patch: оформление цитаты для поля ввода (quoteInsert.tsx). */
++/** Цитата markdown-блоком: «> » перед каждой строкой, отделена от текста пустой строкой. */
++export function t3patchQuoteText(existing: string, selected: string): string {
++  const cleaned = selected.replace(/\r\n?/g, "\n").trim();
++  if (cleaned.length === 0) return "";
++  const body = cleaned
++    .split("\n")
++    .map((line) => (line.trim().length > 0 ? `> ${line}` : ">"))
++    .join("\n");
++  const separator =
++    existing.length === 0 ? "" : existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
++  return `${separator}${body}\n\n`;
++}
+diff --git a/apps/mobile/src/sergey/quoteInsert.tsx b/apps/mobile/src/sergey/quoteInsert.tsx
+new file mode 100644
+index 0000000000..6bbe664fcc
+--- /dev/null
++++ b/apps/mobile/src/sergey/quoteInsert.tsx
+@@ -0,0 +1,91 @@
++/**
++ * t3-patch: цитаты из сообщений треда в поле ввода.
++ *
++ * - Выделить текст в сообщении (своём или ответе Claude) → в меню выделения «Цитировать»
++ *   (нативный пункт, modules/t3-markdown-text) → выделенное встаёт в черновик блоком «> …».
++ * - Кнопка с кавычками рядом с «Копировать» — цитата сообщения целиком.
++ *
++ * Цитата добавляется в конец черновика текущего треда отдельным абзацем; можно набрать
++ * несколько цитат подряд. Куда вставлять, знает открытый тред (useT3patchQuoteTarget).
++ */
++import { requireOptionalNativeModule } from "expo";
++import * as Haptics from "expo-haptics";
++import { memo, useEffect } from "react";
++import { Platform, Pressable, type ColorValue } from "react-native";
++
++import { SymbolView } from "../components/AppSymbol";
++import { appendComposerDraftText, getComposerDraftSnapshot } from "../state/use-composer-drafts";
++import { t3patchQuoteText } from "./quoteFormat";
++
++let activeDraftKey: string | null = null;
++
++export function t3patchInsertQuote(selected: string): boolean {
++  if (!activeDraftKey) return false;
++  const value = t3patchQuoteText(getComposerDraftSnapshot(activeDraftKey).text, selected);
++  if (!value) return false;
++  appendComposerDraftText(activeDraftKey, value);
++  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
++  return true;
++}
++
++interface QuoteSelectionModule {
++  addListener?: (
++    event: "onQuoteSelection",
++    listener: (payload: { readonly text: string }) => void,
++  ) => { remove(): void };
++}
++
++/** Открытый тред: сюда уходят цитаты из меню выделения и кнопки «Цитировать целиком». */
++export function useT3patchQuoteTarget(draftKey: string | null): void {
++  useEffect(() => {
++    if (!draftKey) return;
++    activeDraftKey = draftKey;
++    const module =
++      Platform.OS === "android"
++        ? requireOptionalNativeModule<QuoteSelectionModule>("T3MarkdownTextSelection")
++        : null;
++    const subscription = module?.addListener?.("onQuoteSelection", (payload) => {
++      t3patchInsertQuote(payload.text);
++    });
++    return () => {
++      subscription?.remove();
++      if (activeDraftKey === draftKey) activeDraftKey = null;
++    };
++  }, [draftKey]);
++}
++
++/** Кнопка рядом с «Копировать»: цитата всего сообщения. */
++export const T3patchQuoteMessageButton = memo(function T3patchQuoteMessageButton(props: {
++  readonly text: string;
++  readonly tintColor?: ColorValue;
++  readonly buttonSize?: number;
++  readonly iconSize?: number;
++}) {
++  return (
++    <Pressable
++      accessibilityRole="button"
++      accessibilityLabel="Цитировать сообщение"
++      disabled={props.text.trim().length === 0}
++      hitSlop={8}
++      onPress={() => {
++        t3patchInsertQuote(props.text);
++      }}
++      style={({ pressed }) => ({
++        width: props.buttonSize ?? 30,
++        height: props.buttonSize ?? 30,
++        alignItems: "center",
++        justifyContent: "center",
++        borderRadius: 9,
++        opacity: pressed ? 0.52 : 1,
++      })}
++    >
++      <SymbolView
++        name={{ ios: "quote.opening", android: "format_quote" }}
++        size={(props.iconSize ?? 13) + 2}
++        tintColor={props.tintColor}
++        tintColorClassName={props.tintColor ? undefined : "accent-foreground"}
++        type="monochrome"
++      />
++    </Pressable>
++  );
++});
+-- 
+2.43.0
+

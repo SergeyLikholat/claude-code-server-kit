@@ -1,4 +1,4 @@
-From a775b14b981f933668a83c0af8b754725ea3be34 Mon Sep 17 00:00:00 2001
+From 83a5a92e9fc94193ec644d25a6f5aa92deada9f8 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Thu, 1 Oct 2026 23:19:09 +0300
 Subject: [PATCH] =?UTF-8?q?feat(web):=20PWA=20=E2=80=94=20=D0=BC=D0=B5?=
@@ -13,7 +13,6 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 ---
- apps/web/package.json                         |   2 +-
  apps/web/public/manifest.webmanifest          |  18 ++-
  apps/web/public/t3patch-sw.js                 |  48 ++++++++
  .../src/components/files/FileBrowserPanel.tsx |  12 +-
@@ -22,23 +21,11 @@ Content-Transfer-Encoding: 8bit
  apps/web/src/components/sergey/uploads.tsx    |  22 +++-
  .../components/sergey/useT3patchTouchMenu.ts  | 108 ++++++++++++++++++
  .../src/components/sergey/workspaceClient.ts  |  33 +++++-
- 9 files changed, 360 insertions(+), 8 deletions(-)
+ 8 files changed, 359 insertions(+), 7 deletions(-)
  create mode 100644 apps/web/public/t3patch-sw.js
  create mode 100644 apps/web/src/components/sergey/pwaShare.ts
  create mode 100644 apps/web/src/components/sergey/useT3patchTouchMenu.ts
 
-diff --git a/apps/web/package.json b/apps/web/package.json
-index 53dc91214d..86fb491308 100644
---- a/apps/web/package.json
-+++ b/apps/web/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@t3tools/web",
--  "version": "0.0.40",
-+  "version": "0.0.42",
-   "private": true,
-   "type": "module",
-   "scripts": {
 diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
 index 0389551332..92443e15f8 100644
 --- a/apps/web/public/manifest.webmanifest
@@ -121,10 +108,10 @@ index 0000000000..6a75171c0d
 +  );
 +});
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index 2b248e6947..86245bcb1b 100644
+index 8669346b5e..21fc49a572 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -20,6 +20,7 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
+@@ -21,6 +21,7 @@ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMen
  import { readLocalApi } from "~/localApi";
  import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
  import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
@@ -132,7 +119,7 @@ index 2b248e6947..86245bcb1b 100644
  import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
  import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
  import { T3_PIERRE_ICONS } from "~/pierre-icons";
-@@ -31,6 +32,12 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+@@ -32,6 +33,12 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
  import { useDirectoryEntries } from "./useDirectoryEntries";
  import { useProjectPathSearch } from "~/state/queries";
  
@@ -145,7 +132,7 @@ index 2b248e6947..86245bcb1b 100644
  interface FileBrowserPanelProps {
    environmentId: EnvironmentId;
    cwd: string;
-@@ -249,7 +256,9 @@ export default function FileBrowserPanel({
+@@ -264,7 +271,9 @@ export default function FileBrowserPanel({
      },
      // Rows only need to be draggable so entries can be dropped into the chat
      // composer; rearranging files inside the tree stays off.
@@ -156,7 +143,7 @@ index 2b248e6947..86245bcb1b 100644
      density: "compact",
      fileTreeSearchMode: "hide-non-matches",
      flattenEmptyDirectories: true,
-@@ -475,6 +484,7 @@ export default function FileBrowserPanel({
+@@ -499,6 +508,7 @@ export default function FileBrowserPanel({
    }, []);
    useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
    useT3patchExplorerDrop(panelRef, { environmentId, cwd, refresh }); // t3-patch

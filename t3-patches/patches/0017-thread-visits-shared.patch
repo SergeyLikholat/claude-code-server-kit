@@ -1,4 +1,4 @@
-From 89da77d94dc1e7dea436ef950e017069d04920e4 Mon Sep 17 00:00:00 2001
+From 8c152cf6affcea28c66ef9bec081e574df5ad81a Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Sun, 27 Sep 2026 13:24:59 +0300
 Subject: [PATCH] =?UTF-8?q?feat:=20=D0=B2=D1=80=D0=B5=D0=BC=D1=8F=20=D0=BE?=
@@ -32,10 +32,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/web/src/components/sergey/threadVisitsSyncLogic.ts
 
 diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
-index 36371713a7..6285a52eba 100644
+index 27fde35b9e..71d09389a1 100644
 --- a/apps/server/src/auth/RpcAuthorization.ts
 +++ b/apps/server/src/auth/RpcAuthorization.ts
-@@ -61,6 +61,8 @@ export const RPC_REQUIRED_SCOPES = {
+@@ -67,6 +67,8 @@ export const RPC_REQUIRED_SCOPES = {
    [WS_METHODS.serverRefreshUsageRates]: AuthOrchestrationReadScope,
    [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
    [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
@@ -284,13 +284,13 @@ index 0000000000..4048f57c53
 +  loading = null;
 +}
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index 707df77809..0700eb81d5 100644
+index bcc19be00d..154d1952a4 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
-@@ -17,6 +17,11 @@ import * as Ref from "effect/Ref";
- import * as Schedule from "effect/Schedule";
- import * as Schema from "effect/Schema";
+@@ -19,6 +19,11 @@ import * as Schema from "effect/Schema";
  import * as Stream from "effect/Stream";
+ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
+ import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 +import {
 +  t3patchMarkThreadVisited,
 +  t3patchSubscribeThreadVisits,
@@ -299,7 +299,7 @@ index 707df77809..0700eb81d5 100644
  import {
    DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
    AuthAccessStreamError,
-@@ -3634,6 +3639,31 @@ const makeWsRpcLayer = (
+@@ -4054,6 +4059,31 @@ const makeWsRpcLayer = (
              }),
              { "rpc.aggregate": "auth" },
            ),
@@ -626,7 +626,7 @@ index 0000000000..5560d42df9
 +  return next;
 +}
 diff --git a/apps/web/src/routes/__root.tsx b/apps/web/src/routes/__root.tsx
-index 42e40842a7..8ad37b6511 100644
+index d90bdb6f0a..df44e71a7c 100644
 --- a/apps/web/src/routes/__root.tsx
 +++ b/apps/web/src/routes/__root.tsx
 @@ -1,4 +1,5 @@
@@ -635,7 +635,7 @@ index 42e40842a7..8ad37b6511 100644
  import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
  import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
  import {
-@@ -233,6 +234,7 @@ function RootRouteView() {
+@@ -244,6 +245,7 @@ function RootRouteView() {
            ) : null}
            {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
            {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
@@ -644,10 +644,10 @@ index 42e40842a7..8ad37b6511 100644
            {/* Above the router: a theme draft is judged by walking the app, so the
                editor has to survive navigation away from settings. */}
 diff --git a/packages/client-runtime/src/rpc/client.ts b/packages/client-runtime/src/rpc/client.ts
-index e80a2f0f4b..eb0ca26dd4 100644
+index 055bfe87db..6924e5db38 100644
 --- a/packages/client-runtime/src/rpc/client.ts
 +++ b/packages/client-runtime/src/rpc/client.ts
-@@ -53,6 +53,7 @@ export type EnvironmentSubscriptionRpcTag =
+@@ -55,6 +55,7 @@ export type EnvironmentSubscriptionRpcTag =
    | typeof WS_METHODS.subscribeDiscoveredLocalServers
    | typeof WS_METHODS.subscribeDeviceState
    | typeof WS_METHODS.subscribeResourceTelemetry
@@ -656,10 +656,10 @@ index e80a2f0f4b..eb0ca26dd4 100644
    | typeof WS_METHODS.previewAutomationConnect
    | typeof WS_METHODS.subscribeVcsStatus
 diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
-index 18127076ff..e0dc7651ce 100644
+index 9a30986341..08ba41ff64 100644
 --- a/packages/client-runtime/src/state/server.ts
 +++ b/packages/client-runtime/src/state/server.ts
-@@ -1030,6 +1030,16 @@ export function createServerEnvironmentAtoms<R, E>(
+@@ -1064,6 +1064,16 @@ export function createServerEnvironmentAtoms<R, E>(
        label: "environment-data:server:process-resource-history",
        tag: WS_METHODS.serverGetProcessResourceHistory,
      }),
@@ -677,10 +677,10 @@ index 18127076ff..e0dc7651ce 100644
        label: "environment-data:server:resource-telemetry",
        tag: WS_METHODS.subscribeResourceTelemetry,
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 9096dd6e27..50b9f2c891 100644
+index c1b2545904..5d492017ea 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -434,6 +434,9 @@ export const WS_METHODS = {
+@@ -461,6 +461,9 @@ export const WS_METHODS = {
    subscribeAuthAccess: "subscribeAuthAccess",
    subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
    subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -690,7 +690,7 @@ index 9096dd6e27..50b9f2c891 100644
  } as const;
  
  const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
-@@ -1357,7 +1360,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
+@@ -1449,7 +1452,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
    stream: true,
  });
  

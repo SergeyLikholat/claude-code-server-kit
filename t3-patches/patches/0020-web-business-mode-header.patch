@@ -1,4 +1,4 @@
-From f17e782f067ba0173b91d1cc91df9b887f53fe0e Mon Sep 17 00:00:00 2001
+From 983101dfd8e0fd7ef2887f770b31d2904d8c08c5 Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Sat, 3 Oct 2026 21:17:07 +0300
 Subject: [PATCH] =?UTF-8?q?feat(web):=20T3=20=D0=B4=D0=BB=D1=8F=20=D0=B1?=
@@ -15,17 +15,17 @@ Content-Transfer-Encoding: 8bit
 
 ---
  apps/web/src/components/ChatView.tsx          |   9 +-
- apps/web/src/components/chat/ChatHeader.tsx   |  76 +++++++-----
+ apps/web/src/components/chat/ChatHeader.tsx   |  68 +++++++----
  .../components/chat/PanelLayoutControls.tsx   |  11 +-
  .../src/components/sergey/businessMode.tsx    | 109 ++++++++++++++++++
- 4 files changed, 174 insertions(+), 31 deletions(-)
+ 4 files changed, 170 insertions(+), 27 deletions(-)
  create mode 100644 apps/web/src/components/sergey/businessMode.tsx
 
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 38f773cf03..20ef375698 100644
+index a32c1473cd..0e70543612 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -518,6 +518,7 @@ import {
+@@ -533,6 +533,7 @@ import {
    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
    recallableComposerPrompt,
  } from "./chat/composerPromptHistory";
@@ -33,7 +33,7 @@ index 38f773cf03..20ef375698 100644
  
  const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
  const EMPTY_QUEUED_MESSAGES: QueuedComposerMessage[] = [];
-@@ -1775,6 +1776,7 @@ export default function ChatView(props: ChatViewProps) {
+@@ -1826,6 +1827,7 @@ export default function ChatView(props: ChatViewProps) {
    const feedbackUploadsInFlightRef = useRef(new Set<string>());
    const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
  
@@ -41,7 +41,7 @@ index 38f773cf03..20ef375698 100644
    const terminalUiState = useTerminalUiStateStore((state) =>
      selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
    );
-@@ -9097,6 +9099,8 @@ export default function ChatView(props: ChatViewProps) {
+@@ -9485,6 +9487,8 @@ export default function ChatView(props: ChatViewProps) {
  
    const panelToggleControls = (
      <PanelLayoutControls
@@ -50,7 +50,7 @@ index 38f773cf03..20ef375698 100644
        terminalAvailable={activeProject !== null}
        terminalOpen={terminalUiState.terminalOpen}
        terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-@@ -9392,6 +9396,9 @@ export default function ChatView(props: ChatViewProps) {
+@@ -9778,6 +9782,9 @@ export default function ChatView(props: ChatViewProps) {
              onAddProjectScript={saveProjectScript}
              onUpdateProjectScript={updateProjectScript}
              onDeleteProjectScript={deleteProjectScript}
@@ -60,7 +60,7 @@ index 38f773cf03..20ef375698 100644
            />
          </WorkspacePageHeader>
  
-@@ -9738,7 +9745,7 @@ export default function ChatView(props: ChatViewProps) {
+@@ -10134,7 +10141,7 @@ export default function ChatView(props: ChatViewProps) {
                                  ref={branchToolbarRef}
                                  environmentId={activeThread.environmentId}
                                  threadId={activeThread.id}
@@ -70,18 +70,18 @@ index 38f773cf03..20ef375698 100644
                                  onEnvModeChange={onEnvModeChange}
                                  startFromOrigin={startFromOrigin}
 diff --git a/apps/web/src/components/chat/ChatHeader.tsx b/apps/web/src/components/chat/ChatHeader.tsx
-index fbebc323a9..ff8a8002f1 100644
+index 92f615538f..4ef153650d 100644
 --- a/apps/web/src/components/chat/ChatHeader.tsx
 +++ b/apps/web/src/components/chat/ChatHeader.tsx
-@@ -47,6 +47,7 @@ import {
-   WorkspaceBreadcrumbSeparator,
- } from "../WorkspaceBreadcrumb";
- import { cn } from "~/lib/utils";
+@@ -52,6 +52,7 @@ import { cn } from "~/lib/utils";
+ import { useIsMobile } from "~/hooks/useMediaQuery";
+ import { Button } from "../ui/button";
+ import { Menu, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 +import { T3patchBusinessHeaderActions, useT3patchDevMode } from "../sergey/businessMode"; // t3-patch
  
  interface ChatHeaderProps {
    activeThreadEnvironmentId: EnvironmentId;
-@@ -73,6 +74,10 @@ interface ChatHeaderProps {
+@@ -78,6 +79,10 @@ interface ChatHeaderProps {
      input: NewProjectScriptInput,
    ) => Promise<ProjectScriptActionResult>;
    onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
@@ -92,7 +92,7 @@ index fbebc323a9..ff8a8002f1 100644
  }
  
  /**
-@@ -139,7 +144,11 @@ export const ChatHeader = memo(function ChatHeader({
+@@ -144,7 +149,11 @@ export const ChatHeader = memo(function ChatHeader({
    onAddProjectScript,
    onUpdateProjectScript,
    onDeleteProjectScript,
@@ -104,69 +104,61 @@ index fbebc323a9..ff8a8002f1 100644
    const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
      usePanelAnimationSettings();
    const headerActionsRef = useRef<HTMLDivElement | null>(null);
-@@ -409,34 +418,45 @@ export const ChatHeader = memo(function ChatHeader({
-           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
+@@ -500,30 +509,41 @@ export const ChatHeader = memo(function ChatHeader({
+           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
          )}
        >
--        {activeProjectScripts && (
--          <ProjectScriptsControl
--            scripts={activeProjectScripts}
--            fileScripts={fileScripts}
--            keybindings={keybindings}
--            preferredScriptId={preferredScriptId}
--            onRunScript={onRunProjectScript}
--            onAddScript={onAddProjectScript}
--            onUpdateScript={onUpdateProjectScript}
--            onDeleteScript={onDeleteProjectScript}
--          />
--        )}
--        {showOpenInPicker && (
--          <OpenInPicker
--            environmentId={activeThreadEnvironmentId}
--            keybindings={keybindings}
--            availableEditors={availableEditors}
--            openInCwd={openInCwd}
--          />
--        )}
--        {activeProjectName && (
--          <GitActionsControl
--            gitCwd={gitCwd}
--            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
--            onOpenPullRequest={onOpenPullRequest}
--            {...(draftId ? { draftId } : {})}
--          />
--        )}
+-        <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
+-          <MenuTrigger
+-            className={
+-              actionsCollapsed &&
+-              (activeProjectScripts || showOpenInPicker || (activeProjectName && gitCwd))
+-                ? undefined
+-                : "hidden"
+-            }
+-            render={<Button size="icon-sm" variant="ghost" aria-label="More header actions" />}
+-          >
+-            <EllipsisIcon className="size-4" />
+-          </MenuTrigger>
+-          <div ref={mountInlineActions} className="contents" />
+-          <MenuPopup
+-            data-chat-header-actions
+-            keepMounted
+-            aria-label="Header actions"
+-            align="end"
+-            finalFocus={actionsCollapsed ? undefined : false}
+-          >
+-            <div ref={mountMenuActions} className="contents" />
+-            {createPortal(headerActions, actionsContainer)}
+-          </MenuPopup>
+-        </Menu>
 +        {/* t3-patch: бизнес-режим — без Git, VS Code и скриптов; они в «Режиме разработчика» */}
 +        {t3patchDevMode ? (
 +          <>
-+            {activeProjectScripts && (
-+              <ProjectScriptsControl
-+                scripts={activeProjectScripts}
-+                fileScripts={fileScripts}
-+                keybindings={keybindings}
-+                preferredScriptId={preferredScriptId}
-+                onRunScript={onRunProjectScript}
-+                onAddScript={onAddProjectScript}
-+                onUpdateScript={onUpdateProjectScript}
-+                onDeleteScript={onDeleteProjectScript}
-+              />
-+            )}
-+            {showOpenInPicker && (
-+              <OpenInPicker
-+                environmentId={activeThreadEnvironmentId}
-+                keybindings={keybindings}
-+                availableEditors={availableEditors}
-+                openInCwd={openInCwd}
-+              />
-+            )}
-+            {activeProjectName && (
-+              <GitActionsControl
-+                gitCwd={gitCwd}
-+                activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-+                onOpenPullRequest={onOpenPullRequest}
-+                {...(draftId ? { draftId } : {})}
-+              />
-+            )}
++            <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
++              <MenuTrigger
++                className={
++                  actionsCollapsed &&
++                  (activeProjectScripts || showOpenInPicker || (activeProjectName && gitCwd))
++                    ? undefined
++                    : "hidden"
++                }
++                render={<Button size="icon-sm" variant="ghost" aria-label="More header actions" />}
++              >
++                <EllipsisIcon className="size-4" />
++              </MenuTrigger>
++              <div ref={mountInlineActions} className="contents" />
++              <MenuPopup
++                data-chat-header-actions
++                keepMounted
++                aria-label="Header actions"
++                align="end"
++                finalFocus={actionsCollapsed ? undefined : false}
++              >
++                <div ref={mountMenuActions} className="contents" />
++                {createPortal(headerActions, actionsContainer)}
++              </MenuPopup>
++            </Menu>
 +          </>
 +        ) : null}
 +        <T3patchBusinessHeaderActions
@@ -179,7 +171,7 @@ index fbebc323a9..ff8a8002f1 100644
      </div>
    );
 diff --git a/apps/web/src/components/chat/PanelLayoutControls.tsx b/apps/web/src/components/chat/PanelLayoutControls.tsx
-index 8e8e640ee8..5718f2a078 100644
+index 950183addc..eca53e2279 100644
 --- a/apps/web/src/components/chat/PanelLayoutControls.tsx
 +++ b/apps/web/src/components/chat/PanelLayoutControls.tsx
 @@ -1,4 +1,4 @@

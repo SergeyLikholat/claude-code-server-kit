@@ -1,4 +1,4 @@
-From b132c263cc2086354355ef0a99953d5e8fcf4cd6 Mon Sep 17 00:00:00 2001
+From d7b7f9f1326a34d36e5f483a19dcdeef4ac26844 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Fri, 25 Sep 2026 11:34:54 +0300
 Subject: [PATCH] =?UTF-8?q?feat(server):=20=D1=81=D0=BA=D0=B0=D1=87=D0=B8?=
@@ -23,10 +23,10 @@ Content-Transfer-Encoding: 8bit
  4 files changed, 45 insertions(+), 9 deletions(-)
 
 diff --git a/apps/server/src/assets/AssetAccess.ts b/apps/server/src/assets/AssetAccess.ts
-index f61440a09f..126cacec87 100644
+index 42bd1af6ee..1a63d65b58 100644
 --- a/apps/server/src/assets/AssetAccess.ts
 +++ b/apps/server/src/assets/AssetAccess.ts
-@@ -49,7 +49,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
+@@ -51,7 +51,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
  import * as ServerConfig from "../config.ts";
  import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
  import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -35,7 +35,7 @@ index f61440a09f..126cacec87 100644
  import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
  import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
  
-@@ -341,7 +341,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
+@@ -360,7 +360,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
        );
      if (
        !isWorkspacePreviewEntryPath(resolved.relativePath) &&
@@ -44,7 +44,7 @@ index f61440a09f..126cacec87 100644
      ) {
        return yield* new AssetPreviewTypeValidationError({
          resource: input.resource,
-@@ -381,7 +381,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
+@@ -400,7 +400,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
      return {
        claims:
          isWorkspaceImagePreviewPath(resolved.relativePath) ||

@@ -1,9 +1,9 @@
-From 3d08da2a22b60119478e1716f2d2be1573de4e02 Mon Sep 17 00:00:00 2001
+From 52dd7fd4cb34fc8bdbc0b05cca83426b971f7453 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Thu, 24 Sep 2026 20:29:25 +0300
-Subject: [PATCH 2/7] =?UTF-8?q?feat(files):=20=D0=BA=D0=BE=D0=BF=D0=B8?=
- =?UTF-8?q?=D1=80=D0=BE=D0=B2=D0=B0=D1=82=D1=8C=20=D0=BF=D1=83=D1=82=D1=8C?=
- =?UTF-8?q?=20=D0=B8=20=D0=BF=D0=BE=D0=BB=D0=BD=D1=8B=D0=B9=20=D0=BF=D1=83?=
+Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=BA=D0=BE=D0=BF=D0=B8=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=B2=D0=B0=D1=82=D1=8C=20=D0=BF=D1=83=D1=82=D1=8C=20?=
+ =?UTF-8?q?=D0=B8=20=D0=BF=D0=BE=D0=BB=D0=BD=D1=8B=D0=B9=20=D0=BF=D1=83?=
  =?UTF-8?q?=D1=82=D1=8C,=20=D1=81=D0=BA=D0=B0=D1=87=D0=B0=D1=82=D1=8C=20?=
  =?UTF-8?q?=D0=BB=D1=8E=D0=B1=D0=BE=D0=B9=20=D1=84=D0=B0=D0=B9=D0=BB?=
 MIME-Version: 1.0
@@ -27,10 +27,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/web/src/components/sergey/fileActions.ts
 
 diff --git a/apps/server/src/http.ts b/apps/server/src/http.ts
-index c564201785..0fb1aa5afb 100644
+index 30b368e621..a7ce5dd400 100644
 --- a/apps/server/src/http.ts
 +++ b/apps/server/src/http.ts
-@@ -268,7 +268,7 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
+@@ -272,7 +272,7 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
    return redirectUrl.toString();
  }
  
@@ -313,18 +313,18 @@ index 0000000000..7d3083bd1d
 +  }),
 +);
 diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
-index e0aeecb3f7..27767f359b 100644
+index 43bba34bd8..db5dd2e8c9 100644
 --- a/apps/server/src/server.ts
 +++ b/apps/server/src/server.ts
-@@ -30,6 +30,7 @@ import {
-   browserApiCorsLayer,
+@@ -35,6 +35,7 @@ import {
    httpCompressionLayer,
+   untracedRequestsLayer,
  } from "./http.ts";
 +import { t3patchFileInfoRouteLayer, t3patchFileRouteLayer } from "./sergey/fileAccess.ts";
  import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
  import { fixPath } from "./os-jank.ts";
  import { websocketRpcRouteLayer } from "./ws.ts";
-@@ -575,6 +576,8 @@ export const makeRoutesLayer = Layer.mergeAll(
+@@ -607,6 +608,8 @@ export const makeRoutesLayer = Layer.mergeAll(
      otlpTracesProxyRouteLayer,
      assetRouteLayer,
      attachmentUploadRouteLayer,
@@ -334,25 +334,29 @@ index e0aeecb3f7..27767f359b 100644
      staticAndDevRouteLayer,
      websocketRpcRouteLayer,
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index 750fa3c7d1..fa48064ce4 100644
+index 69e8714a32..a2290540ba 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -18,6 +18,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
- import { useTheme } from "~/hooks/useTheme";
+@@ -19,6 +19,7 @@ import { useTheme } from "~/hooks/useTheme";
  import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
  import { readLocalApi } from "~/localApi";
 +import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
  import { T3_PIERRE_ICONS } from "~/pierre-icons";
  import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
  
-@@ -179,9 +180,11 @@ export default function FileBrowserPanel({
-         [
+@@ -185,6 +186,7 @@ export default function FileBrowserPanel({
+           ...fileMenuItems,
            { id: "copy-mention", label: "Copy mention" },
            { id: "add-to-chat", label: "Add to chat" },
 +          ...t3patchFileMenuItems(item.path), // t3-patch
          ],
          position,
        );
+@@ -197,6 +199,7 @@ export default function FileBrowserPanel({
+         await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+         return;
+       }
 +      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath })) return; // t3-patch
        if (clicked === "copy-mention") {
          try {

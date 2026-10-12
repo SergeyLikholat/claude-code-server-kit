@@ -1,4 +1,4 @@
-From 93823922805bdab06efce358df3915626ed983d9 Mon Sep 17 00:00:00 2001
+From 706a70cf272acbd93052a8ff3c0a100eecfffafd Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Fri, 25 Sep 2026 14:13:23 +0300
 Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=B7=D0=B0=D0=BC=D0=B5=D1=82?=
@@ -22,10 +22,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/web/src/components/sergey/rowHighlight.ts
 
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index 33e6b1db15..0b6e7ef8ea 100644
+index 4bbbceb329..745f6683cc 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -463,7 +463,7 @@ export default function FileBrowserPanel({
+@@ -487,7 +487,7 @@ export default function FileBrowserPanel({
    }, [dragMention]);
  
    // t3-patch: ссылка из чата на папку — переход к папке; повторный клик по выделенному файлу — открыть снова

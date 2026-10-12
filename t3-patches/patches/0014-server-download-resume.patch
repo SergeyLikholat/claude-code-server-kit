@@ -1,4 +1,4 @@
-From ec67f20cd7e06afaab7e4df4a50205bc6e433d4e Mon Sep 17 00:00:00 2001
+From 0e72bb8065526e85cf64ce7c55e9291a20c59521 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Fri, 25 Sep 2026 15:14:06 +0300
 Subject: [PATCH] =?UTF-8?q?fix(server):=20=D0=B4=D0=BE=D0=BA=D0=B0=D1=87?=
@@ -20,10 +20,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/server/src/sergey/downloadRange.test.ts
 
 diff --git a/apps/server/src/http.ts b/apps/server/src/http.ts
-index 0fb1aa5afb..4a23468924 100644
+index a7ce5dd400..b51874f3ad 100644
 --- a/apps/server/src/http.ts
 +++ b/apps/server/src/http.ts
-@@ -179,7 +179,13 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
+@@ -180,7 +180,13 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
    let status = 200;
    let offset = 0n;
    let bytesToRead: bigint | undefined;
@@ -32,7 +32,7 @@ index 0fb1aa5afb..4a23468924 100644
 +  // обрыва связи просит продолжение (Range); без него загрузка на плохой связи падала и
 +  // начиналась с нуля. html не трогаем — это страница, а не загрузка.
 +  // Картинки и html по-прежнему целиком — так задумано штатно (превью, а не загрузка).
-+  const t3patchType = (asset.mimeType ?? Mime.getType(asset.path) ?? "").toLowerCase();
++  const t3patchType = (asset.mimeType ?? Option.getOrElse(Mime.getType(asset.path), () => "")).toLowerCase();
 +  const t3patchRangeable = !/^(?:image\/|text\/html)/.test(t3patchType);
 +  if (isMedia || t3patchRangeable) {
      headers["Accept-Ranges"] = "bytes";

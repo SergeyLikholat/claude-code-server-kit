@@ -1,4 +1,549 @@
 # Непереведённые строки T3
 
-Всего в интерфейсе: 4706. Без перевода: 0. В словаре, но уже нет в коде: 89.
+Всего в интерфейсе: 5169. Без перевода: 545. В словаре, но уже нет в коде: 172.
 
+- `. Open ChatGPT with the account you connected.` — mobile/features/usage/ChatGptUsageSummary.tsx:37
+- `· API estimate` — components/usage/UsagePage.tsx:496
+- `· Latest` — components/pullRequest/PullRequestSummaryTab.tsx:425
+- `· Latest {0}` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:289
+- `· Open comment on host` — components/pullRequest/PullRequestSummaryTab.tsx:101
+- `· Open profile` — components/pullRequest/pullRequestPresentation.tsx:504
+- `{0} — view details` — components/settings/ProviderInstanceCard.tsx:762
+- `{0} · {1}% left` — mobile/widgets/SubscriptionUsage.android.tsx:75
+- `{0} {1} before auto-settle` — mobile/features/settings/components/AutoSettleDaysField.android.tsx:38
+- `{0} + Enter always` — components/settings/SettingsPanels.tsx:2209
+- `{0} + Enter for multiline prompts` — components/settings/SettingsPanels.tsx:2208
+- `{0} bot comment{1}` — components/pullRequest/PullRequestSummaryTab.tsx:971
+- `{0} checkouts` — mobile/features/settings/SettingsProjectOverviewRouteScreen.tsx:110
+- `{0} devices open` — mobile/features/devices/device-preview-button.tsx:32
+- `{0} favorites: {1}, {2}` — mobile/features/threads/ThreadSettingsRows.shared.tsx:96
+- `{0} in days` — components/settings/StorageSettings.tsx:63
+- `{0} is still running. Show setup progress.` — components/chat/MessagesTimeline.tsx:2598
+- `{0} It will appear in the sidebar once this client catches up.` — hooks/useNewProject.ts:128
+- `{0} more in T3` — mobile/widgets/SubscriptionUsage.android.tsx:93
+- `{0} of {1} provider updates failed` — components/ProviderUpdateLaunchNotification.logic.ts:381
+- `{0} resolved or dismissed comment{1}` — components/pullRequest/PullRequestSummaryTab.tsx:1016
+- `{0} stand` — components/device/DeviceDuoControls.tsx:39
+- `{0} the {1} threads.` — mobile/features/threads/thread-list-v2-items.tsx:204
+- `{0} The project is in {1}.` — hooks/useNewProject.ts:108
+- `{0} to undo` — components/sidebar/SidebarThreadUndoNotice.tsx:21
+- `{0} Use Publish Repository in the Git menu to try again.` — hooks/useNewProject.ts:59
+- `{0}, and {1} more linked; overall {2}` — components/ThreadStatusIndicators.tsx:182
+- `{0}: {1}. Show details` — components/device/DeviceToolVersions.tsx:33
+- `1 checkout` — mobile/features/settings/SettingsProjectOverviewRouteScreen.tsx:110
+- `3D` — components/device/DeviceStreamView.tsx:515
+- `3D view` — components/device/DeviceControlsRail.tsx:230
+- `A background prompt could not be sent` — components/ChatView.tsx:8154
+- `About T3 Code` — mobile/Stack.tsx:236
+- `Accent color hue` — components/settings/ProviderAccentColorPicker.tsx:43
+- `Access token` — components/settings/BitbucketCredentialsSettings.tsx:25
+- `Account name` — components/settings/AddCodexAccountDialog.tsx:109
+- `Account-specific home sharing the Codex state above.` — components/settings/CodexSetupSection.tsx:1063
+- `Across environments` — mobile/features/settings/SettingsThreadsRouteScreen.tsx:195
+- `Add a project, or start without one.` — components/NoProjectsHero.tsx:31
+- `Add an account or configure a provider on` — components/settings/AddProviderInstanceDialog.tsx:245
+- `Add ChatGPT account` — components/settings/AddCodexAccountDialog.tsx:90
+- `Add existing project` — components/CommandPalette.tsx:2896
+- `Add project action…` — components/ProjectScriptsControl.tsx:264
+- `Adding account…` — components/settings/AddCodexAccountDialog.tsx:135
+- `After the turn` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:105
+- `Agent activity` — mobile/features/settings/SettingsNotificationsRouteScreen.tsx:429
+- `Agent behavior` — mobile/Stack.tsx:216
+- `Agent device` — components/device/DeviceToolVersions.tsx:27
+- `Agent session will restart` — components/CommandPalette.tsx:2001
+- `Agent status out of date` — mobile/widgets/AgentActivity.tsx:157
+- `All connected environments` — mobile/features/settings/components/SettingsEnvironmentFilterHeader.tsx:61
+- `Allow agents to use the in-app preview browser.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:393
+- `Allow retry` — components/ChatView.tsx:8055
+- `Android fold controls` — components/device/DeviceAndroidFoldControls.tsx:99
+- `API estimate excludes` — components/usage/UsagePage.tsx:508
+- `API token` — components/settings/BitbucketCredentialsSettings.tsx:32
+- `App permission approval` — components/chat/ComposerPendingApprovalPanel.tsx:25
+- `App switcher` — mobile/features/devices/DevicePreviewRouteScreen.tsx:196
+- `Appearance: {0}` — components/CommandPalette.tsx:556
+- `Applying settings for` — components/settings/SettingsScopeSentence.tsx:69
+- `Artifacts and logs` — components/settings/StorageSettings.tsx:257
+- `Atlassian account email` — components/settings/BitbucketCredentialsSettings.tsx:174
+- `Attach Magic Keyboard` — components/device/DeviceControlsRail.tsx:250
+- `Attach output` — mobile/features/terminal/ThreadTerminalRouteScreen.tsx:1273
+- `Auto-settle` — mobile/features/settings/SettingsThreadsRouteScreen.tsx:165
+- `Auto-settle behavior` — components/threadActionMenu.logic.ts:149
+- `Automatic worktree cleanup` — components/settings/StorageSettings.tsx:157
+- `Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.` — components/settings/SettingsPanels.tsx:2896
+- `Awaiting review` — components/pullRequest/pullRequestPresentation.tsx:93
+- `Base new worktrees on the remote branch.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:342
+- `bg-[color-mix(in_srgb,var(--label)_8%,transparent)] text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]` — components/ui/badge.tsx:39
+- `Binary path` — components/settings/CodexSetupSection.tsx:1030
+- `Bitbucket credentials` — components/settings/settingsSearch.ts:706
+- `Bitbucket sign-in method` — components/settings/BitbucketCredentialsSettings.tsx:143
+- `Biz` — components/onboarding/WelcomeWizard.tsx:224
+- `Blocked on me` — routes/_chat.pull-requests.tsx:243
+- `Can't find a setting? Keep this project picked above and hop to any other settings page.` — components/settings/ProjectSettingsPanel.tsx:414
+- `Cancel custom snooze` — mobile/features/threads/CustomSnoozeSheet.ios.tsx:254
+- `Cancel setup` — mobile/features/threads/worktree-setup-card.tsx:251
+- `Cancel worktree setup` — mobile/features/threads/worktree-setup-card.tsx:244
+- `Capturing screenshot` — components/device/DeviceControlsRail.tsx:192
+- `Change account` — components/settings/CodexSetupSection.tsx:940
+- `Change appearance` — components/CommandPalette.tsx:2157
+- `Change theme` — components/CommandPalette.tsx:2108
+- `Changed` — components/pullRequest/PullRequestCodeTab.tsx:849
+- `chat width` — components/settings/SettingsPanels.tsx:1415
+- `Chat width` — components/settings/SettingsPanels.tsx:549
+- `ChatGPT - {0}` — components/settings/AddCodexAccountDialog.tsx:38
+- `ChatGPT account` — components/settings/CodexSetupSection.tsx:142
+- `ChatGPT account to connect` — components/settings/ChatGptAccountPicker.tsx:49
+- `ChatGPT shared usage` — components/usage/UsagePage.tsx:527
+- `ChatGPT sharing is on` — mobile/features/threads/ChatGptSharingStatus.tsx:17
+- `ChatGPT sign-in couldn't finish` — components/settings/ProviderAuthCallbackCoordinator.tsx:33
+- `ChatGPT sign-in redirect URL` — components/settings/CodexSetupSection.tsx:674
+- `ChatGPT token sharing is active` — mobile/features/threads/ChatGptSharingStatus.tsx:13
+- `ChatGPT usage limit reached` — components/chat/ThreadErrorBanner.tsx:59
+- `Check details are out of date.` — components/pullRequest/PullRequestSummaryTab.tsx:865
+- `Check details are out of date. Refresh the pull request to update them.` — components/pullRequest/PullRequestChecksPopover.tsx:154
+- `Check device tool versions` — mobile/features/devices/DevicePreviewRouteScreen.tsx:142
+- `Check installed provider CLIs for newer versions.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:432
+- `Check provider updates` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:428
+- `Check the host connection and network access, then retry. Your device settings are saved.` — components/device/DeviceHostUpdates.tsx:41
+- `Check versions` — components/settings/IntegrationsSettings.tsx:736
+- `Checking Codex.` — components/settings/CodexSetupSection.tsx:574
+- `Checking your Codex CLI...` — components/settings/CodexSetupSection.tsx:87
+- `Choose a thread from the sidebar or start a new thread.` — mobile/features/layout/WorkspaceEmptyDetail.tsx:49
+- `Choose an agent to start coding. You can add more later.` — components/onboarding/WelcomeWizard.tsx:657
+- `Choose models` — components/chat/ProviderModelPicker.tsx:180
+- `Choose models and a base branch` — components/ChatView.tsx:7426
+- `Choose when Enter sends a prompt or inserts a new line` — components/settings/SettingsPanels.tsx:2775
+- `Clear file search` — mobile/features/files/ThreadFilesRouteScreen.tsx:81
+- `Clear model search` — mobile/features/threads/ThreadSettingsSheet.tsx:912
+- `Client not supported` — components/cloud/CloudEnvironmentConnectList.tsx:455
+- `Clone destination` — mobile/features/projects/AddProjectScreen.tsx:1334
+- `Close composer` — components/pullRequest/PullRequestComposer.tsx:147
+- `Close device panel` — components/device/DeviceControlsRail.tsx:217
+- `Close device preview` — mobile/features/devices/DevicePreviewRouteScreen.tsx:265
+- `Close file search` — mobile/features/files/MaterialFilesHeader.tsx:83
+- `Close search` — mobile/components/ScreenHeader.android.tsx:207
+- `Close setup details` — mobile/features/threads/worktree-setup-sheet.android.tsx:33
+- `Code with your ChatGPT subscription.` — components/settings/CodexSetupSection.tsx:91
+- `Codex binary path` — components/settings/CodexSetupSection.tsx:1035
+- `Codex home path` — components/settings/CodexSetupSection.tsx:1050
+- `Codex runtime` — components/settings/AddCodexAccountDialog.tsx:98
+- `Codex setup` — components/settings/CodexSetupSection.tsx:889
+- `Codex shadow home path` — components/settings/CodexSetupSection.tsx:1069
+- `CODEX_HOME path` — components/settings/CodexSetupSection.tsx:1045
+- `Comfortable (default)` — components/settings/SettingsPanels.tsx:1433
+- `Comments ({0})` — components/pullRequest/PullRequestSummaryTab.tsx:921
+- `Composer mode` — components/pullRequest/PullRequestComposer.tsx:114
+- `Configure manually` — components/settings/AddProviderInstanceDialog.tsx:426
+- `Connect another ChatGPT account` — components/onboarding/WelcomeWizard.tsx:805
+- `Connect this environment to manage it.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:171
+- `Connect your agents` — components/onboarding/WelcomeWizard.tsx:656
+- `Connected to ChatGPT.` — components/settings/CodexSetupSection.tsx:786
+- `Connected with your Codex CLI.` — components/settings/CodexSetupSection.tsx:84
+- `Connecting to device...` — mobile/features/devices/DevicePreviewRouteScreen.tsx:360
+- `Connection` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:159
+- `Continue after restart` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:441
+- `Continue as {0} on OpenAI.` — components/settings/CodexSetupSection.tsx:584
+- `Continue with ChatGPT` — components/settings/ChatGptConnectionButton.tsx:9
+- `Copy details` — mobile/components/RenderErrorBoundary.tsx:112
+- `Copy trace ID {0}` — mobile/features/connection/ConnectionTraceId.tsx:23
+- `Could not create the GitHub repository` — hooks/useNewProject.ts:58
+- `Could not create the project` — hooks/useNewProject.ts:91
+- `Could not display file preview.` — mobile/features/review/useReviewDiffData.ts:74
+- `Could not load diff. Select the file to retry.` — mobile/features/review/useReviewDiffData.ts:78
+- `Could not open file` — fileContextMenu.ts:160
+- `Could not open in {0}` — fileContextMenu.ts:163
+- `Could not read Codex setup status. Reconnect and try again.` — components/settings/CodexSetupSection.tsx:1003
+- `Could not read runtime path` — components/settings/CodexSetupSection.tsx:1038
+- `Could not read setup status. Reconnect and try again.` — components/settings/CodexSetupSection.tsx:760
+- `Could not shut down device` — mobile/features/devices/DevicePreviewRouteScreen.tsx:117
+- `Could not start {0}` — components/ChatView.tsx:8048
+- `Could not start without a project` — hooks/useScratchProject.ts:21
+- `Could not switch machine` — mobile/features/threads/NewTaskContextPickerScreens.tsx:224
+- `Could not update auto-settle` — mobile/features/home/useThreadListActions.ts:459
+- `Could not update viewed files` — components/pullRequest/usePullRequestFilesViewed.ts:139
+- `Could not verify your permissions. Reconnect to try again.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:177
+- `Could not work locally` — mobile/features/threads/ThreadRouteScreen.tsx:913
+- `Couldn't get the path of "{0}"` — components/chat/ChatComposer.tsx:5900
+- `Couldn't save theme selection` — components/CommandPalette.tsx:225
+- `Create` — components/CommandPalette.tsx:3260
+- `Create (Enter)` — components/CommandPalette.tsx:3249
+- `Create an API token` — components/settings/BitbucketCredentialsSettings.tsx:36
+- `Create private repository on GitHub` — components/CommandPalette.tsx:2921
+- `Create project` — mobile/features/projects/AddProjectScreen.tsx:1124
+- `Created {0}` — hooks/useNewProject.ts:104
+- `Created {0} without a first commit` — hooks/useNewProject.ts:107
+- `Created without a first commit` — mobile/features/projects/AddProjectScreen.tsx:1026
+- `Creates {0}` — components/CommandPalette.tsx:3421
+- `Creating` — components/CommandPalette.tsx:3260
+- `Cursor account usage` — components/settings/UsageProviderSettings.tsx:82
+- `Decrease days before auto-settle` — mobile/features/settings/components/AutoSettleDaysField.android.tsx:31
+- `Delete inactive rotated log files after this many days. Current logs are kept.` — components/settings/StorageSettings.tsx:274
+- `Delete inactive worktrees` — components/settings/StorageSettings.tsx:214
+- `Delete merged worktrees` — components/settings/StorageSettings.tsx:227
+- `Delete old browser artifacts` — components/settings/StorageSettings.tsx:259
+- `Delete old rotated logs` — components/settings/StorageSettings.tsx:272
+- `Delete saved browser captures after this many days. Older capture links will no longer open.` — components/settings/StorageSettings.tsx:261
+- `Delete unchanged worktrees` — components/settings/StorageSettings.tsx:240
+- `Delete worktrees with deleted threads` — components/settings/StorageSettings.tsx:201
+- `Detach Magic Keyboard` — components/device/DeviceControlsRail.tsx:250
+- `Device controls` — components/device/DeviceControlsRail.tsx:58
+- `Device options` — mobile/features/devices/DevicePreviewRouteScreen.tsx:237
+- `Device stance` — components/device/DeviceDuoControls.tsx:28
+- `Device support could not start.` — components/device/DeviceHostUpdates.tsx:35
+- `Device text size` — components/device/DeviceControlsRail.tsx:143
+- `Device tool versions` — mobile/features/devices/DevicePreviewRouteScreen.tsx:152
+- `Device tools` — components/device/DeviceControlsRail.tsx:184
+- `Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. T3 Code will restart.` — components/settings/ConnectionsSettings.tsx:3435
+- `Discard pending line comments` — components/pullRequest/PullRequestComposer.tsx:137
+- `Double tap to {0} the thinking trace.` — mobile/features/threads/thread-work-log.tsx:1175
+- `Downloading {0}{1} MB.` — components/settings/CodexSetupSection.tsx:570
+- `Downloading update…` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:198
+- `Duration amount` — mobile/features/threads/CustomSnoozeSheet.ios.tsx:148
+- `Duration unit` — mobile/features/threads/CustomSnoozeSheet.ios.tsx:171
+- `e.g. Personal or Work` — components/settings/AddCodexAccountDialog.tsx:117
+- `Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.` — components/settings/AddCodexAccountDialog.tsx:91
+- `Each model starts in its own worktree.` — components/BranchToolbarEnvModeSelector.tsx:88
+- `Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any credit settings in ChatGPT.` — components/settings/ChatGptWelcomeCoordinator.tsx:68
+- `Eligible usage uses your ChatGPT plan. Credit settings and limits are managed in ChatGPT.` — mobile/features/threads/ChatGptSharingStatus.tsx:20
+- `enable Cursor account usage` — components/usage/UsagePage.tsx:795
+- `Enable Cursor usage from {0}` — components/usage/UsagePage.tsx:814
+- `Environment · {0}` — mobile/features/settings/components/SettingsEnvironmentFilterHeader.tsx:148
+- `Environment options` — mobile/features/settings/SettingsEnvironmentsRouteScreen.tsx:112
+- `environment settings update` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:164
+- `Environment-wide setting. Select All projects to change it.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:431
+- `Every token repaints the answer as it arrives. Slower and harder to read. Thinking traces still arrive a paragraph at a time.` — components/settings/SettingsPanels.tsx:199
+- `Failed to snooze {0} thread{1}` — components/Sidebar.tsx:4060
+- `Failed to undo archive` — hooks/useThreadActions.ts:336
+- `Failed to undo settle` — hooks/useThreadActions.ts:731
+- `Failed to undo unpin` — hooks/useThreadActions.ts:661
+- `Failed to update auto-settle` — components/Sidebar.tsx:4328
+- `File options` — mobile/features/files/MaterialFilesHeader.tsx:62
+- `File preview exceeds the size limit. Counts include all changes.` — mobile/features/review/useReviewDiffData.ts:71
+- `Files stay as they are because this thread shares the project directory.` — components/ChatView.tsx:10388
+- `Filter by {0}` — components/threadActionMenu.logic.ts:136
+- `Filter settings environments and projects` — mobile/features/settings/components/SettingsEnvironmentFilterHeader.tsx:45
+- `Filter threads` — mobile/features/home/HomeHeader.tsx:92
+- `Finish signing in in your browser.` — components/settings/CodexSetupSection.tsx:586
+- `Finished paragraphs` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:110
+- `Finishing sign-in...` — components/settings/CodexSetupSection.tsx:579
+- `Flat` — components/device/DeviceStreamView.tsx:523
+- `Flat view` — components/device/DeviceControlsRail.tsx:240
+- `Fold device` — components/device/DeviceAndroidFoldControls.tsx:107
+- `Fold shape` — components/device/DeviceDuoControls.tsx:28
+- `Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you.` — components/settings/SettingsPanels.tsx:2334
+- `Folders can't be dropped into remote environments` — components/chat/ChatComposer.tsx:5891
+- `For {0} mode` — components/CommandPalette.tsx:2120
+- `Forget {0} and its cached threads on this device. It stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.` — mobile/state/use-remote-environment-registry.ts:188
+- `from this device?` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:46
+- `Full` — components/settings/SettingsPanels.tsx:1435
+- `Git controls` — mobile/features/threads/ThreadGitControls.tsx:520
+- `Give each new thread a separate checkout.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:94
+- `Go back` — mobile/Stack.tsx:835
+- `Goes in {0}` — components/CommandPalette.tsx:3422
+- `Having trouble signing in?` — components/settings/CodexSetupSection.tsx:727
+- `Header actions` — components/chat/ChatHeader.tsx:546
+- `hidden)` — components/pullRequest/PullRequestSummaryTab.tsx:530
+- `Hide inspector` — mobile/features/threads/ThreadRouteScreen.tsx:166
+- `Highlight mouse presses and held buttons in new recordings.` — components/settings/IntegrationsSettings.tsx:497
+- `Host diagnostics` — components/device/DeviceToolsPanel.tsx:127
+- `How new worktrees in this project populate git submodules.` — components/settings/ProjectDefaultsSettings.tsx:344
+- `How new worktrees populate git submodules. Projects and their t3.json can override it.` — components/settings/ProjectDefaultsSettings.tsx:345
+- `HTTPS` — components/GitActionsControl.tsx:829
+- `If sign-in doesn't return to T3 Code, paste the URL from the final localhost page.` — components/settings/CodexSetupSection.tsx:654
+- `Imported {0} {1}` — components/onboarding/WelcomeWizard.tsx:182
+- `Inactive days` — mobile/features/settings/SettingsThreadsRouteScreen.tsx:185
+- `Increase days before auto-settle` — mobile/features/settings/components/AutoSettleDaysField.android.tsx:45
+- `Inherit` — components/settings/StorageSettings.tsx:183
+- `Inherited from the repository's t3.json` — components/settings/settingsLayout.tsx:403
+- `Initialize nested submodules too.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:66
+- `Install {0}` — components/settings/ProviderInstanceCard.tsx:804
+- `Install T3 Code {0}. {1} Running threads may be interrupted.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:105
+- `Install T3 Code on your phone and sign in to T3 Connect to get push notifications and Live Activities.` — components/clerk/MobileClientsUserProfilePage.tsx:96
+- `Installed` — components/device/DeviceToolVersions.tsx:67
+- `Installing Codex.` — components/settings/CodexSetupSection.tsx:572
+- `Installing device tools…` — components/device/DeviceHostUpdates.tsx:37
+- `Interactive 3D device. Drag the screen to interact. Drag outside it or swipe with two fingers to turn.` — components/device/DevicePhoneViewport.tsx:139
+- `Interactive 3D iPhone Duo. Drag the screen to interact. Drag outside it or swipe with two fingers to turn. Pinch over the device to open or close its hinge.` — components/device/DeviceDuoViewport.tsx:185
+- `iPhone Duo stands` — components/device/DeviceDuoControls.tsx:23
+- `It has not reached this device yet. Pick No project from the list once it appears.` — mobile/features/threads/NewTaskRouteScreen.tsx:248
+- `It has not reached this device yet. Try again.` — mobile/features/threads/NewTaskContextPickerScreens.tsx:233
+- `It stays on your T3 Connect account and keeps its host space. Deregister it in` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:50
+- `Keep the default branch current when there are no local changes.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:332
+- `Keep this project's worktrees until you delete them manually.` — components/settings/StorageSettings.tsx:160
+- `Known broken version` — components/settings/providerStatus.ts:109
+- `Labels loading` — components/pullRequest/PullRequestGhosts.tsx:371
+- `Landscape` — components/device/DeviceControlsRail.tsx:112
+- `Learn more` — components/settings/BitbucketCredentialsSettings.tsx:29
+- `Leave submodules empty for a setup script.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:72
+- `Let your other devices connect to T3 Code over the network. Pair devices to give them access. T3 Code will restart.` — components/settings/ConnectionsSettings.tsx:3434
+- `Limited support` — components/settings/ProviderInstanceCard.tsx:613
+- `Long press to copy the trace ID` — mobile/features/connection/ConnectionTraceId.tsx:21
+- `Maintenance` — mobile/Stack.tsx:221
+- `Manage {0}` — mobile/features/connection/CloudEnvironmentRows.tsx:225
+- `Manage usage` — components/chat/ComposerUsageLimits.tsx:114
+- `Managed by {0}.` — components/device/DeviceToolVersions.tsx:79
+- `Maximize {0}` — mobile/components/ScreenHeader.tsx:118
+- `Mixed · Set on` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:560
+- `Mixed across selected machines` — components/settings/StorageSettings.tsx:108
+- `Mobile devices that get notifications from your environments.` — components/clerk/MobileClientsUserProfilePage.tsx:115
+- `More actions` — mobile/components/AndroidScreenHeader.tsx:113
+- `More approval options` — components/chat/ComposerPendingApprovalActions.tsx:72
+- `More device actions` — components/device/DeviceControlsRail.tsx:204
+- `More header actions` — components/chat/ChatHeader.tsx:538
+- `Multiple models need a new thread in a Git project. Each gets its own worktree.` — components/ChatView.tsx:7428
+- `New branch name` — mobile/features/threads/git/GitBranchesSheet.tsx:105
+- `New thread without a project` — components/CommandPalette.tsx:1925
+- `No environments` — components/settings/SettingsScopeSentence.tsx:143
+- `No favorite models` — mobile/features/threads/ThreadSettingsSheet.tsx:825
+- `No hubs configured.` — components/settings/UsageProviderSettings.tsx:95
+- `No matching projects` — mobile/features/threads/NewTaskRouteScreen.tsx:435
+- `No project` — components/CommandPalette.tsx:1379
+- `No subscription limits available.` — mobile/widgets/SubscriptionUsage.tsx:239
+- `Not installed` — components/device/DeviceToolVersions.tsx:42
+- `Not running` — components/device/DeviceToolVersions.tsx:64
+- `Not used` — components/settings/CodexSetupSection.tsx:1072
+- `Notice details` — components/chat/ComposerBannerStack.tsx:306
+- `Notifications require T3 Connect in this app build.` — mobile/features/settings/SettingsNotificationsRouteScreen.tsx:67
+- `older bot comment` — components/pullRequest/PullRequestSummaryTab.tsx:996
+- `older comment` — components/pullRequest/PullRequestSummaryTab.tsx:529
+- `On OpenAI, sign in with the account you choose here.` — components/settings/ChatGptAccountPicker.tsx:43
+- `One device open` — mobile/features/devices/device-preview-button.tsx:32
+- `Open a folder or clone a repository` — components/CommandPalette.tsx:2897
+- `Open ChatGPT sign-in` — components/settings/CodexSetupSection.tsx:644
+- `Open in` — components/chat/OpenInPicker.tsx:335
+- `Open in…` — components/chat/OpenInPicker.tsx:344
+- `Open linked pull requests first. Otherwise, open the working tree diff for changes to at least 3 files or 50 lines.` — components/settings/SettingsPanels.tsx:2669
+- `Open pull requests` — components/CommandPalette.tsx:2224
+- `Open T3 Account` — mobile/state/use-remote-environment-registry.ts:192
+- `Open usage` — components/CommandPalette.tsx:2236
+- `Open with` — fileContextMenu.ts:100
+- `or start without a project` — components/chat/DraftHeroHeadline.tsx:353
+- `Other ways to connect` — components/settings/CodexSetupSection.tsx:708
+- `Out of date` — mobile/widgets/AgentActivity.tsx:166
+- `Outdated` — components/pullRequest/PullRequestSummaryTab.tsx:124
+- `Overview` — mobile/features/settings/SettingsRouteScreen.tsx:160
+- `Partial diff preview` — components/diffs/DiffFileStatus.tsx:22
+- `Paste the URL from the sign-in tab` — components/settings/CodexSetupSection.tsx:677
+- `Permission request` — components/chat/ComposerPendingApprovalPanel.tsx:35
+- `Power off device` — components/device/DeviceControlsRail.tsx:222
+- `Preparing managed setup.` — components/settings/AddCodexAccountDialog.tsx:98
+- `Preparing sign-in.` — components/settings/CodexSetupSection.tsx:142
+- `Preview browser` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:389
+- `Project · {0}` — mobile/features/settings/components/SettingsEnvironmentFilterHeader.tsx:162
+- `project name update` — mobile/features/settings/SettingsProjectOverviewRouteScreen.tsx:68
+- `Prompt font preview` — components/settings/SettingsFontPreviews.tsx:42
+- `Published to GitHub` — hooks/useNewProject.ts:68
+- `Pull request actions loading` — components/pullRequest/PullRequestGhosts.tsx:188
+- `Pull request composer` — components/pullRequest/PullRequestComposer.tsx:109
+- `Queued message not sent` — components/chat/sendQueuedMessage.ts:207
+- `Queued message not sent in "{0}"` — components/chat/sendQueuedMessage.ts:207
+- `Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access.` — components/settings/UsageProviderSettings.tsx:83
+- `Ready to code.` — components/onboarding/WelcomeWizard.tsx:948
+- `recent bot comments` — components/pullRequest/PullRequestSummaryTab.tsx:1007
+- `recent comments` — components/pullRequest/PullRequestSummaryTab.tsx:965
+- `Reconnect account` — components/settings/CodexSetupSection.tsx:830
+- `Reconnect ChatGPT` — components/settings/ChatGptAccountPicker.tsx:42
+- `Reconnect to the environment and try again.` — components/settings/ProviderAuthCallbackCoordinator.tsx:41
+- `Recording key presses` — components/settings/SettingsPanels.logic.ts:161
+- `Recording mouse presses` — components/settings/SettingsPanels.logic.ts:162
+- `Recursive` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:66
+- `Refresh cloud environments` — mobile/features/settings/SettingsEnvironmentsRouteScreen.tsx:116
+- `Refresh providers` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:261
+- `Refreshing pull request` — components/pullRequest/PullRequestDetailPanel.tsx:2000
+- `Reload stream` — mobile/features/devices/DevicePreviewRouteScreen.tsx:175
+- `Remove environment` — mobile/features/connection/ConnectionEnvironmentRow.tsx:206
+- `Remove from this device` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:69
+- `Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.` — components/settings/StorageSettings.tsx:203
+- `Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.` — components/settings/StorageSettings.tsx:216
+- `Remove worktrees whose pull request is merged and whose commits are included in the default branch.` — components/settings/StorageSettings.tsx:229
+- `Remove worktrees with no commits beyond the default branch.` — components/settings/StorageSettings.tsx:242
+- `Repaint for every token; this can be slower.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:116
+- `Repainting every token can make the app slower.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:376
+- `Repository options` — mobile/features/threads/git/GitOverviewSheet.tsx:430
+- `Required` — components/device/DeviceToolVersions.tsx:65
+- `Requires access to your Cursor login in macOS Keychain.` — components/usage/UsagePage.tsx:779
+- `Restart agent session` — components/CommandPalette.tsx:1982
+- `Restarting and reconnecting…` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:197
+- `Restore 3D view` — components/device/DeviceControlsRail.tsx:258
+- `Restore prompt` — components/ChatView.tsx:8159
+- `Resume interrupted threads after an update or restart.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:444
+- `Retry {0}` — mobile/features/devices/DevicePreviewRouteScreen.tsx:132
+- `Retry loading diff` — components/diffs/DiffFileStatus.tsx:22
+- `Return to the original draft and send or clear its current prompt before restoring.` — components/ChatView.tsx:8171
+- `Return to the provider and try again.` — components/settings/ProviderAuthCallbackCoordinator.tsx:34
+- `Review ({0})` — components/pullRequest/PullRequestComposer.tsx:124
+- `Review pull request` — components/pullRequest/PullRequestComposer.tsx:88
+- `Review pull request, {0} {1} pending` — components/pullRequest/PullRequestComposer.tsx:86
+- `Review verdict` — components/pullRequest/PullRequestReviewForm.tsx:146
+- `Review your usage settings in ChatGPT to continue.` — components/chat/ThreadErrorBanner.tsx:60
+- `Reviewers loading` — components/pullRequest/PullRequestGhosts.tsx:341
+- `rich text composer` — components/settings/SettingsPanels.tsx:2726
+- `Rich text composer` — components/settings/SettingsPanels.tsx:603
+- `Rotate device` — components/device/DeviceControlsRail.tsx:95
+- `Run in terminal` — components/ChatMarkdown.tsx:1085
+- `save Bitbucket credentials` — components/settings/BitbucketCredentialsSettings.tsx:85
+- `Save project name` — mobile/features/settings/SettingsProjectOverviewRouteScreen.tsx:131
+- `Save screenshot` — components/device/DeviceControlsRail.tsx:192
+- `Saving replaces your {0}.` — components/settings/BitbucketCredentialsSettings.tsx:202
+- `Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.` — components/settings/BitbucketCredentialsSettings.tsx:27
+- `Select a project with a checkout on a connected environment.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:235
+- `Select at least one model.` — components/chat/ChatComposer.tsx:1945
+- `Selected by T3 Code.` — components/settings/CodexSetupSection.tsx:1031
+- `Selected environments use different values` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:516
+- `Selected project checkouts use different values` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:515
+- `send shortcut` — components/settings/SettingsPanels.tsx:2779
+- `Send shortcut` — components/settings/SettingsPanels.tsx:605
+- `Sending to the agent` — components/chat/MessagesTimeline.tsx:1794
+- `Server settings` — mobile/features/settings/SettingsRouteScreen.tsx:170
+- `Set {0} on for selected environments` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:554
+- `Set how wide messages and the composer can grow on large screens.` — components/settings/SettingsPanels.tsx:1411
+- `Setting up...` — components/settings/CodexSetupSection.tsx:828
+- `Settings scope` — mobile/features/settings/components/SettingsEnvironmentFilterHeader.tsx:50
+- `Setup continues…` — mobile/features/threads/worktree-setup-card.tsx:55
+- `Setup script` — components/chat/MessagesTimeline.tsx:2589
+- `Setup script failed` — mobile/features/threads/worktree-setup-card.tsx:62
+- `Setup script output` — mobile/features/threads/worktree-setup-card.tsx:366
+- `Shadow home path` — components/settings/CodexSetupSection.tsx:1060
+- `Shared Codex config, sessions, and state.` — components/settings/CodexSetupSection.tsx:1046
+- `Show 3D phone` — components/device/DeviceStreamView.tsx:513
+- `Show all projects` — components/threadActionMenu.logic.ts:135
+- `Show each paragraph or code block as it completes.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:111
+- `Show formatted Markdown as you type.` — components/settings/SettingsPanels.tsx:2721
+- `Show full comment` — components/pullRequest/PullRequestCommentBody.tsx:56
+- `Show inspector` — mobile/features/threads/ThreadRouteScreen.tsx:167
+- `Show key presses in recordings` — components/settings/IntegrationsSettings.tsx:488
+- `Show mouse presses in recordings` — components/settings/IntegrationsSettings.tsx:502
+- `Show only` — components/pullRequest/PullRequestSummaryTab.tsx:964
+- `Show pressed keys and shortcuts in new recordings. Password fields are excluded.` — components/settings/IntegrationsSettings.tsx:483
+- `Show the answer when the agent finishes.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:106
+- `Shown in the provider list and model picker.` — components/settings/AddCodexAccountDialog.tsx:110
+- `Shut down device` — mobile/features/devices/DevicePreviewRouteScreen.tsx:214
+- `Shutting down…` — mobile/features/devices/DevicePreviewRouteScreen.tsx:214
+- `Signed in as` — components/settings/CodexSetupSection.tsx:72
+- `Signed in with ChatGPT.` — components/settings/CodexSetupSection.tsx:601
+- `Signing in...` — components/settings/CodexSetupSection.tsx:648
+- `Skip` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:72
+- `Skip submodules declared inside other submodules.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:70
+- `Snooze mode` — mobile/features/threads/CustomSnoozeSheet.ios.tsx:119
+- `Some history was not imported` — components/onboarding/WelcomeWizard.tsx:175
+- `Start a new Git repository from a name` — components/CommandPalette.tsx:1616
+- `Start a task without a project` — mobile/features/threads/NewTaskRouteScreen.tsx:321
+- `Start new threads in the existing workspace.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:89
+- `Start without a project` — components/NoProjectsHero.tsx:44
+- `Started {0} {1} in background` — components/ChatView.tsx:8105
+- `Starting device tools…` — components/device/DeviceHostUpdates.tsx:38
+- `Storage` — components/settings/settingsSearch.ts:94
+- `Submit review` — components/pullRequest/PullRequestReviewForm.tsx:170
+- `Submodules` — components/settings/settingsSearch.ts:420
+- `Switch device to {0} mode` — components/device/DeviceControlsRail.tsx:131
+- `T3 Connect settings` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:62
+- `The auto-settle setting could not be changed.` — mobile/features/home/useThreadListActions.ts:475
+- `The boxes below are whatever was last read, and empty if nothing has been read yet.` — components/pullRequest/PullRequestCodeTab.tsx:1163
+- `The conversation couldn't be displayed` — mobile/features/threads/ThreadDetailScreen.tsx:909
+- `The folder for threads without a project could not be created.` — mobile/features/threads/NewTaskContextPickerScreens.tsx:227
+- `The inspector couldn't be displayed` — mobile/features/layout/workspace-inspector-pane.tsx:147
+- `The sidebar couldn't be displayed` — mobile/features/layout/AdaptiveWorkspaceLayout.tsx:588
+- `These ticks are kept here, not on the host` — components/pullRequest/PullRequestCodeTab.tsx:1144
+- `This change has more files than the host will report ticks for in one read, so the count is short and some boxes below start empty.` — components/pullRequest/PullRequestCodeTab.tsx:1177
+- `This connection does not have permission to manage the environment.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:180
+- `This count covers only part of the change` — components/pullRequest/PullRequestCodeTab.tsx:1173
+- `This environment is no longer saved on this device.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:154
+- `This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.` — hooks/useThreadActions.ts:119
+- `This file has been pushed to since you marked it viewed.` — components/pullRequest/PullRequestCodeTab.tsx:858
+- `This file is too large to show in full. Counts include all changes.` — components/diffs/DiffFileStatus.tsx:35
+- `This forgets its pairing, credentials, and cached threads here.` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:47
+- `This host keeps no shared record of which files you have read, so these ticks are kept by this environment. They follow you between the apps connected to it, but the host's own web UI will not show them.` — components/pullRequest/PullRequestCodeTab.tsx:1148
+- `This instance uses the shared Codex home directly.` — components/settings/CodexSetupSection.tsx:1064
+- `This preview exceeds the size limit. Changes shown are incomplete.` — components/DiffPanel.tsx:995
+- `This preview exceeds the size limit. Changes shown are incomplete.{0}` — mobile/features/review/reviewModel.ts:535
+- `This project has no checkout on the selected connected environments. Change the filter above.` — mobile/features/settings/SettingsProjectOverviewRouteScreen.tsx:42
+- `This screen couldn't be displayed` — mobile/components/RenderErrorBoundary.tsx:91
+- `Thought` — components/chat/MessagesTimeline.tsx:2875
+- `Thought{0}` — components/chat/MessagesTimeline.tsx:2654
+- `Thread behavior` — mobile/Stack.tsx:231
+- `to free it.` — components/clerk/RemoveT3ConnectEnvironmentDialog.tsx:63
+- `Tools update automatically on this host when needed.` — components/device/DeviceToolVersions.tsx:79
+- `Top level only` — components/BranchToolbar.logic.ts:99
+- `Totals include all changes.` — components/DiffPanel.tsx:997
+- `Try a different project name or workspace path.` — mobile/features/threads/NewTaskRouteScreen.tsx:438
+- `Try again. If it keeps happening, copy the details for a bug report.` — mobile/components/RenderErrorBoundary.tsx:103
+- `Try sign-in in your browser` — components/settings/CodexSetupSection.tsx:700
+- `Turn off accessibility frames to use 3D` — components/device/DeviceStreamView.tsx:318
+- `Turn off Live Activity preference` — mobile/features/settings/SettingsNotificationsRouteScreen.tsx:477
+- `Type the folder path with @ instead.` — components/chat/ChatComposer.tsx:5901
+- `Ultrafast mode on` — components/chat/TraitsPicker.tsx:592
+- `Unfold device` — components/device/DeviceAndroidFoldControls.tsx:124
+- `unpriced records.` — components/usage/UsagePage.tsx:510
+- `Unpriced usage details` — components/usage/UsagePage.tsx:504
+- `Unsupported version` — components/settings/providerStatus.ts:108
+- `Update {0}` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:302
+- `Update {0}?` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:104
+- `Update and restart T3 Code on this machine.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:216
+- `update Cursor account usage` — components/settings/UsageProviderSettings.tsx:40
+- `Update failed. Check this host's network connection and try again.` — components/settings/IntegrationsSettings.tsx:714
+- `Update for full support.` — components/settings/providerStatus.ts:140
+- `Update older servers to control restart continuation.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:445
+- `Update the desktop app on this machine.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:215
+- `Update the selected environments to edit project overrides.` — mobile/features/settings/components/SettingsProjectOverridesSection.tsx:31
+- `Update the selected environments to use storage cleanup, or choose a machine that supports it.` — components/settings/StorageSettings.tsx:145
+- `Update the selected machines to configure project worktree cleanup.` — components/settings/StorageSettings.tsx:125
+- `Update this provider on the environment's machine.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:317
+- `Update to v{0}` — components/settings/IntegrationsSettings.tsx:720
+- `Updates` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:425
+- `Usage: {0}` — components/settings/KeybindingsSettings.logic.ts:311
+- `Usage: Period: {0}` — components/settings/KeybindingsSettings.logic.ts:313
+- `Use {0} for full support.` — components/settings/providerStatus.ts:140
+- `Use a different account` — components/settings/ChatGptAccountPicker.tsx:64
+- `Use arrow keys to adjust the focused value. Hold Shift for larger steps. Use Home and End for the minimum and maximum. Press Tab to move between saturation and brightness.` — components/ui/color-picker.tsx:128
+- `Use compatible versions of the app and server to connect.` — mobile/features/connection/EnvironmentConnectionNotice.tsx:46
+- `Use defaults` — mobile/features/settings/components/SettingsProjectOverridesSection.tsx:26
+- `Use each machine's worktree cleanup settings.` — components/settings/StorageSettings.tsx:163
+- `Use environment defaults` — mobile/features/settings/components/SettingsProjectOverridesSection.tsx:22
+- `Use existing CLI` — components/settings/CodexSetupSection.tsx:119
+- `Use legacy token streaming?` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:375
+- `Use Send now to try again.` — components/chat/sendQueuedMessage.ts:208
+- `Use T3 desktop for automatic return` — components/settings/CodexSetupSection.tsx:709
+- `Use the filter above to select a connected environment.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:236
+- `Use the repository's t3.json, or initialize recursively.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:64
+- `Use the repository's t3.json, or the current checkout.` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:84
+- `Use these rules for this project.` — components/settings/StorageSettings.tsx:162
+- `Use token streaming` — mobile/features/settings/SettingsServerControlsRouteScreen.tsx:380
+- `Use your ChatGPT subscription.` — components/settings/CodexSetupSection.tsx:604
+- `Uses your Atlassian account, so it reaches every repository you can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.` — components/settings/BitbucketCredentialsSettings.tsx:34
+- `Using ChatGPT plan` — components/chat/ChatGptSharingControl.tsx:11
+- `Version {0} is available.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:208
+- `Version unknown` — components/device/DeviceToolVersions.tsx:43
+- `Versions` — components/device/DeviceToolVersions.tsx:46
+- `Versions have not been checked.` — components/device/DeviceToolVersions.tsx:76
+- `Versions unavailable` — components/device/DeviceToolVersions.tsx:45
+- `View` — components/ChatView.tsx:6307
+- `View {0} devices` — mobile/features/devices/device-preview-button.tsx:15
+- `View agents` — components/ChatView.tsx:6307
+- `View device` — mobile/features/devices/device-preview-button.tsx:15
+- `View usage in ChatGPT with your connected account.` — components/usage/UsageLimitsPooled.tsx:612
+- `Viewed` — components/pullRequest/PullRequestCodeTab.tsx:849
+- `viewed in {0}` — components/pullRequest/PullRequestCodeTab.tsx:1138
+- `Waiting for device video…` — components/device/DeviceStreamView.tsx:537
+- `Watch and control devices open in this thread` — mobile/features/devices/device-preview-button.tsx:16
+- `What should we build in {0}?` — components/chat/DraftHeroHeadline.tsx:328
+- `Where new threads in this project start.` — components/settings/ProjectDefaultsSettings.tsx:211
+- `Where new threads start. Projects and their t3.json can override it.` — components/settings/ProjectDefaultsSettings.tsx:212
+- `Wide` — components/settings/SettingsPanels.tsx:1434
+- `Without a saved token, the server falls back to its T3CODE_BITBUCKET_* environment variables.` — components/settings/BitbucketCredentialsSettings.tsx:199
+- `Working ({0})` — components/Sidebar.tsx:5046
+- `working section` — components/settings/SettingsPanels.tsx:2339
+- `Working section` — components/settings/SettingsPanels.tsx:575
+- `Working section (beta)` — components/settings/SettingsPanels.tsx:2354
+- `Worktree base branch` — mobile/features/threads/git/GitBranchesSheet.tsx:135
+- `Worktree branch name` — mobile/features/threads/git/GitBranchesSheet.tsx:145
+- `Worktree cleanup` — components/settings/settingsSearch.ts:134
+- `Worktree setup details` — mobile/features/threads/worktree-setup-card.tsx:86
+- `worktree submodules` — components/settings/ProjectDefaultsSettings.tsx:350
+- `Worktree submodules` — components/settings/ProjectDefaultsSettings.tsx:362
+- `Worktrees` — components/settings/StorageSettings.tsx:154
+- `You are up to date.` — mobile/features/settings/SettingsEnvironmentDetailRouteScreen.tsx:209
+- `you@example.com` — components/settings/BitbucketCredentialsSettings.tsx:180
+- `Your ChatGPT plan is connected` — components/settings/ChatGptWelcomeCoordinator.tsx:67
+- `Your GitHub account` — components/CommandPalette.tsx:2925
+- `Your newer draft is unchanged. Restore the failed prompt when this composer is empty.` — components/ChatView.tsx:8156
+- `Your next message starts a fresh session.` — components/CommandPalette.tsx:2002
+- `Your ticks could not be read` — components/pullRequest/PullRequestCodeTab.tsx:1159

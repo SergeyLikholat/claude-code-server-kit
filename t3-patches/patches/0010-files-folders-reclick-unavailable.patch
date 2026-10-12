@@ -1,4 +1,4 @@
-From 00430a5eeebd373bb8fb049283a5849b91e5b795 Mon Sep 17 00:00:00 2001
+From 59144b65686d6918df9a2056278e9d56b217ef3a Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Fri, 25 Sep 2026 10:59:13 +0300
 Subject: [PATCH] =?UTF-8?q?feat(files):=20=D0=BF=D0=B0=D0=BF=D0=BA=D0=B8?=
@@ -79,7 +79,7 @@ index fcca56c925..598c353cfb 100644
 +  });
 +});
 diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
-index 2a7a7fef86..040b3c1272 100644
+index 723b283f9d..aa768e3377 100644
 --- a/apps/server/src/sergey/fileAccess.ts
 +++ b/apps/server/src/sergey/fileAccess.ts
 @@ -126,6 +126,35 @@ export function resolveBindMounts(absolutePath: string, mounts: readonly MountEn
@@ -143,10 +143,10 @@ index 2a7a7fef86..040b3c1272 100644
        return { root, target };
      }).pipe(Effect.orElseSucceed(() => null));
 diff --git a/apps/web/src/components/ChatMarkdown.tsx b/apps/web/src/components/ChatMarkdown.tsx
-index b0209754b0..86fc2c3d4c 100644
+index ea02607cc1..6d66a5a01c 100644
 --- a/apps/web/src/components/ChatMarkdown.tsx
 +++ b/apps/web/src/components/ChatMarkdown.tsx
-@@ -160,6 +160,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
+@@ -165,6 +165,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
  import { cn } from "../lib/utils";
  import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
  import { useRightPanelStore } from "../rightPanelStore";
@@ -154,7 +154,7 @@ index b0209754b0..86fc2c3d4c 100644
  import { readThreadShell, useProjects } from "../state/entities";
  import { serverEnvironment } from "../state/server";
  import { shellEnvironment } from "../state/shell";
-@@ -2511,6 +2512,11 @@ function useChatMarkdownState({
+@@ -2621,6 +2622,11 @@ function useChatMarkdownState({
        const isLatestLookup = claimWorkspaceBasenameLookup();
        const openAt = (path: string) =>
          useRightPanelStore.getState().openFile(threadRef, path, line);
@@ -167,7 +167,7 @@ index b0209754b0..86fc2c3d4c 100644
          openAt(panelPath);
          return;
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index fa48064ce4..33e6b1db15 100644
+index a2290540ba..4bbbceb329 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
 @@ -7,7 +7,7 @@ import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
@@ -179,8 +179,8 @@ index fa48064ce4..33e6b1db15 100644
  
  import { Button } from "~/components/ui/button";
  import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-@@ -19,6 +19,8 @@ import { useTheme } from "~/hooks/useTheme";
- import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+@@ -20,6 +20,8 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
+ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
  import { readLocalApi } from "~/localApi";
  import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
 +import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
@@ -188,7 +188,7 @@ index fa48064ce4..33e6b1db15 100644
  import { T3_PIERRE_ICONS } from "~/pierre-icons";
  import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
  
-@@ -460,6 +462,17 @@ export default function FileBrowserPanel({
+@@ -484,6 +486,17 @@ export default function FileBrowserPanel({
      };
    }, [dragMention]);
  
@@ -207,7 +207,7 @@ index fa48064ce4..33e6b1db15 100644
      <div
        ref={panelRef}
 diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
-index c33904d340..5d2e9faae9 100644
+index f339d52a76..6e4e1a6301 100644
 --- a/apps/web/src/components/files/FilePreviewPanel.tsx
 +++ b/apps/web/src/components/files/FilePreviewPanel.tsx
 @@ -80,6 +80,7 @@ import { CloseFileAction } from "~/components/sergey/CloseFileAction";
@@ -218,7 +218,7 @@ index c33904d340..5d2e9faae9 100644
  import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
  import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
  import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
-@@ -1229,9 +1230,14 @@ export default function FilePreviewPanel({
+@@ -1245,9 +1246,14 @@ export default function FilePreviewPanel({
            ) : relativePath && !isHostFile && officeKind(relativePath) ? (
              <OfficePreview key={relativePath} cwd={cwd} relativePath={relativePath} /> // t3-patch
            ) : relativePath && file.error && file.data === null ? (
@@ -235,7 +235,7 @@ index c33904d340..5d2e9faae9 100644
 +            />
            ) : relativePath && file.data === null ? (
              <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-               <Spinner className="size-5" />
+               <Spinner size="lg" />
 diff --git a/apps/web/src/components/sergey/FileUnavailableCard.tsx b/apps/web/src/components/sergey/FileUnavailableCard.tsx
 new file mode 100644
 index 0000000000..03a11f5697

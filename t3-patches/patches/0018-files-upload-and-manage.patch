@@ -1,4 +1,4 @@
-From 21fc4852b45c68a487fbec25f80056e56e73e341 Mon Sep 17 00:00:00 2001
+From de2210d4123888063928121b38eacb733821d088 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Wed, 30 Sep 2026 21:03:25 +0300
 Subject: [PATCH] =?UTF-8?q?feat:=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE=D0=B4?=
@@ -41,10 +41,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 packages/contracts/src/t3patchWorkspace.ts
 
 diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
-index 6285a52eba..f19532f44b 100644
+index 71d09389a1..02d46259cf 100644
 --- a/apps/server/src/auth/RpcAuthorization.ts
 +++ b/apps/server/src/auth/RpcAuthorization.ts
-@@ -8,6 +8,7 @@ import {
+@@ -9,6 +9,7 @@ import {
    AuthTerminalOperateScope,
    ORCHESTRATION_WS_METHODS,
    type AuthEnvironmentScope,
@@ -52,7 +52,7 @@ index 6285a52eba..f19532f44b 100644
    WS_METHODS,
    WsRpcGroup,
  } from "@t3tools/contracts";
-@@ -63,6 +64,13 @@ export const RPC_REQUIRED_SCOPES = {
+@@ -69,6 +70,13 @@ export const RPC_REQUIRED_SCOPES = {
    [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
    [WS_METHODS.t3patchMarkThreadVisited]: AuthOrchestrationReadScope, // t3-patch
    [WS_METHODS.t3patchSubscribeThreadVisits]: AuthOrchestrationReadScope, // t3-patch
@@ -842,10 +842,10 @@ index 0000000000..752670a499
 +  return NodePath.relative(item.cwd, NodePath.join(parent, name));
 +}
 diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
-index 60b31346d2..5b4d2567a0 100644
+index 688b98595b..66cf3a5826 100644
 --- a/apps/server/src/server.ts
 +++ b/apps/server/src/server.ts
-@@ -36,6 +36,10 @@ import {
+@@ -41,6 +41,10 @@ import {
    t3patchFileInfoRouteLayer,
    t3patchFileRouteLayer,
  } from "./sergey/fileAccess.ts";
@@ -856,7 +856,7 @@ index 60b31346d2..5b4d2567a0 100644
  import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
  import { fixPath } from "./os-jank.ts";
  import { websocketRpcRouteLayer } from "./ws.ts";
-@@ -585,6 +589,8 @@ export const makeRoutesLayer = Layer.mergeAll(
+@@ -617,6 +621,8 @@ export const makeRoutesLayer = Layer.mergeAll(
      t3patchFileRouteLayer, // t3-patch
      t3patchConvertRouteLayer, // t3-patch
      t3patchAssetDocxRouteLayer, // t3-patch
@@ -866,10 +866,10 @@ index 60b31346d2..5b4d2567a0 100644
      staticAndDevRouteLayer,
      websocketRpcRouteLayer,
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index 0700eb81d5..4279d1efb7 100644
+index 154d1952a4..74283bf4d8 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
-@@ -22,6 +22,19 @@ import {
+@@ -24,6 +24,19 @@ import {
    t3patchSubscribeThreadVisits,
    type T3patchThreadVisits,
  } from "./sergey/threadVisits.ts"; // t3-patch
@@ -889,7 +889,7 @@ index 0700eb81d5..4279d1efb7 100644
  import {
    DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
    AuthAccessStreamError,
-@@ -496,6 +509,16 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest)
+@@ -504,6 +517,16 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest)
    };
  }
  
@@ -906,7 +906,7 @@ index 0700eb81d5..4279d1efb7 100644
  const makeWsRpcLayer = (
    currentSession: EnvironmentAuth.AuthenticatedSession,
    clientOrigin: OrchestrationClientOrigin,
-@@ -3639,6 +3662,64 @@ const makeWsRpcLayer = (
+@@ -4059,6 +4082,64 @@ const makeWsRpcLayer = (
              }),
              { "rpc.aggregate": "auth" },
            ),
@@ -972,28 +972,28 @@ index 0700eb81d5..4279d1efb7 100644
          [WS_METHODS.t3patchMarkThreadVisited]: (input) =>
            observeRpcEffect(
 diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
-index 0b6e7ef8ea..2b248e6947 100644
+index 745f6683cc..8669346b5e 100644
 --- a/apps/web/src/components/files/FileBrowserPanel.tsx
 +++ b/apps/web/src/components/files/FileBrowserPanel.tsx
-@@ -19,6 +19,7 @@ import { useTheme } from "~/hooks/useTheme";
- import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+@@ -20,6 +20,7 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
+ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
  import { readLocalApi } from "~/localApi";
  import { handleT3PatchFileMenu, t3patchFileMenuItems } from "~/components/sergey/fileActions";
 +import { useT3patchExplorerDrop } from "~/components/sergey/useT3patchExplorerDrop"; // t3-patch
  import { useT3patchExplorerReveal } from "~/components/sergey/explorerReveal"; // t3-patch
  import { useT3patchReopenOnClick } from "~/components/sergey/reopenOnClick"; // t3-patch
  import { T3_PIERRE_ICONS } from "~/pierre-icons";
-@@ -186,7 +187,8 @@ export default function FileBrowserPanel({
-         ],
-         position,
-       );
+@@ -201,7 +202,8 @@ export default function FileBrowserPanel({
+         await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+         return;
+       }
 -      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath })) return; // t3-patch
 +      if (await handleT3PatchFileMenu(clicked, { cwd, relativePath, environmentId, refresh }))
 +        return; // t3-patch
        if (clicked === "copy-mention") {
          try {
            await writeTextToClipboard(mention);
-@@ -472,11 +474,13 @@ export default function FileBrowserPanel({
+@@ -496,11 +498,13 @@ export default function FileBrowserPanel({
      onOpenFileRef.current(path);
    }, []);
    useT3patchReopenOnClick(panelRef, model, isTreeFile, reopenTreeFile);
@@ -1631,7 +1631,7 @@ index 0000000000..4f8b93d17a
 +  }
 +}
 diff --git a/apps/web/src/routes/__root.tsx b/apps/web/src/routes/__root.tsx
-index 8ad37b6511..a9f4dc7782 100644
+index df44e71a7c..72b02bd8d8 100644
 --- a/apps/web/src/routes/__root.tsx
 +++ b/apps/web/src/routes/__root.tsx
 @@ -1,5 +1,6 @@
@@ -1641,7 +1641,7 @@ index 8ad37b6511..a9f4dc7782 100644
  import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
  import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
  import {
-@@ -235,6 +236,7 @@ function RootRouteView() {
+@@ -246,6 +247,7 @@ function RootRouteView() {
            {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
            {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
            {primaryEnvironmentAuthenticated ? <T3patchThreadVisitsSync /> : null}
@@ -1650,7 +1650,7 @@ index 8ad37b6511..a9f4dc7782 100644
            {/* Above the router: a theme draft is judged by walking the app, so the
                editor has to survive navigation away from settings. */}
 diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
-index e0dc7651ce..475dc6c518 100644
+index 08ba41ff64..5eef426fee 100644
 --- a/packages/client-runtime/src/state/server.ts
 +++ b/packages/client-runtime/src/state/server.ts
 @@ -6,6 +6,7 @@ import {
@@ -1661,7 +1661,7 @@ index e0dc7651ce..475dc6c518 100644
    WS_METHODS,
  } from "@t3tools/contracts";
  import * as Cause from "effect/Cause";
-@@ -1030,6 +1031,31 @@ export function createServerEnvironmentAtoms<R, E>(
+@@ -1064,6 +1065,31 @@ export function createServerEnvironmentAtoms<R, E>(
        label: "environment-data:server:process-resource-history",
        tag: WS_METHODS.serverGetProcessResourceHistory,
      }),
@@ -1706,10 +1706,10 @@ index 978a0459e6..79c5006704 100644
  export * from "./agentSessions.ts";
  export * from "./assets.ts";
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 50b9f2c891..e8b0a49fcd 100644
+index 5d492017ea..33af24466d 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -13,6 +13,14 @@ import {
+@@ -24,6 +24,14 @@ import {
  } from "./providerSetup.ts";
  
  import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
@@ -1724,7 +1724,7 @@ index 50b9f2c891..e8b0a49fcd 100644
  import {
    AuthAccessStreamError,
    AuthAccessStreamEvent,
-@@ -1379,6 +1387,12 @@ const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeTh
+@@ -1471,6 +1479,12 @@ const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeTh
  export const WsRpcGroup = RpcGroup.make(
    WsT3patchMarkThreadVisitedRpc,
    WsT3patchSubscribeThreadVisitsRpc,

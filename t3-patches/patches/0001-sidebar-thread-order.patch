@@ -1,11 +1,11 @@
-From 491cd0e49bc3f5915c43ab19c6e83d523987998d Mon Sep 17 00:00:00 2001
+From ee35b471889f843ecc084844ef7e11e73ff196c2 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Thu, 24 Sep 2026 20:23:17 +0300
-Subject: [PATCH 1/7] =?UTF-8?q?feat(sidebar):=20=D0=BF=D0=B5=D1=80=D0=B5?=
- =?UTF-8?q?=D0=BA=D0=BB=D1=8E=D1=87=D0=B0=D1=82=D0=B5=D0=BB=D1=8C=20=D0=BF?=
- =?UTF-8?q?=D0=BE=D1=80=D1=8F=D0=B4=D0=BA=D0=B0=20=D1=82=D1=80=D0=B5=D0=B4?=
- =?UTF-8?q?=D0=BE=D0=B2=20=E2=80=94=20=D1=80=D1=83=D1=87=D0=BD=D0=BE=D0=B9?=
- =?UTF-8?q?=20=D0=B8=D0=BB=D0=B8=20=D0=BF=D0=BE=20=D0=BF=D0=BE=D1=81=D0=BB?=
+Subject: [PATCH] =?UTF-8?q?feat(sidebar):=20=D0=BF=D0=B5=D1=80=D0=B5=D0=BA?=
+ =?UTF-8?q?=D0=BB=D1=8E=D1=87=D0=B0=D1=82=D0=B5=D0=BB=D1=8C=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=D1=80=D1=8F=D0=B4=D0=BA=D0=B0=20=D1=82=D1=80=D0=B5=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=B2=20=E2=80=94=20=D1=80=D1=83=D1=87=D0=BD=D0=BE=D0=B9=20?=
+ =?UTF-8?q?=D0=B8=D0=BB=D0=B8=20=D0=BF=D0=BE=20=D0=BF=D0=BE=D1=81=D0=BB?=
  =?UTF-8?q?=D0=B5=D0=B4=D0=BD=D0=B5=D0=BC=D1=83=20=D1=81=D0=BE=D0=BE=D0=B1?=
  =?UTF-8?q?=D1=89=D0=B5=D0=BD=D0=B8=D1=8E?=
 MIME-Version: 1.0
@@ -17,29 +17,29 @@ Content-Transfer-Encoding: 8bit
 в LegacySidebar. Выбор хранится в localStorage под своим ключом.
 В этом режиме перестановка внутри активных отключена.
 ---
- apps/web/src/components/Sidebar.tsx           | 20 +++-
+ apps/web/src/components/Sidebar.tsx           | 10 +-
  .../sergey/FlatThreadOrderToggle.tsx          | 39 ++++++++
  .../components/sergey/flatThreadOrder.test.ts | 51 ++++++++++
  .../src/components/sergey/flatThreadOrder.ts  | 95 +++++++++++++++++++
  .../sidebar/SidebarThreadHeader.tsx           |  2 +
- 5 files changed, 204 insertions(+), 3 deletions(-)
+ 5 files changed, 195 insertions(+), 2 deletions(-)
  create mode 100644 apps/web/src/components/sergey/FlatThreadOrderToggle.tsx
  create mode 100644 apps/web/src/components/sergey/flatThreadOrder.test.ts
  create mode 100644 apps/web/src/components/sergey/flatThreadOrder.ts
 
 diff --git a/apps/web/src/components/Sidebar.tsx b/apps/web/src/components/Sidebar.tsx
-index e5a86ff98a..1ade338a53 100644
+index 29849561ef..d2af460ab4 100644
 --- a/apps/web/src/components/Sidebar.tsx
 +++ b/apps/web/src/components/Sidebar.tsx
-@@ -234,6 +234,7 @@ import {
- import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
+@@ -242,6 +242,7 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
  import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
  import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 +import { sortThreadsByLatestMessage, useFlatThreadOrder } from "./sergey/flatThreadOrder";
- import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
  import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+ import { MiddleTruncate } from "./ui/middle-truncate";
  import {
-@@ -2508,6 +2509,7 @@ export default function Sidebar() {
+@@ -2598,6 +2599,7 @@ export default function Sidebar() {
          override holds until all of them appear in canonical state. */
      readonly assignedKeys: ReadonlyMap<string, string>;
    } | null>(null);
@@ -47,19 +47,18 @@ index e5a86ff98a..1ade338a53 100644
    const {
      pinnedThreads,
      draggableThreadKeys,
-@@ -2584,7 +2586,10 @@ export default function Sidebar() {
-     // sort, or mixed-version fleets would render different pinned orders on
-     // web and mobile from the same data.
-     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
--    const sortedActive = sortThreadsForSidebar(active);
-+    const sortedActive =
-+      flatThreadOrder === "latest"
+@@ -2687,7 +2689,9 @@ export default function Sidebar() {
+             scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+           ),
+         )
+-      : sortThreadsForSidebar(active);
++      : flatThreadOrder === "latest"
 +        ? sortThreadsByLatestMessage(active)
 +        : sortThreadsForSidebar(active);
      return {
        pinnedThreads:
          optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
-@@ -2595,7 +2600,8 @@ export default function Sidebar() {
+@@ -2698,7 +2702,8 @@ export default function Sidebar() {
                getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
              }),
        draggableThreadKeys: draggable,
@@ -69,23 +68,14 @@ index e5a86ff98a..1ade338a53 100644
        activeThreads:
          optimisticDrop?.section !== "active" || optimisticDrop.order === null
            ? sortedActive
-@@ -2613,7 +2619,15 @@ export default function Sidebar() {
-       settledThreads: sortSettledThreadsForSidebar(settled),
+@@ -2719,6 +2724,7 @@ export default function Sidebar() {
        snoozeNow: preciseNow,
      };
--  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
-+  }, [
+   }, [
 +    flatThreadOrder,
-+    nowMinute,
-+    optimisticDrop,
-+    scopedProjectKeys,
-+    serverConfigs,
-+    snoozeWakeTick,
-+    threads,
-+  ]);
- 
-   const threadSearchInputRef = useRef<HTMLInputElement>(null);
-   const [threadSearchQuery, setThreadSearchQuery] = useState("");
+     nowMinute,
+     optimisticDrop,
+     scopedProjectKeys,
 diff --git a/apps/web/src/components/sergey/FlatThreadOrderToggle.tsx b/apps/web/src/components/sergey/FlatThreadOrderToggle.tsx
 new file mode 100644
 index 0000000000..4c0bdf280e
@@ -290,18 +280,18 @@ index 0000000000..d75cd8e4e4
 +  );
 +}
 diff --git a/apps/web/src/components/sidebar/SidebarThreadHeader.tsx b/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
-index 6f9a686e52..cd673e945f 100644
+index e2bd4bfb74..0eb85390fe 100644
 --- a/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
 +++ b/apps/web/src/components/sidebar/SidebarThreadHeader.tsx
-@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
- import { Input } from "../ui/input";
- import { SidebarMenuButton } from "../ui/sidebar";
+@@ -23,6 +23,7 @@ import { cn } from "~/lib/utils";
+ import { Button } from "../ui/button";
+ import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
  import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 +import { FlatThreadOrderToggle } from "../sergey/FlatThreadOrderToggle";
  
  export interface SidebarThreadHeaderProps {
    /** Lands on the search field so a popup can anchor to its width. */
-@@ -134,6 +135,7 @@ export function SidebarThreadHeader({
+@@ -132,6 +133,7 @@ export function SidebarThreadHeader({
              </SidebarHeaderIconButton>
            </>
          ) : null}
