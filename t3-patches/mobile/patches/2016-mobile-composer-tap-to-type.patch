@@ -1,4 +1,4 @@
-From 0c0311421cb1efbccce178f595b4d40ecc0c5029 Mon Sep 17 00:00:00 2001
+From da4ae6ffa2c350e5bc7d6df376dd9fbdd9df080d Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Tue, 29 Sep 2026 22:46:58 +0300
 Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D0=BF=D0=BE=D0=BB=D0=B5=20?=
@@ -18,10 +18,10 @@ Content-Transfer-Encoding: 8bit
  1 file changed, 18 insertions(+), 3 deletions(-)
 
 diff --git a/apps/mobile/src/features/threads/ThreadComposer.tsx b/apps/mobile/src/features/threads/ThreadComposer.tsx
-index 680c9cf0ba..30c0d292df 100644
+index 6c1143205c..c71b195854 100644
 --- a/apps/mobile/src/features/threads/ThreadComposer.tsx
 +++ b/apps/mobile/src/features/threads/ThreadComposer.tsx
-@@ -285,6 +285,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+@@ -277,6 +277,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
    const bodyText = useScaledTextRole("body");
    const fallbackInputRef = useRef<ComposerEditorHandle>(null);
    const inputRef = props.editorRef ?? fallbackInputRef;
@@ -35,7 +35,7 @@ index 680c9cf0ba..30c0d292df 100644
    const [isFocused, setIsFocused] = useState(false);
    const pendingPastedTextAttachmentCountRef = useRef(0);
    const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
-@@ -743,7 +750,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+@@ -761,7 +768,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                  // A rested composer full of chips left almost nowhere to tap to start typing:
                  // every chip opened its file instead. Collapsed, they focus the editor.
                  chipsInert={!isExpanded}
@@ -44,7 +44,7 @@ index 680c9cf0ba..30c0d292df 100644
                  ref={inputRef}
                  multiline
                  value={props.draftMessage}
-@@ -859,8 +866,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+@@ -877,8 +884,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                      size={30}
                      borderRadius={8}
                      compact
@@ -56,7 +56,7 @@ index 680c9cf0ba..30c0d292df 100644
                    />
                  ))}
                  {stripAttachments.length > 3 ? (
-@@ -948,6 +956,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+@@ -966,6 +974,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                        onPickMedia={props.onPickDraftMedia}
                        onPickFiles={props.onPickDraftFiles}
                      />

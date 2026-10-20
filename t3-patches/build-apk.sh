@@ -14,6 +14,8 @@
 # Ключ подписи — /root/.config/t3patch/android-release.jks (в ночном бэкапе). Потеряешь
 # ключ — новую сборку поверх старой не поставить, придётся удалить приложение с данными.
 set -euo pipefail
+# Тяжёлая сборка — по очереди и с низким приоритетом, чтобы T3 не терял связь (heavy-run, heavy.slice)
+[ -n "${HEAVY_RUN_ACTIVE:-}" ] || ! command -v heavy-run >/dev/null || exec heavy-run bash "$0" "$@"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK=/root/.cache/t3-build
@@ -104,8 +106,11 @@ apksigner sign --ks "$T3PATCH_KEYSTORE" --ks-key-alias "$T3PATCH_KEY_ALIAS" \
   --out "$OUT" "$UNSIGNED"
 apksigner verify "$OUT"
 rm -f "$OUT.idsig"
+# карта исходников JS — расшифровать записи профилировщика Hermes и стеки ошибок из диагностики
+SRCMAP="$MSRC/apps/mobile/android/app/build/generated/sourcemaps/react/release/index.android.bundle.map"
+[ -f "$SRCMAP" ] && cp "$SRCMAP" "${OUT%.apk}.map"
 # держим две последние сборки
-for old in $(ls -1t "$OUTDIR"/T3-Sergey-*.apk | tail -n +3); do rm -f "$old" "${old%.apk}.json"; done
+for old in $(ls -1t "$OUTDIR"/T3-Sergey-*.apk | tail -n +3); do rm -f "$old" "${old%.apk}.json" "${old%.apk}.map"; done
 
 python3 - "$OUT" "$TAG" "$HERE" "$I18N" "$BUILD_NO" <<'PY'
 import hashlib, json, pathlib, sys, datetime

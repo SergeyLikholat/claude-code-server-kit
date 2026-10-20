@@ -1,4 +1,4 @@
-From 114c692e1e8e3403bf4acb8bb7059f228da067ee Mon Sep 17 00:00:00 2001
+From 712e8e3aba45a8b91868b9a3040314736344ebdc Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Wed, 30 Sep 2026 21:07:58 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE?=
@@ -32,10 +32,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 packages/contracts/src/t3patchWorkspace.ts
 
 diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
-index 6e5282b4dd..aaa8f9de8a 100644
+index 78ce22263a..377265710d 100644
 --- a/apps/mobile/src/App.tsx
 +++ b/apps/mobile/src/App.tsx
-@@ -27,6 +27,8 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
+@@ -25,6 +25,8 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
  import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
  import { t3patchMarkReady } from "./sergey/startupDiagnostics"; // t3-patch
  import { T3patchThreadVisitsSync } from "./sergey/ThreadVisitsSync"; // t3-patch
@@ -44,17 +44,17 @@ index 6e5282b4dd..aaa8f9de8a 100644
  
  import "../global.css";
  
-@@ -107,6 +109,8 @@ function AppContent() {
+@@ -94,6 +96,8 @@ function AppContent() {
                </IncomingShareProvider>
                <ConfirmDialogHost />
                <ThreadArrangementHost />
 +              <T3patchUploadOverlay />
 +              <T3patchActionSheetHost />
-             </BlurTargetView>
+             </View>
              {/* Anchored-menu overlays render here — in-window, so the
                  keyboard stays up while a dropdown is open. */}
 diff --git a/apps/mobile/src/features/files/FileTreeBrowser.tsx b/apps/mobile/src/features/files/FileTreeBrowser.tsx
-index 4b18b3eba9..b5c5b7b910 100644
+index 5dd9cda5d8..562588e07d 100644
 --- a/apps/mobile/src/features/files/FileTreeBrowser.tsx
 +++ b/apps/mobile/src/features/files/FileTreeBrowser.tsx
 @@ -9,7 +9,7 @@ import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -114,7 +114,7 @@ index 4b18b3eba9..b5c5b7b910 100644
    );
    const controlledSelectedPathRef = useRef(controlledSelectedPath);
    const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-@@ -301,6 +312,20 @@ export function FileTreeBrowser(props: {
+@@ -293,6 +304,20 @@ export function FileTreeBrowser(props: {
        renderItem={renderItem}
        ListHeaderComponent={
          <>
@@ -132,14 +132,14 @@ index 4b18b3eba9..b5c5b7b910 100644
 +              </Pressable>
 +            </>
 +          ) : null}
-           {props.error ? (
+           {props.error && props.entries.length > 0 ? (
              <Text accessibilityRole="alert" className="mx-4 my-2 text-xs text-foreground-muted">
                {props.error}
 diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-index 735b64f99c..1ef4c7bc37 100644
+index 444abab7a5..24ea10fafa 100644
 --- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 +++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-@@ -413,6 +413,12 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+@@ -497,6 +497,12 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
        ) : null,
      [cwd, environmentId, handleSelectFile, projectName],
    );
@@ -152,14 +152,14 @@ index 735b64f99c..1ef4c7bc37 100644
    // t3-patch: «Вставить в сообщение» — ссылка на файл в поле ввода этого треда, назад к треду
    const t3patchInsertPath = useCallback(
      (relativePath: string) => {
-@@ -583,6 +589,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
-         cwd={cwd} // t3-patch
-         t3patchRevealPath={props.route.params.t3patchReveal ?? null} // t3-patch
-         t3patchOnInsertPath={t3patchInsertPath} // t3-patch
-+        t3patchWorkspace={t3patchWorkspaceMenu} // t3-patch
-         entries={entriesQuery.entries}
-         loadedDirectories={entriesQuery.loadedDirectories}
-         onLoadDirectory={entriesQuery.loadDirectory}
+@@ -569,6 +575,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+           cwd={cwd} // t3-patch
+           t3patchRevealPath={props.route.params.t3patchReveal ?? null} // t3-patch
+           t3patchOnInsertPath={t3patchInsertPath} // t3-patch
++          t3patchWorkspace={t3patchWorkspaceMenu} // t3-patch
+           entries={entriesQuery.entries}
+           loadedDirectories={entriesQuery.loadedDirectories}
+           onLoadDirectory={entriesQuery.loadDirectory}
 diff --git a/apps/mobile/src/sergey/ActionSheet.tsx b/apps/mobile/src/sergey/ActionSheet.tsx
 new file mode 100644
 index 0000000000..26897b6272
@@ -549,7 +549,7 @@ index 26dee48907..023c30abf3 100644
  }
 diff --git a/apps/mobile/src/sergey/workspaceUploads.tsx b/apps/mobile/src/sergey/workspaceUploads.tsx
 new file mode 100644
-index 0000000000..fa3c618d98
+index 0000000000..f68e72987d
 --- /dev/null
 +++ b/apps/mobile/src/sergey/workspaceUploads.tsx
 @@ -0,0 +1,384 @@
@@ -683,14 +683,14 @@ index 0000000000..fa3c618d98
 +      let chunk: Uint8Array;
 +      try {
 +        reader.offset = offset;
-+        chunk = reader.readBytes(length);
++        chunk = reader.readBytesSync(length); // expo-file-system 58: readBytes стал асинхронным
 +      } finally {
 +        reader.close();
 +      }
 +      piece.create({ overwrite: true });
 +      const writer = piece.open();
 +      try {
-+        writer.writeBytes(chunk);
++        writer.writeBytesSync(chunk);
 +      } finally {
 +        writer.close();
 +      }
@@ -938,7 +938,7 @@ index 0000000000..fa3c618d98
 +  );
 +}
 diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
-index e0dc7651ce..475dc6c518 100644
+index 08ba41ff64..5eef426fee 100644
 --- a/packages/client-runtime/src/state/server.ts
 +++ b/packages/client-runtime/src/state/server.ts
 @@ -6,6 +6,7 @@ import {
@@ -949,7 +949,7 @@ index e0dc7651ce..475dc6c518 100644
    WS_METHODS,
  } from "@t3tools/contracts";
  import * as Cause from "effect/Cause";
-@@ -1030,6 +1031,31 @@ export function createServerEnvironmentAtoms<R, E>(
+@@ -1064,6 +1065,31 @@ export function createServerEnvironmentAtoms<R, E>(
        label: "environment-data:server:process-resource-history",
        tag: WS_METHODS.serverGetProcessResourceHistory,
      }),
@@ -994,10 +994,10 @@ index 978a0459e6..79c5006704 100644
  export * from "./agentSessions.ts";
  export * from "./assets.ts";
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 50b9f2c891..e8b0a49fcd 100644
+index 5d492017ea..33af24466d 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -13,6 +13,14 @@ import {
+@@ -24,6 +24,14 @@ import {
  } from "./providerSetup.ts";
  
  import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
@@ -1012,7 +1012,7 @@ index 50b9f2c891..e8b0a49fcd 100644
  import {
    AuthAccessStreamError,
    AuthAccessStreamEvent,
-@@ -1379,6 +1387,12 @@ const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeTh
+@@ -1471,6 +1479,12 @@ const WsT3patchSubscribeThreadVisitsRpc = Rpc.make(WS_METHODS.t3patchSubscribeTh
  export const WsRpcGroup = RpcGroup.make(
    WsT3patchMarkThreadVisitedRpc,
    WsT3patchSubscribeThreadVisitsRpc,

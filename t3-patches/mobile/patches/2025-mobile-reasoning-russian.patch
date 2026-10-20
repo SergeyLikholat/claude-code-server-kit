@@ -1,0 +1,279 @@
+From 78992cced5aa1333a59b79a1f32f85fe03a36b02 Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Mon, 12 Oct 2026 23:57:08 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=80=D0=B0=D1=81=D1=81=D1=83?=
+ =?UTF-8?q?=D0=B6=D0=B4=D0=B5=D0=BD=D0=B8=D1=8F=20=D0=BC=D0=BE=D0=B4=D0=B5?=
+ =?UTF-8?q?=D0=BB=D0=B8=20=D0=BF=D0=BE-=D1=80=D1=83=D1=81=D1=81=D0=BA?=
+ =?UTF-8?q?=D0=B8=20=E2=80=94=20=D0=BF=D0=B5=D1=80=D0=B5=D0=B2=D0=BE=D0=B4?=
+ =?UTF-8?q?=20=D1=81=20=D1=81=D0=B5=D1=80=D0=B2=D0=B5=D1=80=D0=B0=20(?=
+ =?UTF-8?q?=D0=BA=D0=B0=D0=BA=20=D0=B2=20=D0=B1=D1=80=D0=B0=D1=83=D0=B7?=
+ =?UTF-8?q?=D0=B5=D1=80=D0=B5)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../src/features/threads/ThreadFeed.tsx       |  24 ++--
+ apps/mobile/src/sergey/reasoningRu.ts         | 114 ++++++++++++++++++
+ packages/client-runtime/src/state/server.ts   |   6 +
+ packages/contracts/src/index.ts               |   1 +
+ packages/contracts/src/rpc.ts                 |   2 +
+ packages/contracts/src/t3patchTranslate.ts    |  25 ++++
+ 6 files changed, 165 insertions(+), 7 deletions(-)
+ create mode 100644 apps/mobile/src/sergey/reasoningRu.ts
+ create mode 100644 packages/contracts/src/t3patchTranslate.ts
+
+diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
+index 4800fbf3ff..50ca928220 100644
+--- a/apps/mobile/src/features/threads/ThreadFeed.tsx
++++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
+@@ -120,6 +120,7 @@ import {
+ } from "../../lib/videoPreviewSource";
+ import { CopyTextButton } from "../../components/CopyTextButton";
+ import { T3patchQuoteMessageButton, useT3patchQuoteTarget } from "../../sergey/quoteInsert"; // t3-patch
++import { T3patchReasoningText } from "../../sergey/reasoningRu"; // t3-patch
+ import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+ import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
+ import {
+@@ -1501,14 +1502,23 @@ function renderFeedEntry(
+           >
+             <View className="gap-3">
+               {messages.map((reasoningMessage) => (
+-                <AssistantMarkdownContent
++                // t3-patch: рассуждение по-русски — перевод с сервера (sergey/reasoningRu.ts)
++                <T3patchReasoningText
+                   key={reasoningMessage.id}
+-                  markdown={reasoningMessage.text}
+-                  markdownStyles={markdownStyles.assistant}
+-                  linkHandlers={props.markdownLinkHandlers}
+-                  renderImage={props.renderMarkdownImage}
+-                  skills={props.skills}
+-                />
++                  environmentId={props.environmentId}
++                  text={reasoningMessage.text}
++                  enabled={!reasoningMessage.streaming}
++                >
++                  {(reasoningText) => (
++                    <AssistantMarkdownContent
++                      markdown={reasoningText}
++                      markdownStyles={markdownStyles.assistant}
++                      linkHandlers={props.markdownLinkHandlers}
++                      renderImage={props.renderMarkdownImage}
++                      skills={props.skills}
++                    />
++                  )}
++                </T3patchReasoningText>
+               ))}
+             </View>
+           </MarkdownImageAvailableWidthContext>
+diff --git a/apps/mobile/src/sergey/reasoningRu.ts b/apps/mobile/src/sergey/reasoningRu.ts
+new file mode 100644
+index 0000000000..1785c51c6a
+--- /dev/null
++++ b/apps/mobile/src/sergey/reasoningRu.ts
+@@ -0,0 +1,114 @@
++/**
++ * t3-patch: «рассуждения» модели в ленте приложения — по-русски (как в браузере, патч 0029).
++ *
++ * С T3 0.0.45 лента показывает пересказ рассуждений модели; он приходит по-английски. Здесь
++ * тексты собираются в пачку (короткая пауза, чтобы не дёргать сервер на каждую строку),
++ * уходят на сервер (`t3patch.translateReasoning`, sergey/reasoningTranslate.ts) и кэшируются
++ * на странице. Пока перевода нет — показывается оригинал; пишущееся рассуждение не переводится.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
++import { type ReactNode, useEffect, useSyncExternalStore } from "react";
++
++import { appAtomRegistry } from "../state/atom-registry";
++import { serverEnvironment } from "../state/server";
++
++const BATCH_DELAY_MS = 250;
++const RETRY_AFTER_MS = 60_000;
++
++const translations = new Map<string, string>();
++const failedAt = new Map<string, number>();
++const inFlight = new Set<string>();
++const queued = new Map<EnvironmentId, Set<string>>();
++let timer: ReturnType<typeof setTimeout> | null = null;
++let version = 0;
++const listeners = new Set<() => void>();
++
++const notify = () => {
++  version += 1;
++  for (const listener of listeners) listener();
++};
++
++/** Уже русский текст: кириллицы не меньше латиницы (код и пути не считаются). */
++export function t3patchLooksRussian(text: string): boolean {
++  const prose = text.replace(/`[^`]*`/g, " ").replace(/\S*[./\\]\S*/g, " ");
++  const cyr = (prose.match(/[а-яё]/gi) ?? []).length;
++  const lat = (prose.match(/[a-z]/gi) ?? []).length;
++  return cyr >= lat;
++}
++
++async function flush(): Promise<void> {
++  timer = null;
++  const batches = [...queued.entries()];
++  queued.clear();
++  for (const [environmentId, set] of batches) {
++    const texts = [...set];
++    texts.forEach((text) => inFlight.add(text));
++    try {
++      const result = await runAtomCommand(
++        appAtomRegistry,
++        serverEnvironment.t3patchTranslateReasoning,
++        { environmentId, input: { texts } },
++        { reportFailure: false, reportDefect: false },
++      );
++      if (result._tag !== "Success") throw squashAtomCommandFailure(result);
++      texts.forEach((text, index) => {
++        const translated = result.value.translations[index];
++        if (translated) translations.set(text, translated);
++      });
++    } catch {
++      const now = Date.now();
++      texts.forEach((text) => failedAt.set(text, now));
++    } finally {
++      texts.forEach((text) => inFlight.delete(text));
++      notify();
++    }
++  }
++}
++
++function request(environmentId: EnvironmentId, text: string): void {
++  if (translations.has(text) || inFlight.has(text)) return;
++  const failed = failedAt.get(text);
++  if (failed !== undefined && Date.now() - failed < RETRY_AFTER_MS) return;
++  let set = queued.get(environmentId);
++  if (!set) queued.set(environmentId, (set = new Set()));
++  set.add(text);
++  timer ??= setTimeout(() => void flush(), BATCH_DELAY_MS);
++}
++
++function subscribe(listener: () => void): () => void {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++/**
++ * Русский вариант текста рассуждения: перевод, если он уже есть, иначе оригинал (перевод
++ * запрашивается в фоне). `enabled: false` — пока текст ещё пишется.
++ */
++export function useT3patchReasoningRu(
++  environmentId: EnvironmentId | null | undefined,
++  text: string | undefined,
++  enabled = true,
++): string | undefined {
++  useSyncExternalStore(subscribe, () => version);
++  const needs =
++    enabled && !!environmentId && !!text && text.trim().length > 0 && !t3patchLooksRussian(text);
++  useEffect(() => {
++    if (needs && environmentId && text) request(environmentId, text);
++  }, [needs, environmentId, text]);
++  if (!text || !needs) return text;
++  return translations.get(text) ?? text;
++}
++
++/** Обёртка для мест, где текст рисуется в цикле: отдаёт русский вариант в render-функцию. */
++export function T3patchReasoningText(props: {
++  readonly environmentId: EnvironmentId | null | undefined;
++  readonly text: string;
++  readonly enabled?: boolean;
++  readonly children: (text: string) => ReactNode;
++}): ReactNode {
++  const text = useT3patchReasoningRu(props.environmentId, props.text, props.enabled ?? true);
++  return props.children(text ?? props.text);
++}
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index 5eef426fee..86e3722727 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -6,6 +6,7 @@ import {
+   type ServerLifecycleStreamReadyEvent,
+   type ServerSelfUpdateProgressEvent,
+   type ServerSelfUpdateResult,
++  T3PATCH_TRANSLATE_METHODS,
+   T3PATCH_WORKSPACE_METHODS,
+   WS_METHODS,
+ } from "@t3tools/contracts";
+@@ -1090,6 +1091,11 @@ export function createServerEnvironmentAtoms<R, E>(
+       label: "environment-data:server:t3patch-workspace-restore",
+       tag: T3PATCH_WORKSPACE_METHODS.restore,
+     }),
++    // t3-patch: перевод рассуждений модели на русский (сервер: sergey/reasoningTranslate.ts)
++    t3patchTranslateReasoning: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:t3patch-translate-reasoning",
++      tag: T3PATCH_TRANSLATE_METHODS.translateReasoning,
++    }),
+     // t3-patch: время открытия тредов, общее для всех клиентов (сервер: sergey/threadVisits.ts)
+     t3patchThreadVisits: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+       label: "environment-data:server:t3patch-thread-visits",
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index 79c5006704..bcf40d5104 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -32,6 +32,7 @@ export * from "./t3ProjectFile.ts";
+ export * from "./editor.ts";
+ export * from "./project.ts";
+ export * from "./t3patchWorkspace.ts"; // t3-patch
++export * from "./t3patchTranslate.ts"; // t3-patch
+ export * from "./filesystem.ts";
+ export * from "./agentSessions.ts";
+ export * from "./assets.ts";
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 33af24466d..64434de26c 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -32,6 +32,7 @@ import {
+   WsT3patchWorkspaceRestoreRpc,
+   WsT3patchWorkspaceTrashRpc,
+ } from "./t3patchWorkspace.ts"; // t3-patch
++import { WsT3patchTranslateReasoningRpc } from "./t3patchTranslate.ts"; // t3-patch
+ import {
+   AuthAccessStreamError,
+   AuthAccessStreamEvent,
+@@ -1485,6 +1486,7 @@ export const WsRpcGroup = RpcGroup.make(
+   WsT3patchWorkspaceTrashRpc,
+   WsT3patchWorkspaceListTrashRpc,
+   WsT3patchWorkspaceRestoreRpc,
++  WsT3patchTranslateReasoningRpc, // t3-patch
+   WsServerProbeRpc,
+   WsServerGetConfigRpc,
+   WsServerRefreshProvidersRpc,
+diff --git a/packages/contracts/src/t3patchTranslate.ts b/packages/contracts/src/t3patchTranslate.ts
+new file mode 100644
+index 0000000000..0e201e8b9e
+--- /dev/null
++++ b/packages/contracts/src/t3patchTranslate.ts
+@@ -0,0 +1,25 @@
++/**
++ * t3-patch: перевод «рассуждений» модели на русский (сервер: apps/server/src/sergey/reasoningTranslate.ts).
++ */
++import * as Rpc from "effect/unstable/rpc/Rpc";
++import * as Schema from "effect/Schema";
++
++import { EnvironmentAuthorizationError } from "./auth.ts";
++
++export class T3patchTranslateError extends Schema.TaggedError<T3patchTranslateError>()(
++  "T3patchTranslateError",
++  { message: Schema.String },
++) {}
++
++export const T3PATCH_TRANSLATE_METHODS = {
++  translateReasoning: "t3patch.translateReasoning",
++} as const;
++
++export const WsT3patchTranslateReasoningRpc = Rpc.make(
++  T3PATCH_TRANSLATE_METHODS.translateReasoning,
++  {
++    payload: Schema.Struct({ texts: Schema.Array(Schema.String) }),
++    success: Schema.Struct({ translations: Schema.Array(Schema.String) }),
++    error: Schema.Union([T3patchTranslateError, EnvironmentAuthorizationError]),
++  },
++);
+-- 
+2.43.0
+

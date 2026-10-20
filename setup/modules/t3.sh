@@ -176,6 +176,18 @@ if [ "$T3_UP" != 1 ]; then
 fi
 ok "Служба $T3_UNIT работает (включена, переживает перезагрузку)"
 
+# Проект по умолчанию — строго внутри ~/projects: память (llm-memory-kit) считает папки
+# вне ~/projects чужими и не собирает из них темы. Прецедент 2026-10-19: проект в /root/work
+# две недели не давал ни одной темы памяти.
+T3_DEFAULT_PROJECT="${T3_DEFAULT_PROJECT:-$T3_HOME_DIR/projects/work}"
+if [ -n "$T3_DEFAULT_PROJECT" ] && [ ! -d "$T3_DEFAULT_PROJECT" ]; then
+  kit_user_dir "$T3_DEFAULT_PROJECT"
+  kit_user_dir "$T3_DEFAULT_PROJECT/memory"
+  kit_as_user t3 project add "$T3_DEFAULT_PROJECT" --title "${T3_DEFAULT_PROJECT_TITLE:-Работа}" >/dev/null 2>&1 \
+    && ok "Проект T3 «${T3_DEFAULT_PROJECT_TITLE:-Работа}» → $T3_DEFAULT_PROJECT" \
+    || warn "Проект T3 не создан — добавьте сами: t3 project add $T3_DEFAULT_PROJECT --title Работа"
+fi
+
 # ============================================================
 # 6. APK для Android — раздаётся тем же Caddy по https://<домен>/t3-apk/
 # ============================================================

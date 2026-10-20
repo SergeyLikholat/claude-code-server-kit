@@ -26,3 +26,6 @@
 0026-web-t3-biz-wordmark.patch
 0027-server-russian-thread-titles.patch
 0028-web-quote-own-messages.patch
+0029-reasoning-russian-translation.patch
+0030-server-claude-usage-timeout.patch
+0031-web-file-link-menu.patch

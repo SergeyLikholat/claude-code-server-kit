@@ -1,4 +1,4 @@
-From fb8b03a8960fc0f0c5b17e8ca51811a3b60d80fa Mon Sep 17 00:00:00 2001
+From ce88e732d32dc4daa6c22042e1b6d848df8fa3a9 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Fri, 25 Sep 2026 14:00:50 +0300
 Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA?=
@@ -23,10 +23,10 @@ Content-Transfer-Encoding: 8bit
  4 files changed, 53 insertions(+), 4 deletions(-)
 
 diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-index 904328f481..c353f18c3e 100644
+index c196f0f18d..a4897e2570 100644
 --- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 +++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-@@ -67,7 +67,7 @@ import {
+@@ -60,7 +60,7 @@ import {
  import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
  // t3-patch: офисные файлы открываются страницей просмотра с сервера
  import { isT3patchOfficePreviewPath, t3patchOfficeViewUri } from "../../sergey/officePreview";
@@ -34,10 +34,10 @@ index 904328f481..c353f18c3e 100644
 +import { t3patchFullPath, t3patchWorkspacePath } from "../../sergey/paths";
  import { T3patchFileUnavailable } from "../../sergey/FileUnavailable";
  
- type FileViewMode = "preview" | "source";
-@@ -604,11 +604,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+ function FilesBrowserHeader(props: {
+@@ -584,11 +584,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+   const { appearance, setCodeWordBreak } = useAppearancePreferences();
    const iconColor = useUniwindTheme()["--color-icon"];
-   const isAndroid = Platform.OS === "android";
    const params = props.route.params;
 -  const relativePath = normalizeRoutePath(params.path);
 +  const routePath = normalizeRoutePath(params.path);

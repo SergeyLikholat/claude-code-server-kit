@@ -16,13 +16,13 @@ apt_install \
   ca-certificates \
   ufw \
   tmux htop ncdu \
-  unzip \
+  unzip rsync cron \
   sqlite3
 
 # Node.js (нужен для Claude Code CLI и многих tools)
 if ! command -v node >/dev/null || [ "$(node -v 2>/dev/null | grep -oE '[0-9]+' | head -1)" -lt 20 ]; then
   log "Устанавливаю Node.js 20.x..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt_install nodejs
 fi
 

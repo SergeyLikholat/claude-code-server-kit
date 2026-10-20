@@ -1,4 +1,4 @@
-From 288cd2bcc5134ad34f3b6a3e12a77bb2cfa1373e Mon Sep 17 00:00:00 2001
+From 6d59a5327922945c59ab87c5fa0a1d8b5fdb0127 Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Mon, 5 Oct 2026 19:04:59 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=A6=D0=B8=D1=82=D0=B8?=
@@ -15,23 +15,23 @@ Content-Transfer-Encoding: 8bit
 
 ---
  .../T3MarkdownTextSelectionModule.kt          | 63 ++++++++++++-
- .../src/NativeMarkdownSelectableText.tsx      |  9 +-
+ .../src/NativeMarkdownSelectableText.tsx      | 11 ++-
  .../src/T3MarkdownTextSelectionModule.ts      | 19 ++++
  apps/mobile/src/components/AppSymbol.tsx      |  2 +
  .../src/features/threads/ThreadFeed.tsx       | 11 +++
  apps/mobile/src/sergey/quoteFormat.test.ts    | 20 ++++
  apps/mobile/src/sergey/quoteFormat.ts         | 13 +++
  apps/mobile/src/sergey/quoteInsert.tsx        | 91 +++++++++++++++++++
- 8 files changed, 222 insertions(+), 6 deletions(-)
+ 8 files changed, 222 insertions(+), 8 deletions(-)
  create mode 100644 apps/mobile/src/sergey/quoteFormat.test.ts
  create mode 100644 apps/mobile/src/sergey/quoteFormat.ts
  create mode 100644 apps/mobile/src/sergey/quoteInsert.tsx
 
 diff --git a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
-index 26ceb20232..05a7f8288c 100644
+index bca3c64303..ed5de2daa9 100644
 --- a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
 +++ b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
-@@ -118,18 +118,33 @@ private fun contextClipData(selectedText: String, fragment: String): ClipData {
+@@ -119,18 +119,33 @@ private fun contextClipData(selectedText: String, fragment: String): ClipData {
    )
  }
  
@@ -68,7 +68,7 @@ index 26ceb20232..05a7f8288c 100644
      if (item.itemId == android.R.id.copy && copySelection()) {
        mode.finish()
        return true
-@@ -137,6 +152,16 @@ private class SanitizingSelectionActionModeCallback(
+@@ -138,6 +153,16 @@ private class SanitizingSelectionActionModeCallback(
      return delegate?.onActionItemClicked(mode, item) ?: false
    }
  
@@ -85,7 +85,7 @@ index 26ceb20232..05a7f8288c 100644
    private fun copySelection(): Boolean {
      val start = min(textView.selectionStart, textView.selectionEnd)
      val end = max(textView.selectionStart, textView.selectionEnd)
-@@ -167,6 +192,10 @@ private class SanitizingSelectionActionModeCallback(
+@@ -179,6 +204,10 @@ internal fun applySelectionHandleColor(textView: TextView, color: Int) {
  class T3MarkdownTextSelectionModule : Module() {
    private val chipImages = LruCache<String, Map<String, Any>>(128)
  
@@ -96,9 +96,9 @@ index 26ceb20232..05a7f8288c 100644
    /**
     * Metrics of the paragraph font a chip sits in, so the inline box it reports can be sized
     * from the same ascent and descent the surrounding text lays out with.
-@@ -186,6 +215,27 @@ class T3MarkdownTextSelectionModule : Module() {
-   override fun definition() = ModuleDefinition {
-     Name("T3MarkdownTextSelection")
+@@ -212,6 +241,27 @@ class T3MarkdownTextSelectionModule : Module() {
+       setSelectionHandleColor(reactTag, color)
+     }
  
 +    // t3-patch: «Цитировать» из меню выделения → JS (sergey/quoteInsert.ts)
 +    Events("onQuoteSelection")
@@ -124,7 +124,7 @@ index 26ceb20232..05a7f8288c 100644
      Function("renderContextChip") { payloadJson: String ->
        val resources = appContext.reactContext?.resources ?: return@Function null
        val metrics = resources.displayMetrics
-@@ -269,7 +319,12 @@ class T3MarkdownTextSelectionModule : Module() {
+@@ -295,7 +345,12 @@ class T3MarkdownTextSelectionModule : Module() {
          }
          textView.setSpannableFactory(MarkdownSpannableFactory)
          textView.customSelectionActionModeCallback =
@@ -139,7 +139,7 @@ index 26ceb20232..05a7f8288c 100644
      }
    }
 diff --git a/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx b/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
-index 50a381bae2..d6e44e33f9 100644
+index 5a01dd436b..0d106c9432 100644
 --- a/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
 +++ b/apps/mobile/modules/t3-markdown-text/src/NativeMarkdownSelectableText.tsx
 @@ -24,6 +24,7 @@ import type {
@@ -150,15 +150,17 @@ index 50a381bae2..d6e44e33f9 100644
    renderAndroidContextChip,
  } from "./T3MarkdownTextSelectionModule";
  import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
-@@ -298,9 +299,13 @@ export function NativeMarkdownSelectableText(props: {
+@@ -298,11 +299,13 @@ export function NativeMarkdownSelectableText(props: {
      : "";
    const attachAndroidText = useCallback(
-     (textView: RNText | null) => {
+     (textView: TextInstance | null) => {
 -      if (Platform.OS !== "android" || !containsInlineIcon || !textView) return;
 +      if (Platform.OS !== "android" || !textView) return;
        const reactTag = findNodeHandle(textView);
--      if (reactTag !== null) installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
-+      if (reactTag === null) return;
+-      if (typeof reactTag === "number") {
+-        installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
+-      }
++      if (typeof reactTag !== "number") return;
 +      // t3-patch: «Цитировать» в меню выделения — для любого абзаца; со значками — вместе
 +      // со штатной чисткой копирования, без них — отдельной установкой (раскладка не меняется)
 +      if (containsInlineIcon) installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
@@ -167,12 +169,12 @@ index 50a381bae2..d6e44e33f9 100644
      [containsInlineIcon, contextClipboardConfig],
    );
 diff --git a/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts b/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
-index 9f1d676179..89f97b60d0 100644
+index 56d8f6d4e0..e42c0f57dd 100644
 --- a/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
 +++ b/apps/mobile/modules/t3-markdown-text/src/T3MarkdownTextSelectionModule.ts
-@@ -2,6 +2,12 @@ import { requireOptionalNativeModule } from "expo";
- 
+@@ -3,6 +3,12 @@ import { requireOptionalNativeModule } from "expo";
  interface T3MarkdownTextSelectionNativeModule {
+   readonly setSelectionHandleColor?: (reactTag: number, color: number) => void;
    readonly installCopySanitizer: (reactTag: number, contextClipboardConfig: string) => void;
 +  /** t3-patch: пункт «Цитировать» в меню выделения обычного текста. */
 +  readonly installQuoteMenu?: (reactTag: number) => void;
@@ -183,7 +185,7 @@ index 9f1d676179..89f97b60d0 100644
    readonly renderContextChip?: (payloadJson: string) => {
      readonly uri: string;
      readonly width: number;
-@@ -23,3 +29,16 @@ export function installMarkdownCopySanitizer(reactTag: number, contextClipboardC
+@@ -28,3 +34,16 @@ export function setMarkdownSelectionHandleColor(reactTag: number, color: number)
  export function renderAndroidContextChip(payloadJson: string) {
    return nativeModule?.renderContextChip?.(payloadJson) ?? null;
  }
@@ -201,18 +203,18 @@ index 9f1d676179..89f97b60d0 100644
 +  return () => subscription?.remove();
 +}
 diff --git a/apps/mobile/src/components/AppSymbol.tsx b/apps/mobile/src/components/AppSymbol.tsx
-index 402d07d13c..f611f1b0a9 100644
+index cd33dafe3f..913b97a5b8 100644
 --- a/apps/mobile/src/components/AppSymbol.tsx
 +++ b/apps/mobile/src/components/AppSymbol.tsx
-@@ -35,6 +35,7 @@ import IconTicket from "@tabler/icons-react-native/IconTicket";
- import IconClock from "@tabler/icons-react-native/IconClock";
+@@ -41,6 +41,7 @@ import IconClock from "@tabler/icons-react-native/IconClock";
  import IconCode from "@tabler/icons-react-native/IconCode";
  import IconCopy from "@tabler/icons-react-native/IconCopy";
+ import IconDatabase from "@tabler/icons-react-native/IconDatabase";
 +import IconQuote from "@tabler/icons-react-native/IconQuote"; // t3-patch: «Цитировать»
  import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
  import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
- import IconDots from "@tabler/icons-react-native/IconDots";
-@@ -200,6 +201,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME: Record<string, Icon> = {
+ import IconDeviceMobile from "@tabler/icons-react-native/IconDeviceMobile";
+@@ -233,6 +234,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME = {
    close: IconX,
    construction: IconHammer,
    content_copy: IconCopy,
@@ -221,10 +223,10 @@ index 402d07d13c..f611f1b0a9 100644
    edit: IconEdit,
    error: IconAlertCircle,
 diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
-index c0ab6f726c..f271be895c 100644
+index 83b0bef9c0..4800fbf3ff 100644
 --- a/apps/mobile/src/features/threads/ThreadFeed.tsx
 +++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
-@@ -114,6 +114,7 @@ import {
+@@ -119,6 +119,7 @@ import {
    type MediaVideoPreviewSource,
  } from "../../lib/videoPreviewSource";
  import { CopyTextButton } from "../../components/CopyTextButton";
@@ -232,7 +234,7 @@ index c0ab6f726c..f271be895c 100644
  import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
  import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
  import {
-@@ -1608,6 +1609,9 @@ function renderFeedEntry(
+@@ -1655,6 +1656,9 @@ function renderFeedEntry(
                  <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                </Pressable>
              ) : null}
@@ -242,7 +244,7 @@ index c0ab6f726c..f271be895c 100644
              {message.text.trim().length > 0 ? (
                <CopyTextButton
                  accessibilityLabel="Copy message"
-@@ -1688,6 +1692,12 @@ function renderFeedEntry(
+@@ -1739,6 +1743,12 @@ function renderFeedEntry(
                buttonSize={28}
                iconSize={13}
              />
@@ -252,10 +254,10 @@ index c0ab6f726c..f271be895c 100644
 +              buttonSize={28}
 +              iconSize={13}
 +            />
-             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
                {timestampLabel}
              </Text>
-@@ -2349,6 +2359,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+@@ -2412,6 +2422,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
    // ThreadId, and keying resets (or the list mount) on the bare id would
    // carry stale scroll/follow state across an environment switch.
    const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);

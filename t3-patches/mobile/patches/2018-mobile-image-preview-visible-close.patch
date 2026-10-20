@@ -1,4 +1,4 @@
-From 0b27112be846ccce571ee75707713aa57ae78091 Mon Sep 17 00:00:00 2001
+From 932e1726e370debed5f9c04a9b6541aaf9a02a89 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Wed, 30 Sep 2026 08:53:09 +0300
 Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D1=81=D0=B2=D0=BE=D1=91=20?=
@@ -21,7 +21,7 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/mobile/src/sergey/ImageViewer.tsx
 
 diff --git a/apps/mobile/src/components/FilePreview.tsx b/apps/mobile/src/components/FilePreview.tsx
-index a255f50ccd..69648f51d4 100644
+index 85286dbda8..e98448b560 100644
 --- a/apps/mobile/src/components/FilePreview.tsx
 +++ b/apps/mobile/src/components/FilePreview.tsx
 @@ -1,6 +1,6 @@
@@ -31,7 +31,7 @@ index a255f50ccd..69648f51d4 100644
 +import { T3patchImageViewer } from "../sergey/ImageViewer"; // t3-patch
  
  import { openAttachmentInViewer } from "../lib/attachmentDownload";
- import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+ import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 @@ -72,14 +72,7 @@ export function FilePreview(props: {
  }) {
    if (props.source.kind !== "image") return <DocumentPreview {...props} />;
@@ -51,7 +51,7 @@ index a255f50ccd..69648f51d4 100644
 +  return <T3patchImageViewer uri={props.source.uri} onClose={props.onRequestClose} />;
  }
 diff --git a/apps/mobile/src/components/MediaImagePreview.tsx b/apps/mobile/src/components/MediaImagePreview.tsx
-index 03e317c296..7e0c800737 100644
+index 09bebcb28b..42e5950838 100644
 --- a/apps/mobile/src/components/MediaImagePreview.tsx
 +++ b/apps/mobile/src/components/MediaImagePreview.tsx
 @@ -1,6 +1,5 @@
@@ -62,7 +62,7 @@ index 03e317c296..7e0c800737 100644
  
  import { useMediaActions } from "../lib/mediaActions";
 @@ -9,6 +8,7 @@ import { SymbolView } from "./AppSymbol";
- import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+ import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
  import { MediaActionsMenu } from "./MediaActionsMenu";
  import { MediaSourceCaption } from "./MediaSourceCaption";
 +import { T3patchImageViewer } from "../sergey/ImageViewer"; // t3-patch

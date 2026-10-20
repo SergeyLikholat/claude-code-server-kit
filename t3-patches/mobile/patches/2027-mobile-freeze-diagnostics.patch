@@ -1,0 +1,298 @@
+From cc7df8ac8d9770a55af1601cae8ecef777512227 Mon Sep 17 00:00:00 2001
+From: root <root@7532.hosted-by.koara.io>
+Date: Tue, 13 Oct 2026 15:11:18 +0300
+Subject: [PATCH] =?UTF-8?q?diag(mobile):=20=D0=BF=D1=80=D0=BE=D1=84=D0=B8?=
+ =?UTF-8?q?=D0=BB=D0=B8=D1=80=D0=BE=D0=B2=D1=89=D0=B8=D0=BA=20Hermes=20?=
+ =?UTF-8?q?=D0=B8=20=D1=81=D1=87=D1=91=D1=82=D1=87=D0=B8=D0=BA=D0=B8=20?=
+ =?UTF-8?q?=D0=BE=D1=82=D1=80=D0=B8=D1=81=D0=BE=D0=B2=D0=BA=D0=B8=20?=
+ =?UTF-8?q?=E2=80=94=20=D0=BE=D1=82=D1=87=D1=91=D1=82=20=D0=BE=20=D0=B7?=
+ =?UTF-8?q?=D0=B0=D0=B2=D0=B8=D1=81=D0=B0=D0=BD=D0=B8=D0=B8=20=D1=83=D1=85?=
+ =?UTF-8?q?=D0=BE=D0=B4=D0=B8=D1=82=20=D0=BD=D0=B0=20=D1=81=D0=B5=D1=80?=
+ =?UTF-8?q?=D0=B2=D0=B5=D1=80?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../t3patchdownload/T3patchDownloadModule.kt  | 49 +++++++++++++++++
+ apps/mobile/src/App.tsx                       |  2 +
+ .../src/features/threads/ThreadComposer.tsx   |  2 +
+ .../features/threads/ThreadDetailScreen.tsx   |  2 +
+ .../src/features/threads/ThreadFeed.tsx       |  2 +
+ .../features/threads/ThreadRouteScreen.tsx    |  2 +
+ apps/mobile/src/sergey/DiagUploader.tsx       | 55 +++++++++++++++++++
+ apps/mobile/src/sergey/crashReport.ts         |  9 +++
+ 8 files changed, 123 insertions(+)
+ create mode 100644 apps/mobile/src/sergey/DiagUploader.tsx
+
+diff --git a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+index 919e00269e..70c82d664c 100644
+--- a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
++++ b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+@@ -14,6 +14,8 @@ import android.os.SystemClock
+ import android.os.Looper
+ import java.io.File
+ import java.util.concurrent.atomic.AtomicLong
++import org.json.JSONArray
++import org.json.JSONObject
+ import java.io.PrintWriter
+ import java.io.StringWriter
+ 
+@@ -38,6 +40,32 @@ class T3patchDownloadModule : Module() {
+    * за 5 с — интерфейс завис; пишем стеки всех потоков (главного, JS, рендера) в журнал падения.
+    * Один раз за запуск, чтобы не перезаписать первую, самую ценную картину.
+    */
++  // Диагностика зависаний JS: профилировщик Hermes пишет, какая JS-функция выполняется, раз в
++  // несколько мс; при зависании запись выгружается в файл (каталог t3patch-diag), и JS при
++  // следующем запуске отправляет её на сервер (sergey/DiagUploader.tsx).
++  private var profilerStatus = "не включался"
++  private val profilerClass = "com.facebook.hermes.instrumentation.HermesSamplingProfiler"
++
++  private fun diagDir(): File? =
++    appContext.reactContext?.filesDir?.let { File(it, "t3patch-diag").apply { mkdirs() } }
++
++  private fun enableHermesProfiler() {
++    profilerStatus = runCatching {
++      Class.forName(profilerClass).getMethod("enable").invoke(null)
++      "включён"
++    }.getOrElse { "ошибка включения: ${it.cause?.message ?: it.message}" }
++  }
++
++  private fun dumpHermesTrace(stamp: Long): String {
++    val dir = diagDir() ?: return "нет каталога"
++    val file = File(dir, "hermes-trace-$stamp.json")
++    return runCatching {
++      Class.forName(profilerClass).getMethod("dumpSampledTraceToFile", String::class.java)
++        .invoke(null, file.absolutePath)
++      "записана ${file.name}, ${file.length()} байт"
++    }.getOrElse { "не записана: ${it.cause?.message ?: it.message}" }
++  }
++
+   @Volatile private var lastJsBeat = 0L
+   @Volatile private var breadcrumbs = ""
+ 
+@@ -74,7 +102,12 @@ class T3patchDownloadModule : Module() {
+             dump.append("\n--- ").append(thread.name).append(" (").append(thread.state).append(")\n")
+             stack.take(25).forEach { dump.append("  at ").append(it).append('\n') }
+           }
++          val stamp = System.currentTimeMillis()
++          if (jsStuck) {
++            dump.insert(0, "Профилировщик Hermes: $profilerStatus; запись: ${dumpHermesTrace(stamp)}\n")
++          }
+           writeCrash(dump.toString())
++          runCatching { diagDir()?.let { File(it, "report-$stamp.txt").writeText(dump.toString()) } }
+           reported = true
+         }
+       }
+@@ -85,6 +118,7 @@ class T3patchDownloadModule : Module() {
+     Name("T3patchDownload")
+ 
+     OnCreate {
++      enableHermesProfiler()
+       startFreezeWatchdog()
+       val previous = Thread.getDefaultUncaughtExceptionHandler()
+       Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+@@ -106,6 +140,21 @@ class T3patchDownloadModule : Module() {
+       Unit
+     }
+ 
++    // Файлы диагностики для отправки на сервер: JSON-массив {uri, name, size}
++    Function("listDiagFiles") { ->
++      val files = diagDir()?.listFiles()?.filter { it.isFile } ?: emptyList()
++      val array = JSONArray()
++      files.forEach {
++        array.put(JSONObject().put("uri", "file://${it.absolutePath}").put("name", it.name).put("size", it.length()))
++      }
++      array.toString() as Any
++    }
++
++    Function("deleteDiagFile") { name: String ->
++      diagDir()?.let { File(it, name).takeIf { file -> file.parentFile == it }?.delete() }
++      Unit
++    }
++
+     Function("recordCrash") { text: String ->
+       writeCrash(text)
+       Unit
+diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
+index 377265710d..8d43c618ca 100644
+--- a/apps/mobile/src/App.tsx
++++ b/apps/mobile/src/App.tsx
+@@ -27,6 +27,7 @@ import { t3patchMarkReady } from "./sergey/startupDiagnostics"; // t3-patch
+ import { T3patchThreadVisitsSync } from "./sergey/ThreadVisitsSync"; // t3-patch
+ import { T3patchActionSheetHost } from "./sergey/ActionSheet"; // t3-patch
+ import { T3patchUploadOverlay } from "./sergey/workspaceUploads"; // t3-patch
++import { T3patchDiagUploader } from "./sergey/DiagUploader"; // t3-patch: диагностика зависаний
+ 
+ import "../global.css";
+ 
+@@ -97,6 +98,7 @@ function AppContent() {
+               <ConfirmDialogHost />
+               <ThreadArrangementHost />
+               <T3patchUploadOverlay />
++              <T3patchDiagUploader />
+               <T3patchActionSheetHost />
+             </View>
+             {/* Anchored-menu overlays render here — in-window, so the
+diff --git a/apps/mobile/src/features/threads/ThreadComposer.tsx b/apps/mobile/src/features/threads/ThreadComposer.tsx
+index c71b195854..30a94435b7 100644
+--- a/apps/mobile/src/features/threads/ThreadComposer.tsx
++++ b/apps/mobile/src/features/threads/ThreadComposer.tsx
+@@ -110,6 +110,7 @@ import {
+   useThreadSettingsSheetPresentation,
+   type NavigationWithFinishTransitioning,
+ } from "./use-thread-settings-sheet-presentation";
++import { t3patchTrace } from "../../sergey/crashReport"; // t3-patch
+ 
+ /**
+  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
+@@ -269,6 +270,7 @@ export function ComposerSurface(props: {
+ }
+ 
+ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
++  t3patchTrace("ThreadComposer"); // t3-patch: диагностика зависаний
+   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
+   const { themeVariables: materialTheme } = useAppearancePreferences();
+   const composerPanel = materialTheme["--color-composer-panel"];
+diff --git a/apps/mobile/src/features/threads/ThreadDetailScreen.tsx b/apps/mobile/src/features/threads/ThreadDetailScreen.tsx
+index d04ad7bc77..13e84aaef0 100644
+--- a/apps/mobile/src/features/threads/ThreadDetailScreen.tsx
++++ b/apps/mobile/src/features/threads/ThreadDetailScreen.tsx
+@@ -112,6 +112,7 @@ import {
+ import { ThreadFeed } from "./ThreadFeed";
+ import type { ThreadContentPresentation } from "./threadContentPresentation";
+ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
++import { t3patchTrace } from "../../sergey/crashReport"; // t3-patch
+ 
+ export interface ThreadDetailScreenProps {
+   readonly worktreeSetup?: WorktreeSetupCardProps | null;
+@@ -266,6 +267,7 @@ const USER_INPUT_TOGGLE_TIMING = {
+ };
+ 
+ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
++  t3patchTrace("ThreadDetailScreen"); // t3-patch: диагностика зависаний
+   const navigation = useNavigation();
+   const deviceState = useEnvironmentQuery(
+     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
+index 50ca928220..2211448086 100644
+--- a/apps/mobile/src/features/threads/ThreadFeed.tsx
++++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
+@@ -201,6 +201,7 @@ import {
+   ThreadMarkdownImageUnavailable,
+   ThreadMarkdownImageView,
+ } from "./ThreadMarkdownImage";
++import { t3patchTrace } from "../../sergey/crashReport"; // t3-patch
+ 
+ /** `ml-7` gutter plus the `px-3` padding of the expanded reasoning container. */
+ const REASONING_CONTENT_INSET = 52;
+@@ -1968,6 +1969,7 @@ function ThreadFeedPlaceholder(props: {
+ }
+ 
+ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
++  t3patchTrace("ThreadFeed"); // t3-patch: диагностика зависаний
+   const navigation = useNavigation();
+   const { themeAppearance } = useAppearancePreferences();
+   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+diff --git a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
+index fe9e2c32d8..a9958ab316 100644
+--- a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
++++ b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
+@@ -92,6 +92,7 @@ import {
+ } from "./thread-inspector-content-stack";
+ import { threadRouteIsHydrating } from "./thread-route-hydration";
+ import { t3patchThreadVisitKey, useT3patchMarkThreadVisited } from "../../sergey/threadVisits"; // t3-patch
++import { t3patchTrace } from "../../sergey/crashReport"; // t3-patch
+ 
+ function ThreadHeader(
+   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+@@ -250,6 +251,7 @@ function ThreadUnavailableScreen(props: {
+ }
+ 
+ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
++  t3patchTrace("ThreadRouteScreen"); // t3-patch: диагностика зависаний
+   const { state: workspaceState } = useWorkspaceState();
+   const { connectionState } = useRemoteConnectionStatus();
+   const { selectedThread } = useThreadSelection();
+diff --git a/apps/mobile/src/sergey/DiagUploader.tsx b/apps/mobile/src/sergey/DiagUploader.tsx
+new file mode 100644
+index 0000000000..807296798d
+--- /dev/null
++++ b/apps/mobile/src/sergey/DiagUploader.tsx
+@@ -0,0 +1,55 @@
++/**
++ * t3-patch: отправка диагностики зависаний на сервер — в /root/projects/_scratch/t3-diag/.
++ *
++ * Нативный сторож (modules/t3patch-download) при зависании JS кладёт отчёт и запись
++ * профилировщика Hermes в каталог t3patch-diag. При следующем запуске, как только есть
++ * подключённый сервер, файлы уходят штатной загрузкой проводника (ход виден в панели загрузок)
++ * и удаляются с телефона.
++ */
++import type { EnvironmentId } from "@t3tools/contracts";
++import { requireOptionalNativeModule } from "expo";
++import { useEffect, useRef } from "react";
++import { Platform } from "react-native";
++
++import { useEnvironments } from "../state/environments";
++import { t3patchEnqueueUploads } from "./workspaceUploads";
++
++const DIAG_CWD = "/root/projects/_scratch";
++const DIAG_DIRECTORY = "t3-diag";
++
++interface DiagModule {
++  listDiagFiles?: () => string;
++  deleteDiagFile?: (name: string) => void;
++}
++
++const diagModule = (): DiagModule | null =>
++  Platform.OS === "android" ? requireOptionalNativeModule<DiagModule>("T3patchDownload") : null;
++
++export function T3patchDiagUploader() {
++  const { environments } = useEnvironments();
++  const environmentId: EnvironmentId | undefined = environments[0]?.environmentId;
++  const sent = useRef(false);
++  useEffect(() => {
++    if (sent.current || !environmentId) return;
++    const module = diagModule();
++    let files: Array<{ uri: string; name: string; size: number }> = [];
++    try {
++      files = JSON.parse(module?.listDiagFiles?.() ?? "[]");
++    } catch {
++      files = [];
++    }
++    if (files.length === 0) return;
++    sent.current = true;
++    t3patchEnqueueUploads({
++      environmentId,
++      cwd: DIAG_CWD,
++      directory: DIAG_DIRECTORY,
++      files: files.map((file) => ({
++        ...file,
++        afterUpload: () => module?.deleteDiagFile?.(file.name),
++      })),
++      onUploaded: () => undefined,
++    });
++  }, [environmentId]);
++  return null;
++}
+diff --git a/apps/mobile/src/sergey/crashReport.ts b/apps/mobile/src/sergey/crashReport.ts
+index 470cc93f3e..f01cd92b75 100644
+--- a/apps/mobile/src/sergey/crashReport.ts
++++ b/apps/mobile/src/sergey/crashReport.ts
+@@ -77,3 +77,12 @@ export function t3patchStartHeartbeat(): void {
+   beat();
+   setInterval(beat, 2_000);
+ }
++
++const counts = new Map<string, number>();
++
++/** Счётчик отрисовок/вызовов: первые три и каждый 50-й — в журнал (виден зацикленный экран). */
++export function t3patchTrace(name: string): void {
++  const n = (counts.get(name) ?? 0) + 1;
++  counts.set(name, n);
++  if (n <= 3 || n % 50 === 0) t3patchBreadcrumb(`${name} ×${n}`);
++}
+-- 
+2.43.0
+

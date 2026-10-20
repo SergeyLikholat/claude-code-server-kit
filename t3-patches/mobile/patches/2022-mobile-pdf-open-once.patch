@@ -1,4 +1,4 @@
-From 11e5ffb44bedba3f31b5c5e7cd0216e494f1c300 Mon Sep 17 00:00:00 2001
+From 359677e1236b6a8713bb83097483a25fe16db8f1 Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Fri, 2 Oct 2026 09:45:45 +0300
 Subject: [PATCH] =?UTF-8?q?fix(mobile):=20PDF=20=D0=BE=D1=82=D0=BA=D1=80?=
@@ -19,10 +19,10 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/mobile/src/sergey/PdfCard.tsx
 
 diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-index 65316a016b..a09ce06ba4 100644
+index 67da0d8281..7f26415918 100644
 --- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 +++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-@@ -27,6 +27,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
+@@ -23,6 +23,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
  import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
  import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
  import { isPdfFile } from "../../lib/filePreview";
@@ -30,7 +30,7 @@ index 65316a016b..a09ce06ba4 100644
  import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
  import { useUniwindTheme } from "../../lib/useUniwindTheme";
  import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
-@@ -188,6 +189,12 @@ function FileContent(props: {
+@@ -288,6 +289,12 @@ function FileContent(props: {
      );
    }
  

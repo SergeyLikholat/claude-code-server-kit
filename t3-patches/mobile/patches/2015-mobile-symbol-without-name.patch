@@ -1,4 +1,4 @@
-From fae2e2224e7d808fc9d799a13ecaef93496dddd7 Mon Sep 17 00:00:00 2001
+From 5a3a0b86306b37c40e3aa219ea8fc10ee43858a4 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Mon, 28 Sep 2026 22:40:45 +0300
 Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D0=B8=D0=BA=D0=BE=D0=BD=D0=BA?=
@@ -19,13 +19,13 @@ Content-Transfer-Encoding: 8bit
  2 files changed, 9 insertions(+)
 
 diff --git a/apps/mobile/src/components/AppSymbol.tsx b/apps/mobile/src/components/AppSymbol.tsx
-index e5d0137ee4..402d07d13c 100644
+index eef05ee94f..cd33dafe3f 100644
 --- a/apps/mobile/src/components/AppSymbol.tsx
 +++ b/apps/mobile/src/components/AppSymbol.tsx
-@@ -219,6 +219,9 @@ export type { SFSymbol } from "expo-symbols";
- export type AppSymbolName = SymbolViewProps["name"];
+@@ -267,6 +267,9 @@ export function isAppSymbolName(name: string): name is Extract<AppSymbolName, st
+ }
  
- function AppSymbolView(props: SymbolViewProps) {
+ function AppSymbolView(props: AppSymbolViewProps) {
 +  // t3-patch: без имени иконки — пустое место вместо падения всего приложения
 +  // («Cannot read property 'android' of undefined» при раскрытии строки работы в треде).
 +  if (props.name == null) return props.fallback ?? null;

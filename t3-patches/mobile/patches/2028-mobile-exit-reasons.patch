@@ -1,0 +1,164 @@
+From 6bc42f45b217e804fe6a23f1560909cd9a27f18b Mon Sep 17 00:00:00 2001
+From: t3patch <t3patch@local>
+Date: Tue, 13 Oct 2026 18:46:41 +0300
+Subject: [PATCH] =?UTF-8?q?diag(mobile):=20=D0=BF=D1=80=D0=B8=D1=87=D0=B8?=
+ =?UTF-8?q?=D0=BD=D1=8B=20=D0=BF=D1=80=D0=BE=D1=88=D0=BB=D1=8B=D1=85=20?=
+ =?UTF-8?q?=D0=B2=D1=8B=D0=BB=D0=B5=D1=82=D0=BE=D0=B2=20(tombstone,=20ANR)?=
+ =?UTF-8?q?,=20logcat,=20=D0=BE=D1=82=D1=87=D1=91=D1=82=20=D0=B4=D0=BE=20?=
+ =?UTF-8?q?=D0=B7=D0=B0=D0=BF=D0=B8=D1=81=D0=B8=20=D0=BF=D1=80=D0=BE=D1=84?=
+ =?UTF-8?q?=D0=B8=D0=BB=D0=B8=D1=80=D0=BE=D0=B2=D1=89=D0=B8=D0=BA=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../t3patchdownload/T3patchDownloadModule.kt  | 67 ++++++++++++++++++-
+ apps/mobile/src/sergey/DiagUploader.tsx       | 12 +++-
+ 2 files changed, 74 insertions(+), 5 deletions(-)
+
+diff --git a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+index 70c82d664c..8a80b4f450 100644
+--- a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
++++ b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+@@ -12,6 +12,8 @@ import android.app.ActivityManager
+ import android.os.Handler
+ import android.os.SystemClock
+ import android.os.Looper
++import android.os.Build
++import android.app.ApplicationExitInfo
+ import java.io.File
+ import java.util.concurrent.atomic.AtomicLong
+ import org.json.JSONArray
+@@ -69,6 +71,60 @@ class T3patchDownloadModule : Module() {
+   @Volatile private var lastJsBeat = 0L
+   @Volatile private var breadcrumbs = ""
+ 
++  private fun breadcrumbsFile(): File? =
++    appContext.reactContext?.filesDir?.let { File(it, "t3patch-breadcrumbs.txt") }
++
++  /**
++   * Причины прошлых завершений процесса (Android 11+). Нативное падение (SIGSEGV и т. п.) Java не
++   * перехватывает, но система хранит его причину и трассу (tombstone), а для ANR — стеки потоков.
++   * Каждое новое падение или ANR — в файл каталога t3patch-diag вместе с событиями JS прошлого
++   * запуска и журналом logcat своего процесса.
++   */
++  private fun collectExitReasons() {
++    if (Build.VERSION.SDK_INT < 30) return
++    val context = appContext.reactContext ?: return
++    val dir = diagDir() ?: return
++    val seenFile = File(context.filesDir, "t3patch-exit-seen.txt")
++    val seen = runCatching { seenFile.readText().trim().toLong() }.getOrDefault(0L)
++    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
++    val exits = runCatching { manager.getHistoricalProcessExitReasons(context.packageName, 0, 8) }
++      .getOrDefault(emptyList())
++    val fresh = exits.filter { it.timestamp > seen }
++    if (exits.isNotEmpty()) runCatching { seenFile.writeText(exits.maxOf { it.timestamp }.toString()) }
++    val crashed = fresh.filter {
++      it.reason == ApplicationExitInfo.REASON_CRASH || it.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
++        it.reason == ApplicationExitInfo.REASON_ANR || it.reason == ApplicationExitInfo.REASON_LOW_MEMORY ||
++        it.reason == ApplicationExitInfo.REASON_SIGNALED || it.reason == ApplicationExitInfo.REASON_INITIALIZATION_FAILURE
++    }
++    if (crashed.isEmpty()) return
++    val previousCrumbs = runCatching { breadcrumbsFile()?.readText() }.getOrNull() ?: ""
++    val text = StringBuilder("Прошлые завершения процесса (новые сверху):\n")
++    for (exit in fresh) {
++      text.append("\n--- ").append(java.util.Date(exit.timestamp)).append(" причина=").append(exit.reason)
++        .append(" статус=").append(exit.status).append(" важность=").append(exit.importance)
++        .append(" pss=").append(exit.pss).append(" rss=").append(exit.rss)
++        .append("\n  ").append(exit.description ?: "").append('\n')
++    }
++    text.append("\nСобытия JS прошлого запуска:\n").append(previousCrumbs).append('\n')
++    val stamp = System.currentTimeMillis()
++    runCatching { File(dir, "exit-$stamp.txt").writeText(text.toString()) }
++    crashed.forEachIndexed { index, exit ->
++      runCatching {
++        exit.traceInputStream?.use { input ->
++          val kind = if (exit.reason == ApplicationExitInfo.REASON_ANR) "anr.txt" else "tombstone.pb"
++          File(dir, "exit-$stamp-$index-$kind").outputStream().use { input.copyTo(it) }
++        }
++      }
++    }
++    // журнал logcat своего приложения: строки прошлого процесса ещё в буфере
++    runCatching {
++      val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-b", "main,system,crash", "-t", "6000")
++        .redirectErrorStream(true).start()
++      File(dir, "logcat-$stamp.txt").outputStream().use { process.inputStream.copyTo(it) }
++      process.waitFor()
++    }
++  }
++
+   private fun inForeground(): Boolean {
+     val info = ActivityManager.RunningAppProcessInfo()
+     ActivityManager.getMyMemoryState(info)
+@@ -103,11 +159,14 @@ class T3patchDownloadModule : Module() {
+             stack.take(25).forEach { dump.append("  at ").append(it).append('\n') }
+           }
+           val stamp = System.currentTimeMillis()
++          // отчёт пишется до записи профилировщика: если запись сама уронит процесс, отчёт останется
++          writeCrash(dump.toString())
++          val report = diagDir()?.let { File(it, "report-$stamp.txt") }
++          runCatching { report?.writeText("Профилировщик Hermes: $profilerStatus\n$dump") }
+           if (jsStuck) {
+-            dump.insert(0, "Профилировщик Hermes: $profilerStatus; запись: ${dumpHermesTrace(stamp)}\n")
++            val traced = dumpHermesTrace(stamp)
++            runCatching { report?.appendText("\nЗапись профилировщика: $traced\n") }
+           }
+-          writeCrash(dump.toString())
+-          runCatching { diagDir()?.let { File(it, "report-$stamp.txt").writeText(dump.toString()) } }
+           reported = true
+         }
+       }
+@@ -118,6 +177,7 @@ class T3patchDownloadModule : Module() {
+     Name("T3patchDownload")
+ 
+     OnCreate {
++      Thread({ runCatching { collectExitReasons() } }, "t3patch-exit-reasons").start()
+       enableHermesProfiler()
+       startFreezeWatchdog()
+       val previous = Thread.getDefaultUncaughtExceptionHandler()
+@@ -137,6 +197,7 @@ class T3patchDownloadModule : Module() {
+     // последние события JS (ошибки, переходы) — попадут в журнал зависания
+     Function("breadcrumbs") { text: String ->
+       breadcrumbs = text.takeLast(4_000)
++      runCatching { breadcrumbsFile()?.writeText(breadcrumbs) }
+       Unit
+     }
+ 
+diff --git a/apps/mobile/src/sergey/DiagUploader.tsx b/apps/mobile/src/sergey/DiagUploader.tsx
+index 807296798d..8173b22a41 100644
+--- a/apps/mobile/src/sergey/DiagUploader.tsx
++++ b/apps/mobile/src/sergey/DiagUploader.tsx
+@@ -16,6 +16,7 @@ import { t3patchEnqueueUploads } from "./workspaceUploads";
+ 
+ const DIAG_CWD = "/root/projects/_scratch";
+ const DIAG_DIRECTORY = "t3-diag";
++const COLLECT_DELAY_MS = 5_000;
+ 
+ interface DiagModule {
+   listDiagFiles?: () => string;
+@@ -31,6 +32,14 @@ export function T3patchDiagUploader() {
+   const sent = useRef(false);
+   useEffect(() => {
+     if (sent.current || !environmentId) return;
++    // причины прошлого вылета и logcat собираются в фоне при запуске — дать им дописаться
++    const timer = setTimeout(() => send(environmentId), COLLECT_DELAY_MS);
++    return () => clearTimeout(timer);
++  }, [environmentId]);
++  return null;
++
++  function send(environmentId: EnvironmentId) {
++    if (sent.current) return;
+     const module = diagModule();
+     let files: Array<{ uri: string; name: string; size: number }> = [];
+     try {
+@@ -50,6 +59,5 @@ export function T3patchDiagUploader() {
+       })),
+       onUploaded: () => undefined,
+     });
+-  }, [environmentId]);
+-  return null;
++  }
+ }
+-- 
+2.43.0
+

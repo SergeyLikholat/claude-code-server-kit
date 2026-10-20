@@ -1,4 +1,4 @@
-From e0769563fb5833688ba48452474f8f3fa124b4a2 Mon Sep 17 00:00:00 2001
+From 2e3a12b20042936122053502c2560003b5410a06 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Tue, 29 Sep 2026 22:58:34 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE?=
@@ -26,7 +26,7 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/mobile/src/sergey/fileLinkInsert.ts
 
 diff --git a/apps/mobile/src/Stack.tsx b/apps/mobile/src/Stack.tsx
-index 71efbb11cf..f015035675 100644
+index 417473ba20..d213582cf1 100644
 --- a/apps/mobile/src/Stack.tsx
 +++ b/apps/mobile/src/Stack.tsx
 @@ -5,6 +5,7 @@ import {
@@ -37,7 +37,7 @@ index 71efbb11cf..f015035675 100644
  import {
    createNativeStackNavigator,
    createNativeStackScreen,
-@@ -331,6 +332,12 @@ const NewTaskSheetStack = createNativeStackNavigator({
+@@ -421,6 +422,12 @@ const NewTaskSheetStack = createNativeStackNavigator({
        linking: "draft/files/:path*",
        options: SOLID_HEADER_OPTIONS,
      }),
@@ -51,7 +51,7 @@ index 71efbb11cf..f015035675 100644
        screen: AttachmentFileScreen,
        linking: "draft/attachments/:attachmentId",
 diff --git a/apps/mobile/src/features/files/FileTreeBrowser.tsx b/apps/mobile/src/features/files/FileTreeBrowser.tsx
-index fa7fa27b7d..4b18b3eba9 100644
+index bc357947dc..5dd9cda5d8 100644
 --- a/apps/mobile/src/features/files/FileTreeBrowser.tsx
 +++ b/apps/mobile/src/features/files/FileTreeBrowser.tsx
 @@ -126,6 +126,8 @@ export function FileTreeBrowser(props: {
@@ -77,17 +77,17 @@ index fa7fa27b7d..4b18b3eba9 100644
    const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    controlledSelectedPathRef.current = controlledSelectedPath;
 diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
-index c353f18c3e..735b64f99c 100644
+index a4897e2570..444abab7a5 100644
 --- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 +++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 @@ -1,4 +1,6 @@
- import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+ import { NativeStackScreenOptions } from "../../native/StackHeader";
 +import { scopedThreadKey } from "../../lib/scopedEntities"; // t3-patch
 +import { t3patchInsertFileLink } from "../../sergey/fileLinkInsert"; // t3-patch
  import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
- import type { MenuAction } from "@react-native-menu/menu";
  import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-@@ -411,6 +413,15 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+ import { Platform, View } from "react-native";
+@@ -495,6 +497,15 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
        ) : null,
      [cwd, environmentId, handleSelectFile, projectName],
    );
@@ -103,19 +103,19 @@ index c353f18c3e..735b64f99c 100644
    const handlePreviewFile = useCallback(
      (relativePath: string) => {
        if (environmentId === null || cwd === null) {
-@@ -571,6 +582,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
-         key={JSON.stringify([environmentId, cwd])}
-         cwd={cwd} // t3-patch
-         t3patchRevealPath={props.route.params.t3patchReveal ?? null} // t3-patch
-+        t3patchOnInsertPath={t3patchInsertPath} // t3-patch
-         entries={entriesQuery.entries}
-         loadedDirectories={entriesQuery.loadedDirectories}
-         onLoadDirectory={entriesQuery.loadDirectory}
+@@ -557,6 +568,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+           key={JSON.stringify([environmentId, cwd])}
+           cwd={cwd} // t3-patch
+           t3patchRevealPath={props.route.params.t3patchReveal ?? null} // t3-patch
++          t3patchOnInsertPath={t3patchInsertPath} // t3-patch
+           entries={entriesQuery.entries}
+           loadedDirectories={entriesQuery.loadedDirectories}
+           onLoadDirectory={entriesQuery.loadDirectory}
 diff --git a/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx b/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
-index 6badb4da33..00dc210d76 100644
+index 0772705645..c4627f70e6 100644
 --- a/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
 +++ b/apps/mobile/src/features/threads/NewTaskDraftScreen.tsx
-@@ -1668,6 +1668,35 @@ export function NewTaskDraftScreen(props: {
+@@ -1710,6 +1710,35 @@ export function NewTaskDraftScreen(props: {
                      onPickMedia={handlePickMedia}
                      onPickFiles={handlePickFiles}
                    />

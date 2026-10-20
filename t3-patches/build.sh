@@ -11,6 +11,8 @@
 # /root/.t3/runtime/versions/<версия>: t3, client/, node_modules/, resource-monitor/.
 # Ничего не устанавливает — это делает install.sh.
 set -euo pipefail
+# Тяжёлая сборка — по очереди и с низким приоритетом, чтобы T3 не терял связь (heavy-run, heavy.slice)
+[ -n "${HEAVY_RUN_ACTIVE:-}" ] || ! command -v heavy-run >/dev/null || exec heavy-run bash "$0" "$@"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK=/root/.cache/t3-build

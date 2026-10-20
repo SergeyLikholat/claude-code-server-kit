@@ -1,4 +1,4 @@
-From 6393654c4a2640db4ae78d877776388f0882c5b7 Mon Sep 17 00:00:00 2001
+From cc930495cf2e446a92cae70374914d7aabdaeeb8 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Sun, 27 Sep 2026 13:26:44 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=93=D0=BE=D1=82=D0=BE?=
@@ -26,18 +26,18 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/mobile/src/sergey/threadVisitsSyncLogic.ts
 
 diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
-index 9a9c3fc5c6..6e5282b4dd 100644
+index ee33cf2836..78ce22263a 100644
 --- a/apps/mobile/src/App.tsx
 +++ b/apps/mobile/src/App.tsx
-@@ -26,6 +26,7 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
- 
+@@ -24,6 +24,7 @@ import { shouldHandleAppLink } from "./lib/appLinking";
+ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
  import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
  import { t3patchMarkReady } from "./sergey/startupDiagnostics"; // t3-patch
 +import { T3patchThreadVisitsSync } from "./sergey/ThreadVisitsSync"; // t3-patch
  
  import "../global.css";
  
-@@ -86,6 +87,7 @@ function AppContent() {
+@@ -77,6 +78,7 @@ function AppContent() {
      <>
        <SplashScreenCoordinator />
        <SubscriptionUsageCoordinator />
@@ -352,10 +352,10 @@ index 0000000000..4c19adc5ab
 +  return next;
 +}
 diff --git a/packages/client-runtime/src/rpc/client.ts b/packages/client-runtime/src/rpc/client.ts
-index e80a2f0f4b..eb0ca26dd4 100644
+index 055bfe87db..6924e5db38 100644
 --- a/packages/client-runtime/src/rpc/client.ts
 +++ b/packages/client-runtime/src/rpc/client.ts
-@@ -53,6 +53,7 @@ export type EnvironmentSubscriptionRpcTag =
+@@ -55,6 +55,7 @@ export type EnvironmentSubscriptionRpcTag =
    | typeof WS_METHODS.subscribeDiscoveredLocalServers
    | typeof WS_METHODS.subscribeDeviceState
    | typeof WS_METHODS.subscribeResourceTelemetry
@@ -364,10 +364,10 @@ index e80a2f0f4b..eb0ca26dd4 100644
    | typeof WS_METHODS.previewAutomationConnect
    | typeof WS_METHODS.subscribeVcsStatus
 diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
-index 18127076ff..e0dc7651ce 100644
+index 9a30986341..08ba41ff64 100644
 --- a/packages/client-runtime/src/state/server.ts
 +++ b/packages/client-runtime/src/state/server.ts
-@@ -1030,6 +1030,16 @@ export function createServerEnvironmentAtoms<R, E>(
+@@ -1064,6 +1064,16 @@ export function createServerEnvironmentAtoms<R, E>(
        label: "environment-data:server:process-resource-history",
        tag: WS_METHODS.serverGetProcessResourceHistory,
      }),
@@ -385,10 +385,10 @@ index 18127076ff..e0dc7651ce 100644
        label: "environment-data:server:resource-telemetry",
        tag: WS_METHODS.subscribeResourceTelemetry,
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 9096dd6e27..50b9f2c891 100644
+index c1b2545904..5d492017ea 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -434,6 +434,9 @@ export const WS_METHODS = {
+@@ -461,6 +461,9 @@ export const WS_METHODS = {
    subscribeAuthAccess: "subscribeAuthAccess",
    subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
    subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -398,7 +398,7 @@ index 9096dd6e27..50b9f2c891 100644
  } as const;
  
  const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
-@@ -1357,7 +1360,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
+@@ -1449,7 +1452,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
    stream: true,
  });
  

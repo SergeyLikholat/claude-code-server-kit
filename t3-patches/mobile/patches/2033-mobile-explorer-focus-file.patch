@@ -1,0 +1,181 @@
+From 50f809550f5a36b6b1661a7039a9bc22bec2f27a Mon Sep 17 00:00:00 2001
+From: t3patch <t3patch@local>
+Date: Fri, 16 Oct 2026 09:29:26 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=9E=D1=82=D0=BA=D1=80?=
+ =?UTF-8?q?=D1=8B=D1=82=D1=8C=20=D0=B2=20=D0=BF=D1=80=D0=BE=D0=B2=D0=BE?=
+ =?UTF-8?q?=D0=B4=D0=BD=D0=B8=D0=BA=D0=B5=C2=BB=20=E2=80=94=20=D0=BF=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=BA=D1=80=D1=83=D1=82=D0=BA=D0=B0=20=D0=BA=20=D1=84?=
+ =?UTF-8?q?=D0=B0=D0=B9=D0=BB=D1=83=20=D0=B8=20=D0=BF=D0=BE=D0=B4=D1=81?=
+ =?UTF-8?q?=D0=B2=D0=B5=D1=82=D0=BA=D0=B0=20=D1=81=D1=82=D1=80=D0=BE=D0=BA?=
+ =?UTF-8?q?=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/features/files/FileTreeBrowser.tsx    | 50 ++++++++++++++++++-
+ .../features/files/ThreadFilesRouteScreen.tsx |  3 ++
+ apps/mobile/src/sergey/fileChipActions.ts     | 12 +++--
+ 3 files changed, 61 insertions(+), 4 deletions(-)
+
+diff --git a/apps/mobile/src/features/files/FileTreeBrowser.tsx b/apps/mobile/src/features/files/FileTreeBrowser.tsx
+index 562588e07d..92ce4986da 100644
+--- a/apps/mobile/src/features/files/FileTreeBrowser.tsx
++++ b/apps/mobile/src/features/files/FileTreeBrowser.tsx
+@@ -114,6 +114,9 @@ const FileTreeRow = memo(function FileTreeRow(props: {
+   );
+ });
+ 
++/** t3-patch: сколько держится подсветка строки после «Открыть в проводнике». */
++const T3PATCH_FLASH_MS = 4_000;
++
+ export function FileTreeBrowser(props: {
+   readonly entries: ReadonlyArray<ProjectEntry>;
+   readonly error: string | null;
+@@ -130,6 +133,8 @@ export function FileTreeBrowser(props: {
+   readonly cwd?: string | null;
+   /** t3-patch: раскрыть дерево до этой папки (переход по ссылке на папку). */
+   readonly t3patchRevealPath?: string | null;
++  /** t3-patch: прокрутить к этому файлу и подсветить его («Открыть в проводнике»). */
++  readonly t3patchFocusPath?: string | null;
+   /** t3-patch: пункт «Вставить в сообщение» в меню долгого нажатия. */
+   readonly t3patchOnInsertPath?: (path: string) => void;
+   /** t3-patch: файловые операции в меню (загрузка, папки, переименование, корзина). */
+@@ -215,6 +220,28 @@ export function FileTreeBrowser(props: {
+     });
+   }, [t3patchRevealPath]);
+ 
++  // t3-patch: «Открыть в проводнике» — когда строка файла (или папки) появится в дереве (папки
++  // подгружаются по очереди), один раз прокрутить к ней и подсветить на несколько секунд
++  const t3patchFocusPath = props.t3patchFocusPath ?? t3patchRevealPath;
++  const t3patchListRef = useRef<FlatList<VisibleFileTreeNode> | null>(null);
++  const t3patchScrolledRef = useRef<string | null>(null);
++  const [t3patchFlashPath, setT3patchFlashPath] = useState<string | null>(null);
++  useEffect(() => {
++    if (!t3patchFocusPath || t3patchScrolledRef.current === t3patchFocusPath) return;
++    const index = visibleNodes.findIndex((item) => item.node.path === t3patchFocusPath);
++    if (index < 0) return;
++    t3patchScrolledRef.current = t3patchFocusPath;
++    setT3patchFlashPath(t3patchFocusPath);
++    requestAnimationFrame(() =>
++      t3patchListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.35 }),
++    );
++  }, [t3patchFocusPath, visibleNodes]);
++  useEffect(() => {
++    if (!t3patchFlashPath) return;
++    const timer = setTimeout(() => setT3patchFlashPath(null), T3PATCH_FLASH_MS);
++    return () => clearTimeout(timer);
++  }, [t3patchFlashPath]);
++
+   useEffect(
+     () => () => {
+       if (pendingSelectionTimeoutRef.current !== null) {
+@@ -256,7 +283,10 @@ export function FileTreeBrowser(props: {
+     ({ item }: { readonly item: VisibleFileTreeNode }) => (
+       <FileTreeRow
+         item={item}
+-        selected={item.node.kind === "file" && item.node.path === selectedPath}
++        selected={
++          (item.node.kind === "file" && item.node.path === selectedPath) ||
++          item.node.path === t3patchFlashPath // t3-patch: подсветка после «Открыть в проводнике»
++        }
+         expanded={expandedPaths.has(item.node.path)}
+         loaded={loadedDirectories.has(item.node.path)}
+         onPressDirectory={toggleDirectory}
+@@ -272,6 +302,7 @@ export function FileTreeBrowser(props: {
+       onPreviewFile,
+       loadedDirectories,
+       selectedPath,
++      t3patchFlashPath,
+       toggleDirectory,
+     ],
+   );
+@@ -283,6 +314,23 @@ export function FileTreeBrowser(props: {
+   // flex-1 Views is ignored, which is why the tree rendered under the header with no blur.
+   return (
+     <FlatList
++      ref={t3patchListRef}
++      // t3-patch: строки разной высоты — если до строки ещё не доскроллить, сначала примерно
++      onScrollToIndexFailed={(info) => {
++        t3patchListRef.current?.scrollToOffset({
++          offset: info.averageItemLength * info.index,
++          animated: false,
++        });
++        setTimeout(
++          () =>
++            t3patchListRef.current?.scrollToIndex({
++              index: info.index,
++              animated: true,
++              viewPosition: 0.35,
++            }),
++          120,
++        );
++      }}
+       alwaysBounceVertical
+       className="flex-1"
+       data={visibleNodes}
+diff --git a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+index 7f26415918..5f8ea700d2 100644
+--- a/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
++++ b/apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
+@@ -354,6 +354,8 @@ type ThreadFilesRouteScreenProps = StaticScreenProps<{
+   readonly threadId: string;
+   /** t3-patch: раскрыть дерево до этой папки (переход по ссылке на папку). */
+   readonly t3patchReveal?: string;
++  /** t3-patch: файл, к которому прокрутить и который подсветить. */
++  readonly t3patchFocus?: string;
+ }>;
+ 
+ type ThreadFileRouteScreenProps = StaticScreenProps<{
+@@ -589,6 +591,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+           key={JSON.stringify([environmentId, cwd])}
+           cwd={cwd} // t3-patch
+           t3patchRevealPath={props.route.params.t3patchReveal ?? null} // t3-patch
++          t3patchFocusPath={props.route.params.t3patchFocus ?? null} // t3-patch
+           t3patchOnInsertPath={t3patchInsertPath} // t3-patch
+           t3patchWorkspace={t3patchWorkspaceMenu} // t3-patch
+           entries={entriesQuery.entries}
+diff --git a/apps/mobile/src/sergey/fileChipActions.ts b/apps/mobile/src/sergey/fileChipActions.ts
+index 24bc823e02..130c35a13b 100644
+--- a/apps/mobile/src/sergey/fileChipActions.ts
++++ b/apps/mobile/src/sergey/fileChipActions.ts
+@@ -53,7 +53,7 @@ export function t3patchFileChipActions(
+   handlers: {
+     readonly open: () => void;
+     readonly download: () => void;
+-    readonly reveal: ((folder: string) => void) | null;
++    readonly reveal: ((folder: string, file: string) => void) | null;
+     readonly insert: ((relativePath: string) => void) | null;
+     readonly share: (() => void) | null;
+   },
+@@ -64,7 +64,12 @@ export function t3patchFileChipActions(
+   return [
+     { label: "Открыть", onPress: handlers.open },
+     ...(handlers.reveal && relative !== null
+-      ? [{ label: "Открыть в проводнике", onPress: () => handlers.reveal?.(parentOf(relative)) }]
++      ? [
++          {
++            label: "Открыть в проводнике",
++            onPress: () => handlers.reveal?.(parentOf(relative), relative),
++          },
++        ]
+       : []),
+     ...(handlers.insert && relative !== null
+       ? [{ label: "Вставить в сообщение", onPress: () => handlers.insert?.(relative) }]
+@@ -142,11 +147,12 @@ export function useT3patchFileChipMenu(input: {
+         open: () => open(href),
+         download: () => download(target),
+         reveal: workspaceRoot
+-          ? (folder) =>
++          ? (folder, file) =>
+               navigation.navigate("ThreadFiles", {
+                 environmentId: String(environmentId),
+                 threadId: String(threadId),
+                 t3patchReveal: folder,
++                t3patchFocus: file,
+               })
+           : null,
+         insert: (relativePath) =>
+-- 
+2.43.0
+

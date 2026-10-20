@@ -1,4 +1,4 @@
-From 4bba948f2767983e39c72bd3e25b03f1fc341d2e Mon Sep 17 00:00:00 2001
+From 0cf434ca1423aff9e6392b3c0e90f00fd6142ae1 Mon Sep 17 00:00:00 2001
 From: t3-patch <t3-patch@local>
 Date: Sun, 27 Sep 2026 08:59:25 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=C2=AB=D0=93=D0=BE=D1=82=D0=BE?=
@@ -27,18 +27,18 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 apps/mobile/src/sergey/threadVisitsLogic.ts
 
 diff --git a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
-index f78553dbb7..72e0453058 100644
+index 4fb22d1524..fe9e2c32d8 100644
 --- a/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
 +++ b/apps/mobile/src/features/threads/ThreadRouteScreen.tsx
-@@ -90,6 +90,7 @@ import {
+@@ -91,6 +91,7 @@ import {
    type ThreadInspectorMode,
  } from "./thread-inspector-content-stack";
  import { threadRouteIsHydrating } from "./thread-route-hydration";
 +import { t3patchThreadVisitKey, useT3patchMarkThreadVisited } from "../../sergey/threadVisits"; // t3-patch
  
- interface ThreadInspectorSelection {
-   readonly routeThreadIdentity: string | null;
-@@ -174,6 +175,13 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+ function ThreadHeader(
+   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+@@ -271,6 +272,13 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
        ? null
        : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
    const selectedThreadDetailState = useSelectedThreadDetailState();
@@ -53,10 +53,10 @@ index f78553dbb7..72e0453058 100644
    if (environmentId === null || threadIdRaw === null) {
      return <OpeningThreadLoadingScreen />;
 diff --git a/apps/mobile/src/features/threads/thread-list-v2-items.tsx b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
-index 02870c3ff2..79123b20c8 100644
+index 10b01fef0e..4085779225 100644
 --- a/apps/mobile/src/features/threads/thread-list-v2-items.tsx
 +++ b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
-@@ -40,6 +40,12 @@ import {
+@@ -48,6 +48,12 @@ import {
  } from "./threadListV2";
  import { QueuedMessageIcon } from "./queued-message-icon";
  import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -69,8 +69,8 @@ index 02870c3ff2..79123b20c8 100644
  
  /**
   * Thread List v2 renders one flat native list: rich edge-to-edge rows for
-@@ -460,7 +466,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
-     : screenColor;
+@@ -556,7 +562,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
  
    const status = resolveThreadListV2Status(thread);
 -  const statusLabel = STATUS_LABEL_BY_STATUS[status];
@@ -84,9 +84,9 @@ index 02870c3ff2..79123b20c8 100644
 +    )
 +      ? T3PATCH_DONE_STATUS
 +      : STATUS_LABEL_BY_STATUS[status];
-   // Settled rows label by the same stamp they sort by, so order and label
-   // can't disagree. updatedAt is always present, so the resolver never
-   // returns null here.
+   // The timestamp is precomputed on the list item (same stamps the settled
+   // tail sorts by) so a minute tick only re-renders rows that draw it.
+   const timeLabel = props.timeLabel;
 diff --git a/apps/mobile/src/sergey/sergey.test.ts b/apps/mobile/src/sergey/sergey.test.ts
 index 484d310520..8ac0d8c9eb 100644
 --- a/apps/mobile/src/sergey/sergey.test.ts

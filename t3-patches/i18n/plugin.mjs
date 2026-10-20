@@ -144,8 +144,12 @@ export default function t3patchRu(api, options = {}) {
     return node;
   };
   const scoped = (state, key) => dict.files?.[relFile(state)]?.[key] !== undefined;
-  const lookup = (state, key) =>
-    dict.files?.[relFile(state)]?.[key] ?? (state.t3ruPkg ? undefined : dict.strings?.[key]);
+  // Перевод, совпадающий с оригиналом, не применяется: замена шаблона на такой же шаблон
+  // заставляет Babel обходить новый узел снова и снова (переполнение стека при сборке).
+  const lookup = (state, key) => {
+    const ru = dict.files?.[relFile(state)]?.[key] ?? (state.t3ruPkg ? undefined : dict.strings?.[key]);
+    return ru === key ? undefined : ru;
+  };
 
   const uiNodes = new WeakSet();
   const found = (state, kind, key, node) => {

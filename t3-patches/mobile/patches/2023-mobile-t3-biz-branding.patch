@@ -1,4 +1,4 @@
-From be4f77221e5ceb5b8c6bdeef0a7d1526bd622943 Mon Sep 17 00:00:00 2001
+From 748ab95966ecb54898c627178af6b636a5f3083d Mon Sep 17 00:00:00 2001
 From: root <root@7532.hosted-by.koara.io>
 Date: Sun, 4 Oct 2026 01:18:42 +0300
 Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=81=D0=B2=D0=BE=D1=8F=20?=
@@ -11,10 +11,9 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 ---
- apps/mobile/src/components/BrandMark.tsx      | 15 +++++++------
- .../src/components/CompactBrandTitle.tsx      | 21 +++++++++++--------
- apps/mobile/src/features/home/HomeHeader.tsx  | 16 +++++++-------
- 3 files changed, 30 insertions(+), 22 deletions(-)
+ apps/mobile/src/components/BrandMark.tsx      | 15 ++++----
+ .../src/components/CompactBrandTitle.tsx      | 35 ++++++++++---------
+ 2 files changed, 28 insertions(+), 22 deletions(-)
 
 diff --git a/apps/mobile/src/components/BrandMark.tsx b/apps/mobile/src/components/BrandMark.tsx
 index c8f1d43855..8fdfc1c819 100644
@@ -43,30 +42,45 @@ index c8f1d43855..8fdfc1c819 100644
          {!compact ? (
            <Text className="text-xs font-medium text-foreground-muted">
 diff --git a/apps/mobile/src/components/CompactBrandTitle.tsx b/apps/mobile/src/components/CompactBrandTitle.tsx
-index a6e2a7fd21..30bf136c11 100644
+index f64370c3ce..73f4c8897a 100644
 --- a/apps/mobile/src/components/CompactBrandTitle.tsx
 +++ b/apps/mobile/src/components/CompactBrandTitle.tsx
-@@ -41,16 +41,19 @@ export function CompactBrandTitle(
-         allowFontScaling={props.allowFontScaling}
-         className="font-t3-medium text-[21px] tracking-[-0.5px] text-foreground-muted"
+@@ -44,24 +44,27 @@ export function CompactBrandTitle(
+         className="font-t3-medium text-foreground-muted"
+         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
        >
 -        Code
 +        Biz
        </Text>
--      <View className="rounded-full bg-subtle px-1.5 py-0.5">
+-      <View
+-        className="rounded-full bg-subtle px-1.5 py-0.5"
+-        style={
+-          Platform.OS === "android"
+-            ? { paddingHorizontal: 5.25 * scale, paddingVertical: 1.75 * scale }
+-            : undefined
+-        }
+-      >
 -        <Text
 -          allowFontScaling={props.allowFontScaling}
--          className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
--        >
+-          className="font-t3-bold text-foreground-muted uppercase"
+-          style={{ fontSize: 9 * scale, letterSpacing: 0.9 * scale }}
++      {/* t3-patch: «T3 Biz», без значка стадии (Alpha) */}
++      {stageLabel !== "Alpha" ? (
++        <View
++          className="rounded-full bg-subtle px-1.5 py-0.5"
++          style={
++            Platform.OS === "android"
++              ? { paddingHorizontal: 5.25 * scale, paddingVertical: 1.75 * scale }
++              : undefined
++          }
+         >
 -          {stageLabel}
 -        </Text>
 -      </View>
-+      {/* t3-patch: «T3 Biz», без значка стадии (Alpha) */}
-+      {stageLabel !== "Alpha" ? (
-+        <View className="rounded-full bg-subtle px-1.5 py-0.5">
 +          <Text
 +            allowFontScaling={props.allowFontScaling}
-+            className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
++            className="font-t3-bold text-foreground-muted uppercase"
++            style={{ fontSize: 9 * scale, letterSpacing: 0.9 * scale }}
 +          >
 +            {stageLabel}
 +          </Text>
@@ -75,36 +89,6 @@ index a6e2a7fd21..30bf136c11 100644
      </View>
    );
  }
-diff --git a/apps/mobile/src/features/home/HomeHeader.tsx b/apps/mobile/src/features/home/HomeHeader.tsx
-index aa721d35fe..9dd29eeab3 100644
---- a/apps/mobile/src/features/home/HomeHeader.tsx
-+++ b/apps/mobile/src/features/home/HomeHeader.tsx
-@@ -249,16 +249,18 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
-               onPress={props.onOpenEnvironments}
-               brand={
-                 <View className="flex-row items-center gap-2">
--                  {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-+                  {/* t3-patch: своя редакция — «T3 Biz», без значка стадии (Alpha) */}
-                   <T3Wordmark colorClassName="accent-icon" height={15} />
-                   <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
--                    Code
-+                    Biz
-                   </RNText>
--                  <View className="rounded-full bg-subtle px-2 py-0.75">
--                    <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
--                      {stageLabel}
--                    </RNText>
--                  </View>
-+                  {stageLabel !== "Alpha" ? (
-+                    <View className="rounded-full bg-subtle px-2 py-0.75">
-+                      <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
-+                        {stageLabel}
-+                      </RNText>
-+                    </View>
-+                  ) : null}
-                 </View>
-               }
-             />
 -- 
 2.43.0
 

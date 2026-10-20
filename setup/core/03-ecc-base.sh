@@ -33,7 +33,11 @@ fi
 if [ -f "$ECC_DIR/install.sh" ] && [ "$ECC_INSTALL_TARGET" = "/root/.claude" ]; then
   log "Запускаю ECC install.sh..."
   cd "$ECC_DIR"
-  bash install.sh --skip-prompts 2>&1 | tail -20 || warn "ECC install вернул ошибку (продолжаю)"
+  # С 2026-10 у ECC новый установщик: профиль обязателен, иначе печатается справка и
+  # ничего не ставится. Хуки ECC не ставим — хуки памяти даёт llm-memory-kit.
+  bash install.sh --target claude --profile "${ECC_PROFILE:-full}" --no-hooks 2>&1 | tail -5 \
+    || warn "ECC install вернул ошибку (продолжаю)"
+  [ -d "$ECC_INSTALL_TARGET/skills" ] || warn "ECC: скиллы не появились в $ECC_INSTALL_TARGET/skills"
 else
   log "Устанавливаю ECC в $ECC_INSTALL_TARGET (копирование)"
   ensure_dir "$ECC_INSTALL_TARGET" 755

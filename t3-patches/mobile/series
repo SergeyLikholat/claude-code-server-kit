@@ -1,8 +1,6 @@
 2001-mobile-own-build-i18n.patch
 2002-mobile-office-preview-paths.patch
 2003-mobile-startup-diagnostics.patch
-2004-upstream-contracts-no-intl-segmenter.patch
-2005-upstream-composer-placeholder-one-line.patch
 2006-mobile-thread-order-download-folders.patch
 2007-mobile-obsidian-links-download-failure.patch
 2008-mobile-download-failure-reasons.patch
@@ -22,3 +20,12 @@
 2022-mobile-pdf-open-once.patch
 2023-mobile-t3-biz-branding.patch
 2024-mobile-quote-selection.patch
+2025-mobile-reasoning-russian.patch
+2026-mobile-crash-report.patch
+2027-mobile-freeze-diagnostics.patch
+2028-mobile-exit-reasons.patch
+2029-mobile-keyboard-ref-fix.patch
+2030-mobile-watchdog-background.patch
+2031-mobile-file-chip-menu.patch
+2032-mobile-file-chip-menu-obsidian.patch
+2033-mobile-explorer-focus-file.patch

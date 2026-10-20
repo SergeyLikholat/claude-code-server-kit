@@ -1,0 +1,46 @@
+From b96f4e01010c9844fd0d1e130bf7a344106ff3c6 Mon Sep 17 00:00:00 2001
+From: t3patch <t3patch@local>
+Date: Tue, 13 Oct 2026 23:55:59 +0300
+Subject: [PATCH] =?UTF-8?q?fix(mobile):=20=D1=81=D1=82=D0=BE=D1=80=D0=BE?=
+ =?UTF-8?q?=D0=B6=20=D0=B7=D0=B0=D0=B2=D0=B8=D1=81=D0=B0=D0=BD=D0=B8=D0=B9?=
+ =?UTF-8?q?=20=E2=80=94=20=D0=BD=D0=B5=20=D1=81=D1=87=D0=B8=D1=82=D0=B0?=
+ =?UTF-8?q?=D1=82=D1=8C=20=D0=BF=D0=B0=D1=83=D0=B7=D1=83=20=D0=B2=20=D1=84?=
+ =?UTF-8?q?=D0=BE=D0=BD=D0=B5=20=D0=B7=D0=B0=D0=B2=D0=B8=D1=81=D0=B0=D0=BD?=
+ =?UTF-8?q?=D0=B8=D0=B5=D0=BC=20JS?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../modules/t3patchdownload/T3patchDownloadModule.kt   | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+index c0dfd3d842..b71e4ca06a 100644
+--- a/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
++++ b/apps/mobile/modules/t3patch-download/android/src/main/java/expo/modules/t3patchdownload/T3patchDownloadModule.kt
+@@ -136,13 +136,19 @@ class T3patchDownloadModule : Module() {
+     Thread({
+       val tick = AtomicLong(0)
+       var reported = false
++      // Свёрнутое приложение не шлёт отметки: таймеры JS в фоне на паузе. Паузу считаем от
++      // возврата на экран, иначе сразу после возврата старая отметка выглядит как зависание.
++      var foregroundSince = 0L
+       while (!reported) {
+         val sent = tick.get()
+         main.post { tick.set(sent + 1) }
+         Thread.sleep(5_000)
+-        val uiStuck = tick.get() == sent
++        val now = SystemClock.uptimeMillis()
++        val foreground = inForeground()
++        foregroundSince = if (!foreground) 0L else if (foregroundSince == 0L) now else foregroundSince
++        val uiStuck = foreground && tick.get() == sent
+         val beat = lastJsBeat
+-        val jsStuck = beat > 0 && SystemClock.uptimeMillis() - beat > 8_000 && inForeground()
++        val jsStuck = beat > 0 && foregroundSince > 0 && now - maxOf(beat, foregroundSince) > 8_000
+         if (uiStuck || jsStuck) {
+           val what = if (uiStuck) "Интерфейс (главный поток) завис" else "JS не отвечает больше 8 с"
+           val dump = StringBuilder("$what. Последние события:\n$breadcrumbs\nСтеки потоков:\n")
+-- 
+2.43.0
+
