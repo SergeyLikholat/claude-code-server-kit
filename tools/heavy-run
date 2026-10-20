@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# heavy-run — тяжёлые задачи (сборки T3, APK, docker build) по очереди и с низким приоритетом.
+#   heavy-run <команда> [аргументы]
+# Очередь: одна задача за раз (flock), остальные ждут. Ресурсы: heavy.slice
+# (CPUWeight=10, не больше 6 ядер, MemoryHigh=12G) + nice 19 + ionice.
+# Вложенный вызов (update.sh → build.sh) идёт сразу, без повторной очереди.
+set -euo pipefail
+[ $# -gt 0 ] || { echo "usage: heavy-run <команда> [аргументы]" >&2; exit 2; }
+[ -z "${HEAVY_RUN_ACTIVE:-}" ] || exec "$@"
+
+LOCK=/run/lock/heavy-run.lock
+OWNER=/run/lock/heavy-run.owner
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "heavy-run: сейчас идёт другая сборка — $(cat "$OWNER" 2>/dev/null || echo '?'). Жду своей очереди…" >&2
+  flock 9
+  echo "heavy-run: очередь дошла, запускаю." >&2
+fi
+echo "pid $$ с $(date '+%F %T'): $*" > "$OWNER"
+export HEAVY_RUN_ACTIVE=1
+exec systemd-run --scope --quiet --collect --slice=heavy.slice --unit="heavy-run-$$" \
+  nice -n 19 ionice -c 2 -n 7 "$@"

@@ -14,6 +14,7 @@ const { runClaudeWorker } = require('./dispatch')
 const { runCommand, isCommand } = require('./commands')
 const bridge = require('./bridge')
 const modelMod = require('./model')
+const permissions = require('./permissions')
 
 const ROUTING_FILE = join(STATE_DIR, 'routing.json')
 const ENV_FILE = join(STATE_DIR, '.env')
@@ -43,15 +44,48 @@ if (!TOKEN) {
 // -- Claim bot.pid so plugin-in-worker knows we own polling -----------------
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
 mkdirSync(LOCK_DIR, { recursive: true })
+// Кто держит слот long-polling. Долгоживущим владельцем должен быть роутер:
+// он один умеет разводить сообщения по топикам. Но пока роутер перезапускается,
+// bot.pid освобождается, и его успевает занять MCP-сервер плагина из вкладки
+// VS Code (`bun server.ts` в каталоге плагина). После этого роутер уже не
+// стартует — «another poller alive» — и канал молчит, пока это не разберут
+// руками. Ровно так канал падал дважды 2026-08-20.
+//
+// Различаем два случая: живой второй РОУТЕР — это настоящий конфликт, тут
+// отступаем. Захвативший слот плагин — не владелец, его снимаем и забираем
+// слот себе. Проверка строгая: убиваем только процесс, чья командная строка
+// совпадает с MCP-сервером плагина Telegram.
+function holderCmdline(pid) {
+  try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim() }
+  catch { return '' }
+}
+
+function isPluginPoller(cmd) {
+  return /\bbun\b/.test(cmd) && /server\.ts/.test(cmd)
+}
+
 try {
   const holder = parseInt(readFileSync(PID_FILE, 'utf8'), 10)
   if (holder > 1 && holder !== process.pid) {
-    try {
-      process.kill(holder, 0)
-      console.error(`tg-router: another poller alive (pid=${holder}) — refusing to start`)
-      process.exit(2)
-    } catch {
+    let alive = true
+    try { process.kill(holder, 0) } catch { alive = false }
+    if (!alive) {
       console.error(`tg-router: cleaning stale bot.pid (dead pid=${holder})`)
+    } else {
+      const cmd = holderCmdline(holder)
+      if (isPluginPoller(cmd)) {
+        console.error(`tg-router: slot squatted by plugin poller (pid=${holder}) — reclaiming`)
+        try { process.kill(holder, 'SIGTERM') } catch {}
+        // Дать ему закрыть long-poll, иначе Telegram ответит 409 нам обоим.
+        const until = Date.now() + 3000
+        while (Date.now() < until) {
+          try { process.kill(holder, 0) } catch { break }
+          try { require('child_process').execFileSync('sleep', ['0.2']) } catch { break }
+        }
+      } else {
+        console.error(`tg-router: another poller alive (pid=${holder}, cmd=${cmd.slice(0, 120)}) — refusing to start`)
+        process.exit(2)
+      }
     }
   }
 } catch {}
@@ -535,7 +569,19 @@ async function handleInbound(bot, ctx, text, attachment) {
 
     // Stream intermediate assistant narration to TG while the worker runs, so
     // the user sees reasoning-in-progress instead of silence until the end.
-    const streamer = isBridged && ux.stream_intermediate !== false
+    // Narration streaming. In bridged mode it is on by default (Claude has no
+    // reply tool there, so everything lands in the JSONL). In ordinary topics
+    // Claude answers through mcp__..._reply and plain assistant text IS the
+    // reasoning — stream it only when the contour opts in with an explicit
+    // ux.stream_intermediate = true.
+    const wantsStream = ux.stream_intermediate === true
+      || (isBridged && ux.stream_intermediate !== false)
+    // Просить модель писать заметки о ходе работы имеет смысл только там, где
+    // мы их потом отправляем. Само по себе включение стриминга ничего не даёт:
+    // на разговорном турне модель не пишет промежуточных текстов вообще, и
+    // отправлять нечего — пользователь видит только таймер и финальный ответ.
+    const wantsNarration = wantsStream && ux.narrate_progress === true
+    const streamer = wantsStream
       ? startIntermediateStreamer(bot, chat_id, threadId, topic, ux, async () => {
           // Narration just pushed the status line up — bring it back down so
           // elapsed time stays visible at the bottom of the topic.
@@ -549,6 +595,10 @@ async function handleInbound(bot, ctx, text, attachment) {
     let currentPrompt = prompt
     let passes = 0
     const MAX_PASSES = 12          // backstop against an endless follow-up chain
+    // Идентификатор задачи для кнопки «разрешить всё в этой задаче». Живёт
+    // ровно один запрос пользователя, включая досылы, и снимается в finally —
+    // разрешение не должно перетекать на следующий вопрос.
+    const permTurnId = `${threadId || 'general'}-${Date.now()}`
     try {
      // Run the turn, then keep running while the user has added more context.
      // Each pass is a normal one-shot worker on the same session, so follow-ups
@@ -562,8 +612,19 @@ async function handleInbound(bot, ctx, text, attachment) {
         prompt: currentPrompt,
         timeout_ms: timeoutMs,
         bridged: isBridged,
+        narrate: wantsNarration,
         model: modelMod.resolveModelFlag(topic.session_id,
           require('./dispatch').sessionJsonlPath(topic.project_dir || '/root', topic.session_id)),
+        // Кнопка «разрешить / отклонить» вместо молчаливого отказа. Ждём
+        // заведомо меньше, чем живёт воркер, иначе его убьют раньше, чем
+        // истечёт ожидание, и Claude не успеет сообщить об отказе.
+        permission: {
+          dir: permissions.PERM_DIR,
+          chat_id,
+          thread_id: threadId,
+          turn_id: permTurnId,
+          timeout_ms: Math.max(60000, Math.min(permissions.WAIT_MS, timeoutMs - 60000)),
+        },
         onSpawn: (handle) => {
           const entry = activeWorkers.get(lockPath)
           if (entry) entry.handle = handle
@@ -677,6 +738,7 @@ async function handleInbound(bot, ctx, text, attachment) {
     } finally {
       clearInterval(typingInt)
       clearInterval(tickInt)
+      permissions.clearTurnAllowance(permTurnId)
       if (streamer) await streamer.stop()
       await statusPromise
       // Safety net for a silent failure: the CLI can answer with an API error
@@ -866,6 +928,14 @@ bot.on('callback_query:data', fireAndForget(async ctx => {
     await ctx.answerCallbackQuery().catch(() => {})
     return
   }
+  // Разрешение на инструмент. Обрабатываем раньше остальных веток: воркер
+  // стоит и ждёт ответа, лишние проверки здесь — это секунды его простоя.
+  const permNote = await permissions.handlePermissionCallback(ctx, data)
+  if (permNote !== null) {
+    await ctx.answerCallbackQuery({ text: permNote }).catch(() => {})
+    return
+  }
+
   // Parse: "fu-int:<threadId|general>" — cut the running pass short so the
   // buffered follow-ups run now instead of after a long turn the user has
   // already superseded.
@@ -1097,11 +1167,24 @@ bot.on('callback_query:data', fireAndForget(async ctx => {
     if (prevPanelId) {
       await bot.api.deleteMessage(chatId, prevPanelId).catch(() => {})
     }
-    const newSessionId = bridge.createBridgeSession(chatId, threadId, '/root')
+    // Project dir must come from routing.json, not a hardcoded '/root'. The JSONL
+    // lands in ~/.claude/projects/<slug(project_dir)>/, and /list filters by
+    // TG_SESSIONS_INCLUDE_PREFIX — so a session created under '/root' in another
+    // person's contour silently ends up in владелец's tree and invisible in theirs.
+    const bridgeProjectDir = (() => {
+      try {
+        const t = resolveTopic(loadRouting(), threadId)
+        if (t && t.project_dir) return t.project_dir
+      } catch (err) {
+        console.error('tg-router: quick:new routing lookup failed:', err.message || err)
+      }
+      return process.env.TG_BRIDGE_PROJECT_DIR || '/root'
+    })()
+    const newSessionId = bridge.createBridgeSession(chatId, threadId, bridgeProjectDir)
     const replyText = [
       '🟢 <b>Новая сессия создана</b>',
       `session: <code>${newSessionId.slice(0, 8)}</code>`,
-      `project: <code>/root</code>`,
+      `project: <code>${bridgeProjectDir}</code>`,
       '',
       'Пиши обычным текстом — это будет первое сообщение в новой пустой сессии.',
     ].join('\n')
@@ -1429,6 +1512,9 @@ bot.on('callback_query:data', fireAndForget(async ctx => {
 
 // Periodic: send pairing approvals
 setInterval(() => checkApprovals(bot), 5000)
+
+// Показывать запросы разрешений, которые воркеры кладут в свой каталог.
+permissions.startPermissionWatcher(bot, LOG_LABEL)
 
 process.on('SIGTERM', () => { console.error('tg-router: SIGTERM, stopping'); bot.stop().finally(() => process.exit(0)) })
 process.on('SIGINT',  () => { console.error('tg-router: SIGINT, stopping');  bot.stop().finally(() => process.exit(0)) })

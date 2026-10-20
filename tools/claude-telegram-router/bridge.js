@@ -11,7 +11,8 @@
 //
 // Everything user-specific here (state file, which sessions are visible, whose
 // routing tables are consulted) resolves from env, so a second router instance
-// serving a DIFFERENT person shares no state with this one. Defaults assume a single-user install (one router, one bot).
+// serving a DIFFERENT person shares no state with this one. Defaults reproduce
+// router1 (владелец) behaviour exactly.
 
 const { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } = require('fs')
 const { join, dirname } = require('path')
@@ -25,7 +26,7 @@ const STATE_FILE = process.env.TG_BRIDGE_STATE_FILE || join(STATE_DIR, 'vscode_b
 // Session visibility scope for /list. Both are CSV lists of path prefixes,
 // matched against the session cwd and its slug form.
 //   TG_SESSIONS_INCLUDE_PREFIX — whitelist; empty = "everything not excluded"
-//   TG_SESSIONS_EXCLUDE_PREFIX — blacklist; empty by default (single-user install)
+//   TG_SESSIONS_EXCLUDE_PREFIX — blacklist; default hides other people's trees
 function envPrefixList(name, fallback) {
   const raw = process.env[name]
   const src = raw === undefined ? fallback : raw
@@ -33,10 +34,10 @@ function envPrefixList(name, fallback) {
 }
 
 const SESSIONS_INCLUDE = envPrefixList('TG_SESSIONS_INCLUDE_PREFIX', '')
-const SESSIONS_EXCLUDE = envPrefixList('TG_SESSIONS_EXCLUDE_PREFIX', '')
+const SESSIONS_EXCLUDE = envPrefixList('TG_SESSIONS_EXCLUDE_PREFIX', '/root/projects_other')
 
-// Как называется этот режим в текстах для пользователя. Если топик привязан
-// к живой VS Code-сессии — «VS Code Live»; если VS Code нет — уместнее «Беседы».
+// Как называется этот режим в текстах для пользователя. У владельца топик привязан
+// к VS Code, у других пользователей VS Code нет — там уместнее «Беседы».
 const BRIDGE_LABEL = process.env.TG_BRIDGE_LABEL || 'VS Code Live'
 
 // Slug form of a path prefix — claude-code replaces every non-alphanumeric char
@@ -56,6 +57,43 @@ function isSessionInScope(s) {
 }
 
 // ---- Sessions registry scanner ----
+
+// Cheap pre-filter before JSON.parse. Two writers produce these JSONL files and
+// they disagree on spacing: the VS Code extension emits compact `{"type":"user"`
+// while headless turns (Telegram plugin daemon, `claude --print`) emit
+// `{"type": "user"`. Matching only the compact form silently skipped every
+// headless session.
+function hasType(line, type) {
+  return line.includes(`"type":"${type}"`) || line.includes(`"type": "${type}"`)
+}
+
+// Plain text of a `user` JSONL record, or null when the record is machinery
+// rather than something a person typed — tool results, interrupt markers,
+// background task notifications, resume stubs. Those must never become a
+// session name.
+const NON_PROMPT_PREFIXES = [
+  '[Request interrupted',
+  'Continue from where you left off',
+  '<task-notification',
+  '<local-command',
+  '<command-name',
+]
+function userRecordText(obj) {
+  const content = obj && obj.message && obj.message.content
+  let txt = ''
+  if (typeof content === 'string') {
+    txt = content
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === 'string') txt += `${part} `
+      else if (part && part.type === 'text' && typeof part.text === 'string') txt += `${part.text} `
+    }
+  }
+  txt = txt.trim()
+  if (!txt) return null
+  if (NON_PROMPT_PREFIXES.some(p => txt.startsWith(p))) return null
+  return txt
+}
 
 function readSessionMeta(jsonlPath) {
   try {
@@ -78,32 +116,56 @@ function readSessionMeta(jsonlPath) {
         if (!meta.version && obj.version) meta.version = obj.version
         if (obj.type === 'ai-title' && obj.aiTitle) meta.aiTitle = obj.aiTitle
         if (obj.type === 'custom-title' && obj.customTitle) meta.customTitle = obj.customTitle
+        if (obj.type === 'last-prompt' && obj.lastPrompt) meta.lastPrompt = obj.lastPrompt
         if (meta.cwd && meta.slug && meta.entrypoint && meta.aiTitle && meta.customTitle) break
       }
       // 2) If no title found in head, scan last ~256 KB — VS Code appends
-      //    ai-title / custom-title records over the session lifetime, latest wins.
-      if (!meta.aiTitle || !meta.customTitle) {
+      //    ai-title / custom-title / last-prompt records over the session
+      //    lifetime, latest wins. last-prompt matters because an untitled
+      //    session is labelled by its latest prompt in the VS Code Sidebar —
+      //    mirror that here or the same session carries two different names.
+      if (!meta.aiTitle || !meta.customTitle || !meta.lastPrompt) {
         const stat = fsmod.fstatSync(fd)
-        const tailSize = Math.min(262144, stat.size)
-        if (tailSize > headN) {  // only worth tailing if there's content beyond head
+        // 256 KB covers almost every session. A handful of big ones push the
+        // last title/prompt record just past that window (a single tool result
+        // can be hundreds of KB), so escalate once to 2 MB rather than
+        // mislabelling the session — the second read only happens for sessions
+        // the cheap pass failed on.
+        for (const window of [262144, 2097152]) {
+          const tailSize = Math.min(window, stat.size)
+          if (tailSize <= headN) break  // nothing beyond the head block
           const tailBuf = Buffer.alloc(tailSize)
           const tailStart = stat.size - tailSize
           const tailN = fsmod.readSync(fd, tailBuf, 0, tailSize, tailStart)
           const tail = tailBuf.slice(0, tailN).toString('utf8')
-          // Find latest ai-title / custom-title records by scanning backwards.
+          // Find latest ai-title / custom-title / last-prompt records by
+          // scanning backwards — first hit going backwards IS the latest.
           const lines = tail.split('\n')
           for (let i = lines.length - 1; i >= 0; i--) {
             const line = lines[i]
-            const isAi = !meta.aiTitle && line.includes('"type":"ai-title"')
-            const isCustom = !meta.customTitle && line.includes('"type":"custom-title"')
-            if (!isAi && !isCustom) continue
+            const isAi = !meta.aiTitle && hasType(line, 'ai-title')
+            const isCustom = !meta.customTitle && hasType(line, 'custom-title')
+            const isPrompt = !meta.lastPrompt && hasType(line, 'last-prompt')
+            // Headless turns (Telegram plugin daemon, `claude --print`) write a
+            // last-prompt record that carries only a leafUuid, no text. Falling
+            // back to the newest user turn reconstructs the same label.
+            const isUser = !meta.lastPrompt && !meta.lastUserText && hasType(line, 'user')
+            if (!isAi && !isCustom && !isPrompt && !isUser) continue
             try {
               const obj = JSON.parse(line)
               if (isAi && obj.type === 'ai-title' && obj.aiTitle) meta.aiTitle = obj.aiTitle
               if (isCustom && obj.type === 'custom-title' && obj.customTitle) meta.customTitle = obj.customTitle
+              if (isPrompt && obj.type === 'last-prompt' && obj.lastPrompt) meta.lastPrompt = obj.lastPrompt
+              if (isUser && obj.type === 'user') {
+                const txt = userRecordText(obj)
+                if (txt) meta.lastUserText = txt
+              }
             } catch {}
-            if (meta.aiTitle && meta.customTitle) break
+            if (meta.aiTitle && meta.customTitle && meta.lastPrompt) break
           }
+          // A name is all we need — stop as soon as the session has one.
+          if (meta.customTitle || meta.aiTitle || meta.lastPrompt || meta.lastUserText) break
+          if (tailSize >= stat.size) break  // whole file already scanned
         }
       }
     } finally {
@@ -131,6 +193,14 @@ function isAgentSession(s) {
   // context-mgr utility sessions (background TG-history compressors etc)
   if (cwd.includes('/_infra/context-mgr') || cwd.includes('/.infra/context-mgr')) return true
   if (cwd.endsWith('/context-mgr')) return true
+  // Разовые прогоны `claude --print`: проверка гипотезы, замер поведения CLI,
+  // отладка хука. Это не диалоги, но на диске они лежат такими же сессиями и
+  // всплывали в /list вперемешку с рабочими — список превращался в кашу, а в
+  // Sidebar их не было, потому что VS Code показывает только открытый проект.
+  // Договорённость: такие прогоны живут в песочнице и в список не попадают.
+  if (cwd.includes('/claude-ops/sandbox') || slug.includes('claude-ops-sandbox')) return true
+  // Временные каталоги сессий (scratchpad Claude Code, /tmp) — тоже не диалоги.
+  if (cwd.startsWith('/tmp/') || slug.startsWith('-tmp-')) return true
   return false
 }
 
@@ -167,6 +237,10 @@ function scanSessions(limitOrOpts = {}) {
           entrypoint: meta.entrypoint,
           ai_title: meta.aiTitle,        // VS Code Sidebar auto-title (e.g. "Plan n8n stylist editor refactoring")
           custom_title: meta.customTitle, // manual rename from the VS Code Sidebar — wins over ai_title
+          // latest user prompt — what the Sidebar shows for untitled sessions.
+          // lastUserText is the reconstruction for headless turns, whose
+          // last-prompt record stores only a leafUuid.
+          last_prompt: meta.lastPrompt || meta.lastUserText,
           size_bytes: st.size,
           mtime_ms: st.mtimeMs,
         })
@@ -182,9 +256,9 @@ function scanSessions(limitOrOpts = {}) {
   if (excludeAgents) {
     filtered = filtered.filter(s => !isAgentSession(s))
   }
-  // Показывать только рабочие пространства ЭТОГО пользователя. При одном
-  // роутере фильтр пустой; при нескольких — задаётся через
-  // TG_SESSIONS_INCLUDE_PREFIX / TG_SESSIONS_EXCLUDE_PREFIX.
+  // Показывать только рабочие пространства ЭТОГО пользователя. Для router1 это
+  // «всё, кроме /root/projects_other/*» (боты user3, router2); для router2 —
+  // наоборот, только /root/projects_other/user2. Задаётся env.
   filtered = filtered.filter(isSessionInScope)
   return filtered.slice(0, limit)
 }
@@ -316,7 +390,7 @@ function projectShortName(cwd) {
 // person's topic names.
 const TG_ROUTING_FILES = (
   process.env.TG_ROUTING_FILES ||
-  join(homedir(), '.claude', 'channels', 'telegram', 'routing.json')
+  '/root/.claude/channels/telegram/routing.json:владелец,/root/.claude/channels/telegram2/routing.json:router2'
 )
   .split(',')
   .map(entry => entry.trim())
@@ -409,6 +483,24 @@ function pickEmoji(session) {
   return '🖥'
 }
 
+// Turn a raw `last-prompt` record into a one-line session label. The stored
+// prompt still carries the machinery the harness wrapped around it — the
+// <channel …> envelope Telegram adds, system-reminder blocks, slash-command
+// wrappers — none of which belong in a session name.
+const TITLE_MAX_LEN = 60
+function cleanPromptForTitle(raw) {
+  if (!raw || typeof raw !== 'string') return null
+  const txt = raw
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ')
+    .replace(/<command-(message|name|args)>[\s\S]*?<\/command-\1>/g, ' ')
+    .replace(/<channel[^>]*>/g, ' ')
+    .replace(/<\/?[a-z-]+>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!txt) return null
+  return txt.length > TITLE_MAX_LEN ? `${txt.slice(0, TITLE_MAX_LEN - 3)}...` : txt
+}
+
 function sessionDisplayName(session) {
   const map = loadAllRoutingsMap()
   const sessionId = session.session_id || session
@@ -416,15 +508,21 @@ function sessionDisplayName(session) {
     const r = map[sessionId]
     return `${r.name} (TG/${r.owner})`
   }
-  // Priority: custom-title > ai-title > project_slug > cwd basename.
-  // custom-title first so a manual rename in the VS Code Sidebar shows up here
-  // too — otherwise the same session carries two different names in two lists.
+  // Priority: custom-title > ai-title > last-prompt > project_slug > cwd basename.
+  // This is exactly the VS Code Sidebar's own order — a manual rename wins over
+  // the auto-title, and an untitled session is labelled by its latest prompt.
+  // Deviating here is what made the same session carry two different names in
+  // the two lists.
   const emoji = pickEmoji(session)
   if (session.custom_title) {
     return `${emoji} ${session.custom_title}`
   }
   if (session.ai_title) {
     return `${emoji} ${session.ai_title}`
+  }
+  const prompt = cleanPromptForTitle(session.last_prompt)
+  if (prompt) {
+    return `${emoji} ${prompt}`
   }
   if (session.project_slug) {
     return `${emoji} ${session.project_slug}`
@@ -473,7 +571,7 @@ function formatSessionsList(sessions, opts = {}) {
     if (i > 0) lines.push(SEPARATOR)
     const blockLines = []
     blockLines.push(`${escapeHtml(`${absIdx}. ${name}`)}`)
-    if (!s.custom_title && !s.ai_title && !s.project_slug) {
+    if (!s.custom_title && !s.ai_title && !s.last_prompt && !s.project_slug) {
       const jsonlPath = require('path').join(require('os').homedir(), '.claude', 'projects', s.slug, `${s.session_id}.jsonl`)
       const preview = readFirstUserPreview(jsonlPath, 131072)
       if (preview) {
@@ -594,7 +692,7 @@ function buildConnectedKeyboard() {
         { text: '📋 Сменить', callback_data: 'quick:list' },
         { text: '🧠 Модель',  callback_data: 'model:__show' },
       ],
-      [{ text: '⏹ Отвязать', callback_data: 'quick:disconnect' }],
+      [{ text: '➕ Новая сессия', callback_data: 'quick:new' }],
     ],
   }
 }
@@ -603,8 +701,8 @@ function buildConnectedKeyboard() {
 function buildFreshConnectedKeyboard() {
   return {
     inline_keyboard: [[
-      { text: '📋 Сменить',  callback_data: 'quick:list' },
-      { text: '⏹ Отвязать', callback_data: 'quick:disconnect' },
+      { text: '📋 Сменить', callback_data: 'quick:list' },
+      { text: '🧠 Модель',  callback_data: 'model:__show' },
     ]],
   }
 }
@@ -916,13 +1014,17 @@ function buildControlPanelKeyboard(sessionId = null, projectDir = null) {
       { text: '🧠 Модель',  callback_data: 'model:__show' },
     ],
   ]
+  // «Отвязать» убрана из всех панелей намеренно: владелец ей не пользуется, а
+  // место под каждым ответом дорогое. Отвязка осталась командой /disconnect;
+  // обработчик quick:disconnect тоже жив — кнопки в старых сообщениях чата
+  // никуда не делись и должны продолжать работать.
   if (percent != null && percent >= 70) {
     rows.push([
       { text: `🗜 Compact (${percent}%)`, callback_data: 'quick:compact' },
-      { text: '⏹ Отвязать',              callback_data: 'quick:disconnect' },
+      { text: '➕ Новая сессия',          callback_data: 'quick:new' },
     ])
   } else {
-    rows.push([{ text: '⏹ Отвязать', callback_data: 'quick:disconnect' }])
+    rows.push([{ text: '➕ Новая сессия', callback_data: 'quick:new' }])
   }
   return { inline_keyboard: rows }
 }

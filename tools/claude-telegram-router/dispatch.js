@@ -127,6 +127,29 @@ const BRIDGED_FORMAT_RULE = [
   '- Markdown: use **bold**, *italic*, `code`, ```fenced```, [links](url), ## headings — daemon converts everything correctly.',
 ].join('\n')
 
+// Промежуточные сообщения по ходу работы.
+//
+// Стример роутера умеет отправлять в топик ассистентские тексты, появившиеся до
+// финального ответа. Но отправлять нечего, если модель их не пишет: на коротком
+// разговорном турне Opus молча читает файлы и выдаёт один готовый ответ. Со
+// стороны это «⌛ думаю» на минуту и результат из ниоткуда — ровно то, на что
+// жалуется пользователь.
+//
+// Включается флагом ux.narrate_progress, а не всегда: в топиках, где ответ
+// приходит за пару секунд, анонс работы — шум, а не польза.
+const PROGRESS_NARRATION_RULE = [
+  '',
+  '## Промежуточные сообщения',
+  '',
+  'Пользователь видит только твои текстовые сообщения. Вызовы инструментов, размышления и чтение файлов ему не видны — для него это молчание.',
+  '',
+  '- Если прежде чем ответить ты собираешься читать файлы, искать или делать несколько шагов — СНАЧАЛА напиши одну короткую строку о том, что смотришь, и только потом работай.',
+  '- Если работа затянулась, добавь ещё одну короткую заметку: что уже понятно и что дальше.',
+  '- Формулировки в заметках — без глаголов в прошедшем времени от первого лица («посмотрю», «дальше — питание», а не «собрал»): род задаётся личностью ассистента в CLAUDE.md проекта, и это правило не должно его ломать.',
+  '- Это 1–2 предложения обычным текстом, без заголовков и списков. Не пересказывай каждый вызов инструмента и не дублируй в них итоговый ответ.',
+  '- Если вопрос простой и ответ готов сразу — просто отвечай, ничего не анонсируя.',
+].join('\n')
+
 function projectSlug(dir) {
   // Matches claude-code's slug logic: EVERY non-alphanumeric character → '-'.
   // The earlier `/[/_]/g` regex only replaced `/` and `_`, which silently broke
@@ -408,6 +431,15 @@ function compactRewriteJsonl(projectDir, sessionId, summaryText) {
 //   2. Append a synthetic ai-title record at the end so Sidebar has a title to show
 //      (Sidebar filter appears to require at least one ai-title record).
 // Safe to call after claude --print has fully completed (no concurrent writes).
+// Cheap pre-filter before JSON.parse. The two writers of these JSONL files
+// disagree on spacing: the VS Code extension emits compact `{"type":"user"`,
+// headless turns (Telegram plugin daemon, `claude --print`) emit
+// `{"type": "user"`. Matching only the compact form meant every headless
+// session — exactly the ones that need repairing — was skipped in silence.
+function hasField(line, key, value) {
+  return line.includes(`"${key}":"${value}"`) || line.includes(`"${key}": "${value}"`)
+}
+
 function patchFirstEntrypointToVscode(projectDir, sessionId) {
   const fs = require('fs')
   const path = sessionJsonlPath(projectDir, sessionId)
@@ -419,8 +451,8 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
   let hasAiTitle = false
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].trim()) continue
-    if (lines[i].includes('"type":"ai-title"')) hasAiTitle = true
-    if (lines[i].includes('"entrypoint":"sdk-cli"')) {
+    if (hasField(lines[i], 'type', 'ai-title')) hasAiTitle = true
+    if (hasField(lines[i], 'entrypoint', 'sdk-cli')) {
       let obj
       try { obj = JSON.parse(lines[i]) } catch { continue }
       if (obj.entrypoint === 'sdk-cli') {
@@ -430,7 +462,7 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
       }
     }
     // Capture first user message text for synthetic ai-title (skip system tags)
-    if (!firstUserText && lines[i].includes('"type":"user"')) {
+    if (!firstUserText && hasField(lines[i], 'type', 'user')) {
       try {
         const obj = JSON.parse(lines[i])
         const content = obj.message?.content
@@ -448,8 +480,9 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
       } catch {}
     }
   }
-  // Append synthetic ai-title if none exists (Sidebar needs it to display the session)
-  if (!hasAiTitle) {
+  // Append a synthetic ai-title only when the Sidebar would otherwise have no
+  // name for this session — see vscodeSessionName() for the exact rule it uses.
+  if (!hasAiTitle && !vscodeSessionName(content, content)) {
     const title = firstUserText
       ? (firstUserText.length > 60 ? firstUserText.slice(0, 57) + '...' : firstUserText)
       : 'Telegram session'
@@ -457,6 +490,7 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
       type: 'ai-title',
       aiTitle: title,
       sessionId: sessionId,
+      tgRouterSynthetic: true,
     })
     lines.push(aiTitleRecord)
     modified = true
@@ -467,32 +501,278 @@ function patchFirstEntrypointToVscode(projectDir, sessionId) {
   return modified
 }
 
-// Safety net for RESUMED sessions. patchFirstEntrypointToVscode only runs for
-// newly created sessions, so a session that lost its title mid-life (e.g. a
-// compact that predates collectTitleRecords, or a manual JSONL surgery) would
-// stay invisible in the VS Code Sidebar forever. This re-appends a title
-// without touching entrypoints or any conversational record.
+// Значение поля: первое вхождение в куске (как tC$/xAe в расширении).
+function scanJsonValueFirst(chunk, key) {
+  let best = null
+  let bestAt = -1
+  for (const opener of [`"${key}":"`, `"${key}": "`]) {
+    const at = chunk.indexOf(opener)
+    if (at < 0) continue
+    let i = at + opener.length
+    let out = ''
+    while (i < chunk.length) {
+      if (chunk[i] === '\\') { out += chunk.slice(i, i + 2); i += 2; continue }
+      if (chunk[i] === '"') break
+      out += chunk[i]; i++
+    }
+    if (out && (bestAt < 0 || at < bestAt)) { best = out; bestAt = at }
+  }
+  return best
+}
+
+// Программные entrypoint'ы, которые Sidebar выбрасывает из списка.
+const PROGRAMMATIC_ENTRYPOINTS = new Set(['sdk-cli', 'sdk-ts', 'sdk-py'])
+
+// Нужно ли чинить entrypoint, чтобы сессия попала в список VS Code.
+//
+// Повторяет проверку расширения дословно: берётся ПЕРВОЕ вхождение entrypoint
+// в head, и только если его там нет — ПОСЛЕДНЕЕ в tail. Оба куска по 64 КБ.
+// Точность здесь принципиальна: в гибридной сессии (работали и из VS Code, и из
+// Telegram) хвост полон записей sdk-cli, но заголовок стоит claude-vscode —
+// Sidebar её показывает, и переписывать в ней историю на каждом ходу незачем.
+function needsEntrypointFix(projectDir, sessionId) {
+  const fs = require('fs')
+  const path = sessionJsonlPath(projectDir, sessionId)
+  if (!fs.existsSync(path)) return false
+  let head, tail
+  try { ({ head, tail } = readSessionWindows(fs, path)) } catch { return false }
+  const entrypoint = scanJsonValueFirst(head, 'entrypoint') ?? scanJsonValue(tail, 'entrypoint')
+  return Boolean(entrypoint && PROGRAMMATIC_ENTRYPOINTS.has(entrypoint))
+}
+
+// ---- VS Code Sidebar visibility -------------------------------------------
+//
+// The Sidebar drops a session it cannot name. Ported verbatim from the
+// extension's fetchSessions() (extension.js, 2.1.237):
+//
+//   name = customTitle(tail) ?? customTitle(head) ?? aiTitle(tail) ?? aiTitle(head)
+//          || lastPrompt(tail) || summary(tail) || firstUserMessage(head)
+//   if (!name) → session is not listed at all
+//
+// head and tail are the first and last 64 KB of the JSONL — NOT the whole file.
+// That window is the whole subtlety: appending a title record once is not
+// enough, because later turns push it out of the tail window and the session
+// silently disappears from the list again. Nothing else filters the list —
+// entrypoint (`sdk-cli`) only affects an unrelated "recent activity" summary.
+const VSCODE_WINDOW = 65536
+
+// Value of a JSON field found by raw substring scan, tolerating both writers'
+// spacing — the same trick the extension uses instead of parsing.
+// NB: the LAST occurrence wins, across both spacing variants — the extension
+// tracks the highest match offset, and these records are re-appended over a
+// session's life, so the newest one is the one on screen. Taking the first
+// match instead makes an already-repaired session look unrepaired and the
+// router re-appends a title on every single turn.
+function scanJsonValue(chunk, key) {
+  let best = null
+  let bestAt = -1
+  for (const opener of [`"${key}":"`, `"${key}": "`]) {
+    let from = 0
+    while (true) {
+      const at = chunk.indexOf(opener, from)
+      if (at < 0) break
+      let i = at + opener.length
+      let out = ''
+      while (i < chunk.length) {
+        if (chunk[i] === '\\') { out += chunk.slice(i, i + 2); i += 2; continue }
+        if (chunk[i] === '"') break
+        out += chunk[i]; i++
+      }
+      if (out && at > bestAt) { best = out; bestAt = at }
+      from = i + 1
+    }
+  }
+  return best
+}
+
+// Messages the extension refuses to name a session by. The tag branch is the
+// one that matters here: EVERY Telegram message arrives wrapped as
+// `<channel source="…">…</channel>`, so for a session that only ever spoke to
+// Telegram the Sidebar finds nothing nameable and hides it. That is the whole
+// reason pure-Telegram sessions never showed up in the list.
+const VSCODE_SKIP_RE = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/
+
+// Faithful port of the extension's message-to-label extractor. Deliberately
+// works on the RAW text: unwrapping the envelope here would make this function
+// find names the Sidebar itself never finds, and we would skip repairs the
+// session actually needs.
+function vscodeVisibleText(obj) {
+  if (!obj || obj.type !== 'user') return null
+  if (obj.isMeta === true || obj.isCompactSummary === true) return null
+  const content = obj.message && obj.message.content
+  const parts = []
+  if (typeof content === 'string') {
+    parts.push(content)
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue
+      if (part.type === 'tool_result') return null
+      if (part.type === 'text' && typeof part.text === 'string') parts.push(part.text)
+    }
+  }
+  for (const part of parts) {
+    const s = part.replaceAll('\n', ' ').trim()
+    if (!s) continue
+    if (/<command-name>(.*?)<\/command-name>/.exec(s)) continue
+    const bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(s)
+    if (bash) return `! ${bash[1].trim()}`
+    if (VSCODE_SKIP_RE.test(s)) continue
+    return s
+  }
+  return null
+}
+
+// First user message inside the head window, applying the extension's skips.
+function firstUserMessageInHead(head) {
+  for (const line of head.split('\n')) {
+    if (!hasField(line, 'type', 'user')) continue
+    if (line.includes('"tool_result"')) continue
+    if (line.includes('"isMeta":true') || line.includes('"isMeta": true')) continue
+    if (line.includes('"isCompactSummary":true') || line.includes('"isCompactSummary": true')) continue
+    let obj
+    try { obj = JSON.parse(line) } catch { continue }
+    const txt = vscodeVisibleText(obj)
+    if (txt) return txt
+  }
+  return null
+}
+
+// The name the Sidebar would show, or null when it would hide the session.
+function vscodeSessionName(head, tail) {
+  return scanJsonValue(tail, 'customTitle')
+    || scanJsonValue(head, 'customTitle')
+    || scanJsonValue(tail, 'aiTitle')
+    || scanJsonValue(head, 'aiTitle')
+    || scanJsonValue(tail, 'lastPrompt')
+    || scanJsonValue(tail, 'summary')
+    || firstUserMessageInHead(head)
+}
+
+function userRecordText(obj) {
+  const content = obj && obj.message && obj.message.content
+  let txt = ''
+  if (typeof content === 'string') {
+    txt = content
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === 'string') txt += `${part} `
+      else if (part && part.type === 'text' && typeof part.text === 'string') txt += `${part.text} `
+    }
+  }
+  txt = txt
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ')
+    .replace(/<channel[^>]*>/g, ' ')
+    .replace(/<\/channel>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!txt) return null
+  const noise = [
+    '[Request interrupted',
+    'Continue from where you left off',
+    '<task-notification',
+    '<local-command',
+  ]
+  if (noise.some(n => txt.startsWith(n))) return null
+  return txt
+}
+
+// Newest nameable user message in a chunk (scanning backwards).
+function latestUserMessage(chunk) {
+  const lines = chunk.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!hasField(line, 'type', 'user')) continue
+    if (line.includes('"tool_result"')) continue
+    let obj
+    try { obj = JSON.parse(line) } catch { continue }
+    const txt = userRecordText(obj)
+    if (txt) return txt
+  }
+  return null
+}
+
+// Read the same two 64 KB windows the extension reads.
+function readSessionWindows(fs, path) {
+  const fd = fs.openSync(path, 'r')
+  try {
+    const stat = fs.fstatSync(fd)
+    const buf = Buffer.alloc(Math.min(VSCODE_WINDOW, stat.size))
+    const headN = fs.readSync(fd, buf, 0, buf.length, 0)
+    const head = buf.slice(0, headN).toString('utf8')
+    let tail = head
+    const tailStart = Math.max(0, stat.size - VSCODE_WINDOW)
+    if (tailStart > 0) {
+      const tailN = fs.readSync(fd, buf, 0, buf.length, tailStart)
+      tail = buf.slice(0, tailN).toString('utf8')
+    }
+    return { head, tail }
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+// Keep a RESUMED session visible in the VS Code Sidebar.
+//
+// Runs after every Telegram turn, because visibility is not a one-time repair:
+// the Sidebar only looks at the last 64 KB, so a title appended once slides out
+// of that window as the conversation grows and the session drops off the list
+// again. Sessions born in the Telegram plugin daemon never get a name of their
+// own — their `last-prompt` records carry only a leafUuid, no text — so this is
+// the only thing that keeps them listed.
+//
+// Writes nothing when the Sidebar can already name the session on its own
+// (a real title, a lastPrompt with text, a summary, or a user message inside
+// the head window). Our own records are marked `tgRouterSynthetic` so they are
+// not mistaken for a name the session earned, and are refreshed when the
+// conversation has moved on — otherwise the row would stay frozen at the first
+// prompt while /list shows the latest one.
 function ensureSessionTitle(projectDir, sessionId) {
   const fs = require('fs')
   const path = sessionJsonlPath(projectDir, sessionId)
   if (!fs.existsSync(path)) return false
-  const content = fs.readFileSync(path, 'utf8')
-  if (content.includes('"type":"ai-title"')) return false
-  const lines = content.split('\n').filter(l => l.trim())
-  // Prefer the slug the session was born with — that is what Telegram already
-  // shows, so the two lists stay in sync.
-  let title = null
-  for (const line of lines) {
-    if (!line.includes('"slug"')) continue
-    try {
-      const obj = JSON.parse(line)
-      if (obj.slug) { title = obj.slug; break }
-    } catch {}
-  }
-  if (!title) title = 'Telegram session'
-  lines.push(JSON.stringify({ type: 'ai-title', aiTitle: title, sessionId }))
-  fs.writeFileSync(path, lines.join('\n') + '\n')
+
+  let head, tail
+  try { ({ head, tail } = readSessionWindows(fs, path)) } catch { return false }
+
+  // A name that is not ours means the Sidebar is fine on its own.
+  const naturalName = vscodeSessionName(head, tail)
+  if (naturalName && !isSyntheticName(tail, naturalName)) return false
+
+  const latest = latestUserMessage(tail) || latestUserMessage(head)
+  const title = latest
+    ? (latest.length > 60 ? `${latest.slice(0, 57)}...` : latest)
+    : 'Telegram session'
+  // Already showing exactly this — appending again would only grow the file.
+  if (naturalName === title) return false
+
+  fs.appendFileSync(path, `${JSON.stringify({
+    type: 'ai-title',
+    aiTitle: title,
+    sessionId,
+    tgRouterSynthetic: true,
+  })}\n`)
   return true
+}
+
+// Legacy placeholder written by earlier versions of this function, before the
+// synthetic records were marked. No other writer produces this exact string, so
+// treating it as ours lets those sessions pick up a real name on their next
+// turn instead of staying frozen forever.
+const LEGACY_PLACEHOLDER_TITLE = 'Telegram session'
+
+// True when `name` comes from a record this router injected. Checked against
+// the tail only — that is the window the Sidebar reads.
+function isSyntheticName(tail, name) {
+  if (name === LEGACY_PLACEHOLDER_TITLE) return true
+  const lines = tail.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!hasField(lines[i], 'type', 'ai-title')) continue
+    let obj
+    try { obj = JSON.parse(lines[i]) } catch { continue }
+    if (obj.aiTitle !== name) return false
+    return obj.tgRouterSynthetic === true
+  }
+  return false
 }
 
 // Spawn claude worker.
@@ -602,22 +882,46 @@ async function runClaudeWorker(opts) {
 }
 
 async function runClaudeWorkerOnce(opts) {
-  const { project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine, bridged = false, model = null, onSpawn = null } = opts
+  const {
+    project_dir, session_id, prompt, timeout_ms = 600000, env = {}, onStdoutLine,
+    bridged = false, model = null, onSpawn = null, permission = null, narrate = false,
+  } = opts
 
   mkdirSync(project_dir, { recursive: true })
   const resumes = sessionExists(project_dir, session_id)
 
   const tools = bridged ? ALLOWED_TOOLS_BRIDGED : ALLOWED_TOOLS
-  const sysPromptAppend = bridged ? BRIDGED_FORMAT_RULE : TG_FORMAT_RULE
+  const sysPromptAppend = (bridged ? BRIDGED_FORMAT_RULE : TG_FORMAT_RULE)
+    + (narrate ? PROGRESS_NARRATION_RULE : '')
+  // `dontAsk` отклоняет всё, что не покрыто allowedTools, — включая запись в
+  // каталог конфигурации, которую не открывают ни правила settings.json, ни
+  // PreToolUse-хуки. `default` вместе с --permission-prompt-tool превращает тот
+  // же самый отказ в кнопку в Telegram. Без контекста чата спрашивать некого,
+  // поэтому там остаётся прежнее поведение.
+  const askable = Boolean(permission && permission.chat_id)
   const args = [
     '--print',
     resumes ? '--resume' : '--session-id',
     session_id,
-    '--permission-mode', 'dontAsk',
+    '--permission-mode', askable ? 'default' : 'dontAsk',
     '--allowedTools', ...tools,
     '--add-dir', project_dir,
     '--append-system-prompt', sysPromptAppend,
   ]
+  if (askable) {
+    args.push(
+      '--permission-prompt-tool', 'mcp__tgperm__approve',
+      '--mcp-config', JSON.stringify({
+        mcpServers: {
+          tgperm: {
+            type: 'stdio',
+            command: process.execPath,
+            args: [join(__dirname, 'perm-mcp.js')],
+          },
+        },
+      }),
+    )
+  }
   // Pin the model explicitly. Without this the CLI resolves its own default,
   // which drifts and ignores whatever the VS Code session picked — the topic
   // would silently change models between messages. null = caller wants the
@@ -628,9 +932,18 @@ async function runClaudeWorkerOnce(opts) {
   if (!claudeBin) {
     return { code: 1, stdout: '', stderr: '[spawn-error] no claude binary found on host', durationMs: 0 }
   }
+  const permEnv = askable ? {
+    TG_PERM_DIR: permission.dir,
+    TG_PERM_CHAT_ID: String(permission.chat_id),
+    TG_PERM_THREAD_ID: permission.thread_id != null ? String(permission.thread_id) : '',
+    TG_PERM_SESSION: session_id,
+    TG_PERM_TURN: permission.turn_id || '',
+    TG_PERM_TIMEOUT_MS: String(permission.timeout_ms || 5 * 60 * 1000),
+  } : {}
+
   const child = spawn(claudeBin, args, {
     cwd: project_dir,
-    env: { ...process.env, ...env, TG_ROUTER_CHILD: '1' },
+    env: { ...process.env, ...env, ...permEnv, TG_ROUTER_CHILD: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
@@ -697,21 +1010,24 @@ async function runClaudeWorkerOnce(opts) {
   // Post-create patch: rewrite "sdk-cli" → "claude-vscode" in JSONL records so
   // newly created sessions show up in VS Code Sidebar. Safe — claude --print
   // has already finished writing (no concurrent writes).
-  // Only run for new sessions (resumes === false), and only on success.
-  if (!resumes && code === 0) {
-    try {
+  // Нормализация entrypoint идёт ВСЕГДА, а не только для новой сессии с кодом 0.
+  //
+  // Sidebar VS Code запрашивает список с includeProgrammatic=false и выбрасывает
+  // сессии, у которых entrypoint в наборе sdk-cli / sdk-ts / sdk-py. Если первый
+  // проход по новой сессии прервали кнопкой «перебить», воркер завершался
+  // ненулевым кодом, патч не выполнялся — и сессия навсегда оставалась
+  // программной: в /list видна, в VS Code её нет. Файл сессии к этому моменту
+  // уже создан, чинить есть что.
+  try {
+    if (needsEntrypointFix(project_dir, session_id)) {
       patchFirstEntrypointToVscode(project_dir, session_id)
-    } catch (err) {
-      console.error('tg-router: entrypoint patch failed:', err.message)
-    }
-  } else if (code === 0) {
-    // Resumed session — don't rewrite entrypoints, just make sure it still has
-    // a title so it can't silently fall out of the VS Code Sidebar.
-    try {
+    } else if (code === 0) {
+      // entrypoint в порядке — остаётся следить, чтобы у сессии было имя,
+      // иначе Sidebar выбросит её уже по другой причине.
       ensureSessionTitle(project_dir, session_id)
-    } catch (err) {
-      console.error('tg-router: ensureSessionTitle failed:', err.message)
     }
+  } catch (err) {
+    console.error('tg-router: session visibility patch failed:', err.message)
   }
 
   return {
@@ -734,4 +1050,7 @@ module.exports = {
   compactViaTruncate,
   collectTitleRecords,
   ensureSessionTitle,
+  vscodeSessionName,
+  needsEntrypointFix,
+  patchFirstEntrypointToVscode,
 }

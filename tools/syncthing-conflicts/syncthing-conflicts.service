@@ -1,0 +1,8 @@
+[Unit]
+Description=Разбор конфликтов Syncthing в базе Obsidian
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/projects/claude-code-server-kit/tools/syncthing-conflicts/check.py
+Nice=10
+IOSchedulingClass=idle

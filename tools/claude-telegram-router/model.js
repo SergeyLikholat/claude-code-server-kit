@@ -17,7 +17,7 @@
 // Value AUTO means "pass no --model flag" (fall back to CLI's own resolution).
 //
 // STATE_DIR is per-router (TELEGRAM_STATE_DIR), so each bot instance pins models
-// independently — a second router must not read or write the first one's file.
+// independently — router2 (router2) must not read or write router1's file.
 
 const { readFileSync, writeFileSync, mkdirSync } = require('fs')
 const { dirname, join } = require('path')
@@ -37,12 +37,13 @@ const FOLLOW = 'follow'
 
 // Used when FOLLOW is active but the session has no VS Code turns to learn from
 // (e.g. a session created and only ever driven from Telegram).
-const FOLLOW_FALLBACK = 'claude-opus-5'
+const FOLLOW_FALLBACK = 'claude-opus-5-5'
 
 // Shortlist offered as buttons. Any other string can still be set via
 // `/model <id>` — we do not hard-fail on unknown ids, the CLI validates.
 const MODEL_CHOICES = [
-  { id: 'claude-opus-5',              label: 'Opus 5',    hint: 'сложные задачи' },
+  { id: 'claude-opus-5-5',            label: 'Opus 5.5',  hint: 'основная' },
+  { id: 'claude-opus-5',              label: 'Opus 5',    hint: 'прежняя' },
   { id: 'claude-sonnet-5',            label: 'Sonnet 5',  hint: 'рабочая лошадка' },
   { id: 'claude-fable-5',             label: 'Fable 5',   hint: 'самая дорогая' },
   { id: 'claude-haiku-4-5-20251001',  label: 'Haiku 4.5', hint: 'простые задачи' },

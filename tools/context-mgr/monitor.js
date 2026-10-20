@@ -1,7 +1,7 @@
 // Главный модуль автономного контекст-менеджера.
 //
 // На каждый тик (cron */5):
-//   1. Читает routing.json Клары
+//   1. Читает routing.json router2
 //   2. Для каждого топика вычисляет stats JSONL (size, turns)
 //   3. Применяет topic_overrides из config
 //   4. Решает action: hard-reset | background-digest | nothing
