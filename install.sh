@@ -135,6 +135,7 @@ declare -A MODULE_DESCRIPTIONS=(
   ["backup"]="Автоматические шифрованные бэкапы на Яндекс.Диск"
   ["parakeet"]="Голосовая транскрипция (Parakeet или GigaAM)"
   ["helpers"]="Полезные мелочи: nanobanana, gemini-tts, openpyxl_safe, tg-md"
+  ["pdf-ocr"]="Скилл распознавания PDF и сканов через подписку Claude (без ключей)"
   ["hooks-extras"]="Дополнительные хуки и автоматизации"
   ["memory"]="Память между сессиями (ставит llm-memory-kit: хуки + ночные сборщики)"
   ["t3"]="T3 Code: Claude в браузере и Android-приложении, свой домен с TLS"
@@ -142,7 +143,7 @@ declare -A MODULE_DESCRIPTIONS=(
 
 # claude-mem УБРАН из V2: память теперь per-user через obsidian-vault + context-mgr
 # (ставится автоматически в provision-user.sh). См. docs/V2-MULTIUSER.md.
-ALL_MODULES=("tg-bot" "backup" "parakeet" "helpers" "hooks-extras" "memory" "t3")
+ALL_MODULES=("tg-bot" "backup" "parakeet" "helpers" "pdf-ocr" "hooks-extras" "memory" "t3")
 
 # ============================================================
 # Команды
@@ -338,9 +339,9 @@ cmd_full() {
     export CLAUDE_CODE_OAUTH_TOKEN
   fi
 
-  # Что ставим, кроме core: память и helpers — всегда, T3 — всегда (сам скажет, если нет
+  # Что ставим, кроме core: память, helpers и pdf-ocr — всегда, T3 — всегда (сам скажет, если нет
   # домена), остальное — если для него есть ключ.
-  local plan=(memory helpers)
+  local plan=(memory helpers pdf-ocr)
   [ -n "${RCLONE_YANDEX_TOKEN:-}" ] && plan+=(backup)
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && plan+=(tg-bot)
   [ "${KIT_WITH_PARAKEET:-}" = "1" ] && plan+=(parakeet)
