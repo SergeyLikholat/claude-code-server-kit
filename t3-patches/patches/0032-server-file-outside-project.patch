@@ -1,0 +1,155 @@
+From 314a28396556e4c94547d7526a16769431699fe4 Mon Sep 17 00:00:00 2001
+From: t3patch <t3patch@local>
+Date: Sun, 25 Oct 2026 11:18:33 +0300
+Subject: [PATCH] =?UTF-8?q?fix(server):=20=D1=81=D0=BA=D0=B0=D1=87=D0=B8?=
+ =?UTF-8?q?=D0=B2=D0=B0=D0=BD=D0=B8=D0=B5=20=D1=84=D0=B0=D0=B9=D0=BB=D0=B0?=
+ =?UTF-8?q?=20=D0=BF=D0=BE=20=D1=81=D1=81=D1=8B=D0=BB=D0=BA=D0=B5=20=D0=B2?=
+ =?UTF-8?q?=D0=BD=D0=B5=20=D0=BF=D1=80=D0=BE=D0=B5=D0=BA=D1=82=D0=B0=20?=
+ =?UTF-8?q?=E2=80=94=20=D0=BF=D1=83=D1=82=D1=8C=20=D0=BE=D1=82=20=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=B4=D0=B8=D1=82=D0=B5=D0=BB=D1=8C=D1=81=D0=BA=D0=B8?=
+ =?UTF-8?q?=D1=85=20=D0=BF=D0=B0=D0=BF=D0=BE=D0=BA=20=D0=B8=20=D0=B0=D0=B1?=
+ =?UTF-8?q?=D1=81=D0=BE=D0=BB=D1=8E=D1=82=D0=BD=D1=8B=D0=B5=20=D0=BF=D1=83?=
+ =?UTF-8?q?=D1=82=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/server/src/sergey/fileAccess.test.ts | 21 +++++++
+ apps/server/src/sergey/fileAccess.ts      | 69 +++++++++++++++++++++--
+ 2 files changed, 86 insertions(+), 4 deletions(-)
+
+diff --git a/apps/server/src/sergey/fileAccess.test.ts b/apps/server/src/sergey/fileAccess.test.ts
+index 598c353cfb..2ca0c84cb9 100644
+--- a/apps/server/src/sergey/fileAccess.test.ts
++++ b/apps/server/src/sergey/fileAccess.test.ts
+@@ -11,6 +11,7 @@ import {
+   mapIntoWorkspace,
+   parseMountInfo,
+   resolveBindMounts,
++  t3patchFileCandidates,
+   verifyFileToken,
+ } from "./fileAccess.ts";
+ 
+@@ -118,3 +119,23 @@ describe("путь снаружи проекта через окно", () => {
+     expect(mapIntoWorkspace("/root/ObsidianX/a.md", "/root/projects/tk-vector", mounts)).toBeNull();
+   });
+ });
++
++describe("файл не внутри проекта", () => {
++  it("относительный путь пробуется от родительских папок до домашней", () => {
++    expect(t3patchFileCandidates("/home/k/kat/style-work", "style-work/a.zip", "/home/k")).toEqual([
++      "/home/k/kat/style-work/style-work/a.zip",
++      "/home/k/kat/style-work/a.zip",
++      "/home/k/style-work/a.zip",
++    ]);
++  });
++  it("выше домашней папки не поднимается", () => {
++    const list = t3patchFileCandidates("/root/projects/x", "a.txt", "/root");
++    expect(list.at(-1)).toBe("/root/a.txt");
++    expect(list).not.toContain("/a.txt");
++  });
++  it("абсолютный путь — как есть", () => {
++    expect(t3patchFileCandidates("/root/projects/x", "/srv/data/a.pdf", "/root")).toEqual([
++      "/srv/data/a.pdf",
++    ]);
++  });
++});
+diff --git a/apps/server/src/sergey/fileAccess.ts b/apps/server/src/sergey/fileAccess.ts
+index aa768e3377..3429c5df49 100644
+--- a/apps/server/src/sergey/fileAccess.ts
++++ b/apps/server/src/sergey/fileAccess.ts
+@@ -163,6 +163,55 @@ async function readMounts(): Promise<MountEntry[]> {
+   }
+ }
+ 
++/**
++ * Куда ещё смотреть, если файла нет по пути внутри проекта.
++ *
++ * Модель часто даёт путь не от корня проекта, а от папки выше: в проекте `…/katrine/style-work`
++ * ссылка `style-work/a.zip` значит `…/katrine/style-work/a.zip`. Поэтому относительный путь пробуется
++ * от корня проекта и от его родительских папок — вверх до домашней папки пользователя (не выше).
++ * Абсолютный путь — как есть: файл вне проекта, но доступный этому T3, отдаётся (агент того же T3
++ * читает его и так; скачать может только вошедший пользователь).
++ */
++export function t3patchFileCandidates(root: string, requested: string, home: string): string[] {
++  if (NodePath.isAbsolute(requested)) return [NodePath.normalize(requested)];
++  const clean = requested.replace(/^\.\/+/, "");
++  const candidates = [NodePath.join(root, clean)];
++  let dir = root;
++  while (isWithin(home, dir) && dir !== home) {
++    dir = NodePath.dirname(dir);
++    candidates.push(NodePath.join(dir, clean));
++  }
++  return [...new Set(candidates)];
++}
++
++async function describeFile(absolutePath: string, root: string) {
++  const realTarget = await realpath(absolutePath);
++  const stats = await stat(realTarget);
++  const mounts = await readMounts();
++  const realRoot = await realpath(root).catch(() => root);
++  return {
++    absolutePath,
++    realPath: resolveBindMounts(realTarget, mounts),
++    relativePath: isWithin(realRoot, realTarget)
++      ? NodePath.relative(realRoot, realTarget)
++      : absolutePath,
++    isDirectory: stats.isDirectory(),
++    size: stats.size,
++    mtimeMs: stats.mtimeMs,
++    downloadUrl: stats.isFile()
++      ? `${T3PATCH_FILE_ROUTE_PREFIX}/${issueFileToken(realTarget)}/${encodeURIComponent(
++          NodePath.basename(realTarget),
++        )}`
++      : null,
++    convertUrl:
++      stats.isFile() && isConvertibleToDocx(realTarget)
++        ? `${T3PATCH_CONVERT_ROUTE_PREFIX}/${issueFileToken(realTarget)}/${encodeURIComponent(
++            `${NodePath.parse(realTarget).name}.docx`,
++          )}`
++        : null,
++  };
++}
++
+ const json = (body: unknown, status = 200) =>
+   HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
+ 
+@@ -199,9 +248,8 @@ export const t3patchFileInfoRouteLayer = HttpRouter.add(
+       });
+       return { root, target };
+     }).pipe(Effect.orElseSucceed(() => null));
+-    if (!resolved) return json({ error: "Путь вне проекта." }, 400);
+-
+     const info = yield* Effect.tryPromise(async () => {
++      if (!resolved) return null;
+       const [realRoot, realTarget] = await Promise.all([
+         realpath(resolved.root),
+         realpath(resolved.target.absolutePath),
+@@ -229,8 +277,21 @@ export const t3patchFileInfoRouteLayer = HttpRouter.add(
+             : null,
+       };
+     }).pipe(Effect.orElseSucceed(() => null));
+-    if (!info) return json({ error: "Файл не найден или вне проекта." }, 404);
+-    return json(info);
++    if (info) return json(info);
++    // Нет внутри проекта: путь от родительской папки или абсолютный путь вне проекта.
++    const fallback = yield* Effect.tryPromise(async () => {
++      const root = resolved?.root ?? NodePath.resolve(body.cwd as string);
++      for (const candidate of t3patchFileCandidates(root, requested, NodeOs.homedir())) {
++        const exists = await stat(candidate).then(
++          () => true,
++          () => false,
++        );
++        if (exists) return describeFile(candidate, root);
++      }
++      return null;
++    }).pipe(Effect.orElseSucceed(() => null));
++    if (!fallback) return json({ error: "Файл не найден." }, 404);
++    return json(fallback);
+   }),
+ );
+ 
+-- 
+2.43.0
+

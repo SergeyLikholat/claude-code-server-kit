@@ -1,0 +1,667 @@
+From 20950de8c52116e108bd3ce8759df5b795e12fc5 Mon Sep 17 00:00:00 2001
+From: t3patch <t3patch@local>
+Date: Wed, 21 Oct 2026 23:05:13 +0300
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=D1=86=D0=B8=D1=82=D0=B0=D1=82?=
+ =?UTF-8?q?=D1=8B=20=D0=BA=D0=B0=D0=BA=20=C2=AB=D0=9E=D1=82=D0=B2=D0=B5?=
+ =?UTF-8?q?=D1=82=D0=B8=D1=82=D1=8C=C2=BB=20=D0=B2=20Telegram=20=E2=80=94?=
+ =?UTF-8?q?=20=D0=BA=D0=B0=D1=80=D1=82=D0=BE=D1=87=D0=BA=D0=B0=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=D0=B4=20=D0=BF=D0=BE=D0=BB=D0=B5=D0=BC=20=D0=B2=D0=B2?=
+ =?UTF-8?q?=D0=BE=D0=B4=D0=B0,=20=D1=88=D1=82=D0=B0=D1=82=D0=BD=D1=8B?=
+ =?UTF-8?q?=D0=B9=20=D1=84=D0=BE=D1=80=D0=BC=D0=B0=D1=82=20AssistantCitati?=
+ =?UTF-8?q?on,=20=D0=BA=D0=B0=D1=80=D1=82=D0=BE=D1=87=D0=BA=D0=B0=20=D0=B2?=
+ =?UTF-8?q?=20=D0=BF=D1=83=D0=B7=D1=8B=D1=80=D0=B5;=20=D0=BA=D0=BD=D0=BE?=
+ =?UTF-8?q?=D0=BF=D0=BA=D0=B0=20=C2=AB=E2=9D=9D=C2=BB=20=D0=B2=20=D0=BF?=
+ =?UTF-8?q?=D0=B0=D0=BD=D0=B5=D0=BB=D0=B8=20=D0=B2=D1=8B=D0=B4=D0=B5=D0=BB?=
+ =?UTF-8?q?=D0=B5=D0=BD=D0=B8=D1=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../T3MarkdownTextSelectionModule.kt          |   8 +-
+ .../src/features/threads/ThreadComposer.tsx   |  31 ++-
+ .../src/features/threads/ThreadFeed.tsx       |  46 +++-
+ apps/mobile/src/sergey/quoteFormat.test.ts    |  56 ++++-
+ apps/mobile/src/sergey/quoteFormat.ts         | 125 ++++++++++-
+ apps/mobile/src/sergey/quoteInsert.tsx        | 212 ++++++++++++++++--
+ 6 files changed, 428 insertions(+), 50 deletions(-)
+
+diff --git a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
+index ed5de2daa9..1c53ca60f6 100644
+--- a/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
++++ b/apps/mobile/modules/t3-markdown-text/android/src/main/java/expo/modules/t3markdowntext/T3MarkdownTextSelectionModule.kt
+@@ -131,8 +131,12 @@ private class SanitizingSelectionActionModeCallback(
+   override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+     val created = delegate?.onCreateActionMode(mode, menu) ?: true
+     if (menu.findItem(T3PATCH_QUOTE_ITEM_ID) == null) {
+-      menu.add(Menu.NONE, T3PATCH_QUOTE_ITEM_ID, 1, "Цитировать")
+-        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
++      // Кнопка-кавычка первой в панели: короткая подпись «❝» помещается рядом с «Копировать»,
++      // длинное «Цитировать» система уносила под «⋮».
++      menu.add(Menu.NONE, T3PATCH_QUOTE_ITEM_ID, 0, "❝").apply {
++        setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) contentDescription = "Цитировать"
++      }
+     }
+     return created
+   }
+diff --git a/apps/mobile/src/features/threads/ThreadComposer.tsx b/apps/mobile/src/features/threads/ThreadComposer.tsx
+index 30a94435b7..3b55823258 100644
+--- a/apps/mobile/src/features/threads/ThreadComposer.tsx
++++ b/apps/mobile/src/features/threads/ThreadComposer.tsx
+@@ -50,6 +50,11 @@ import Animated, {
+   withTiming,
+ } from "react-native-reanimated";
+ import { useUniwindTheme } from "../../lib/useUniwindTheme";
++import {
++  T3patchQuoteBar,
++  t3patchApplyQuotesBeforeSend,
++  useT3patchPendingQuotes,
++} from "../../sergey/quoteInsert"; // t3-patch
+ import { themeColorWithAlpha } from "../../lib/mobileTheme";
+ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
+ import { scopedThreadKey } from "../../lib/scopedEntities";
+@@ -301,7 +306,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+ 
+   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
+-  const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
++  // t3-patch: сообщение из одной цитаты тоже можно отправить
++  const t3patchQuoteCount = useT3patchPendingQuotes(
++    scopedThreadKey(props.environmentId, props.selectedThread.id),
++  ).length;
++  const hasContent =
++    props.draftMessage.trim().length > 0 ||
++    props.draftAttachments.length > 0 ||
++    t3patchQuoteCount > 0;
+   // Only media belongs above the composer; every other file reads as its inline chip.
+   const stripAttachments = useMemo(
+     () => composerStripAttachments(props.draftAttachments),
+@@ -497,8 +509,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+     if (inFlightThreadIdsRef.current.has(threadKey)) return;
+     inFlightThreadIdsRef.current.add(threadKey);
++    // t3-patch: цитаты из карточек над полем — в текст сообщения штатными ссылками T3
++    const t3patchAfterSend = t3patchApplyQuotesBeforeSend({
++      draftKey: threadKey,
++      environmentId: String(props.environmentId),
++      threadId: String(props.selectedThread.id),
++    });
+     try {
+-      const messageId = await onSendMessage();
++      let messageId: Awaited<ReturnType<typeof onSendMessage>>;
++      try {
++        messageId = await onSendMessage();
++      } catch (error) {
++        t3patchAfterSend?.(false);
++        throw error;
++      }
++      t3patchAfterSend?.(messageId !== null);
+       if (messageId === null) {
+         return;
+       }
+@@ -692,6 +717,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
+           </Pressable>
+         ) : null}
+ 
++        {/* t3-patch: цитаты, которые уйдут с сообщением (как «Ответить» в Telegram) */}
++        <T3patchQuoteBar draftKey={composerOwnerKey} />
+         <ComposerSurface
+           style={
+             isExpanded
+diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
+index 4d6874dacb..a821f890c7 100644
+--- a/apps/mobile/src/features/threads/ThreadFeed.tsx
++++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
+@@ -119,7 +119,12 @@ import {
+   type MediaVideoPreviewSource,
+ } from "../../lib/videoPreviewSource";
+ import { CopyTextButton } from "../../components/CopyTextButton";
+-import { T3patchQuoteMessageButton, useT3patchQuoteTarget } from "../../sergey/quoteInsert"; // t3-patch
++import {
++  T3patchQuoteCard,
++  T3patchQuoteMessageButton,
++  useT3patchQuoteTarget,
++} from "../../sergey/quoteInsert"; // t3-patch
++import { t3patchSplitCitations } from "../../sergey/quoteFormat"; // t3-patch
+ import { T3patchReasoningText } from "../../sergey/reasoningRu"; // t3-patch
+ import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+ import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
+@@ -1531,7 +1536,11 @@ function renderFeedEntry(
+       );
+     }
+     const isUser = message.role === "user";
+-    const renderedText = renderAssistantCitationsAsText(message.text);
++    // t3-patch: цитаты своего сообщения — карточками над текстом, не блоком «Assistant quote»
++    const t3patchQuotes = isUser
++      ? t3patchSplitCitations(message.text)
++      : { citations: [], rest: message.text };
++    const renderedText = renderAssistantCitationsAsText(t3patchQuotes.rest);
+     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
+     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
+     const attachments = message.attachments ?? [];
+@@ -1634,7 +1643,16 @@ function renderFeedEntry(
+                 })}
+               </View>
+             ) : null}
+-            {message.text.trim().length > 0 ? (
++            {t3patchQuotes.citations.map((citation, index) => (
++              <T3patchQuoteCard
++                key={`${citation.messageId}:${citation.start}:${index}`}
++                text={citation.text}
++                role={null}
++                lines={4}
++                inBubble
++              />
++            ))}
++            {renderedText.trim().length > 0 ? (
+               <MarkdownImageAvailableWidthContext
+                 value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
+               >
+@@ -1672,7 +1690,12 @@ function renderFeedEntry(
+               </Pressable>
+             ) : null}
+             {message.text.trim().length > 0 ? (
+-              <T3patchQuoteMessageButton text={message.text} tintColor={iconSubtleColor} />
++              <T3patchQuoteMessageButton
++                text={renderedText}
++                messageId={message.id}
++                role="user"
++                tintColor={iconSubtleColor}
++              />
+             ) : null}
+             {message.text.trim().length > 0 ? (
+               <CopyTextButton
+@@ -1760,6 +1783,8 @@ function renderFeedEntry(
+             />
+             <T3patchQuoteMessageButton
+               text={renderedText}
++              messageId={message.id}
++              role="assistant"
+               tintColor={iconSubtleColor}
+               buttonSize={28}
+               iconSize={13}
+@@ -2450,7 +2475,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+   // ThreadId, and keying resets (or the list mount) on the bare id would
+   // carry stale scroll/follow state across an environment switch.
+   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+-  useT3patchQuoteTarget(feedThreadKey); // t3-patch: «Цитировать» → черновик этого треда
++  // t3-patch: «Цитировать» → карточка над полем ввода этого треда; сообщения — чтобы
++  // найти, из какого именно выделен текст
++  const t3patchQuoteMessages = useMemo(
++    () =>
++      props.feed.flatMap((entry) =>
++        entry.type === "message"
++          ? [{ id: entry.message.id, role: entry.message.role, text: entry.message.text }]
++          : [],
++      ),
++    [props.feed],
++  );
++  useT3patchQuoteTarget(feedThreadKey, t3patchQuoteMessages);
+   // Virtualized groups can unmount without losing the reader's place. This cache
+   // belongs to this thread view only and never causes per-scroll React updates.
+   const workGroupScrollPositions = useMemo(
+diff --git a/apps/mobile/src/sergey/quoteFormat.test.ts b/apps/mobile/src/sergey/quoteFormat.test.ts
+index 028e41d6f2..0e17d8a84d 100644
+--- a/apps/mobile/src/sergey/quoteFormat.test.ts
++++ b/apps/mobile/src/sergey/quoteFormat.test.ts
+@@ -1,20 +1,52 @@
+ import { describe, expect, it } from "vite-plus/test";
+ 
+-import { t3patchQuoteText } from "./quoteFormat";
++import {
++  t3patchCitationFor,
++  t3patchFindQuoteSource,
++  t3patchMessageWithCitations,
++  t3patchSplitCitations,
++} from "./quoteFormat";
+ 
+-describe("t3patchQuoteText", () => {
+-  it("в пустой черновик — блок цитаты и пустая строка после", () => {
+-    expect(t3patchQuoteText("", "срок 10 дней")).toBe("> срок 10 дней\n\n");
++const messages = [
++  { id: "m1", role: "user", text: "Найди ленту" },
++  { id: "m2", role: "assistant", text: "Лента **Arlight RTW-PFS-A140** 48V, арт. 057301." },
++  { id: "m3", role: "assistant", text: "Блоки питания от −40 °C." },
++];
++
++describe("t3patchFindQuoteSource", () => {
++  it("находит сообщение по выделению без разметки", () => {
++    expect(t3patchFindQuoteSource(messages, "Arlight RTW-PFS-A140 48V")?.id).toBe("m2");
++  });
++  it("пустое выделение или не найдено — null", () => {
++    expect(t3patchFindQuoteSource(messages, "  ")).toBeNull();
++    expect(t3patchFindQuoteSource(messages, "такого нет")).toBeNull();
++  });
++});
++
++describe("цитата в сообщении и обратно", () => {
++  const citation = t3patchCitationFor({
++    environmentId: "env",
++    threadId: "thr",
++    quote: { id: "q", text: "Блоки питания", messageId: "m3", role: "assistant" },
++    sourceText: messages[2]!.text,
+   });
+-  it("многострочное выделение — «> » у каждой строки, пустые строки остаются в цитате", () => {
+-    expect(t3patchQuoteText("", "первая\n\nвторая")).toBe("> первая\n>\n> вторая\n\n");
++
++  it("позиция и контекст по исходному тексту", () => {
++    expect(citation.start).toBe(0);
++    expect(citation.end).toBe("Блоки питания".length);
++    expect(citation.suffix.startsWith(" от")).toBe(true);
+   });
+-  it("после текста отделяется пустой строкой", () => {
+-    expect(t3patchQuoteText("Уточни", "цитата")).toBe("\n\n> цитата\n\n");
+-    expect(t3patchQuoteText("Уточни\n", "цитата")).toBe("\n> цитата\n\n");
+-    expect(t3patchQuoteText("> прошлая\n\n", "вторая")).toBe("> вторая\n\n");
++
++  it("текст пользователя идёт после цитат и не попадает в цитату", () => {
++    const sent = t3patchMessageWithCitations("А есть дешевле?", [citation]);
++    const parsed = t3patchSplitCitations(sent);
++    expect(parsed.citations).toHaveLength(1);
++    expect(parsed.citations[0]!.text).toBe("Блоки питания");
++    expect(parsed.rest).toBe("А есть дешевле?");
+   });
+-  it("пустое выделение — ничего не вставляет", () => {
+-    expect(t3patchQuoteText("x", "   \n ")).toBe("");
++
++  it("без цитат текст не меняется", () => {
++    expect(t3patchMessageWithCitations("текст", [])).toBe("текст");
++    expect(t3patchSplitCitations("текст").rest).toBe("текст");
+   });
+ });
+diff --git a/apps/mobile/src/sergey/quoteFormat.ts b/apps/mobile/src/sergey/quoteFormat.ts
+index 0c77f1dfea..a2153f1b39 100644
+--- a/apps/mobile/src/sergey/quoteFormat.ts
++++ b/apps/mobile/src/sergey/quoteFormat.ts
+@@ -1,13 +1,114 @@
+-/** t3-patch: оформление цитаты для поля ввода (quoteInsert.tsx). */
+-/** Цитата markdown-блоком: «> » перед каждой строкой, отделена от текста пустой строкой. */
+-export function t3patchQuoteText(existing: string, selected: string): string {
+-  const cleaned = selected.replace(/\r\n?/g, "\n").trim();
+-  if (cleaned.length === 0) return "";
+-  const body = cleaned
+-    .split("\n")
+-    .map((line) => (line.trim().length > 0 ? `> ${line}` : ">"))
+-    .join("\n");
+-  const separator =
+-    existing.length === 0 ? "" : existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+-  return `${separator}${body}\n\n`;
++/**
++ * t3-patch: цитаты из сообщений треда — чистая логика (без React), её проверяют тесты.
++ *
++ * Цитата живёт отдельно от текста черновика (карточка над полем ввода, quoteInsert.tsx) и при
++ * отправке уходит штатным форматом T3 — ссылкой AssistantCitation перед текстом сообщения.
++ * Сервер разворачивает такие ссылки для модели (expandAssistantCitationsForProvider), веб-версия
++ * показывает их цитатой, приложение — карточкой над текстом сообщения.
++ */
++import {
++  ASSISTANT_CITATION_CONTEXT_LENGTH,
++  ASSISTANT_CITATION_MAX_TEXT_LENGTH,
++  type AssistantCitation,
++  type EnvironmentId,
++  type MessageId,
++  type ThreadId,
++} from "@t3tools/contracts";
++import {
++  collectAssistantCitations,
++  serializeAssistantCitation,
++} from "@t3tools/shared/assistantCitations";
++
++export interface T3patchQuoteMessage {
++  readonly id: string;
++  readonly role: string;
++  readonly text: string;
++}
++
++export interface T3patchPendingQuote {
++  readonly id: string;
++  readonly text: string;
++  readonly messageId: string | null;
++  readonly role: string | null;
++}
++
++/** Текст без разметки и лишних пробелов — так выделение находится в исходном Markdown. */
++export function t3patchQuoteNormalize(text: string): string {
++  return text
++    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
++    .replace(/[*_`#>|~]/g, "")
++    .replace(/\s+/g, " ")
++    .trim()
++    .toLowerCase();
++}
++
++/** Сообщение, из которого выделен текст: последнее, где выделение встречается целиком. */
++export function t3patchFindQuoteSource(
++  messages: ReadonlyArray<T3patchQuoteMessage>,
++  selected: string,
++): T3patchQuoteMessage | null {
++  const needle = t3patchQuoteNormalize(selected);
++  if (!needle) return null;
++  for (let index = messages.length - 1; index >= 0; index -= 1) {
++    const message = messages[index]!;
++    if (t3patchQuoteNormalize(message.text).includes(needle)) return message;
++  }
++  return null;
++}
++
++/** Цитата штатного формата T3. Позиция — по исходному тексту сообщения, если нашлась. */
++export function t3patchCitationFor(input: {
++  readonly environmentId: string;
++  readonly threadId: string;
++  readonly quote: T3patchPendingQuote;
++  readonly sourceText: string | null;
++}): AssistantCitation {
++  const text = input.quote.text.slice(0, ASSISTANT_CITATION_MAX_TEXT_LENGTH);
++  const source = input.sourceText ?? text;
++  const found = source.indexOf(text);
++  const start = found >= 0 ? found : 0;
++  const end = start + text.length;
++  const context = ASSISTANT_CITATION_CONTEXT_LENGTH;
++  return {
++    version: 1,
++    environmentId: input.environmentId as EnvironmentId,
++    threadId: input.threadId as ThreadId,
++    messageId: (input.quote.messageId ?? "quote") as MessageId,
++    text,
++    start,
++    end,
++    prefix: found >= 0 ? source.slice(Math.max(0, start - context), start) : "",
++    suffix: found >= 0 ? source.slice(end, end + context) : "",
++  };
++}
++
++/** Текст сообщения с цитатами: ссылки-цитаты отдельными строками, затем текст пользователя. */
++export function t3patchMessageWithCitations(
++  text: string,
++  citations: ReadonlyArray<AssistantCitation>,
++): string {
++  if (citations.length === 0) return text;
++  const markers = citations.map(serializeAssistantCitation).join("\n");
++  const body = text.trim();
++  return body ? `${markers}\n\n${body}` : markers;
++}
++
++/** Для ленты: цитаты отдельно (карточками), остальной текст — как обычно. */
++export function t3patchSplitCitations(text: string): {
++  readonly citations: ReadonlyArray<AssistantCitation>;
++  readonly rest: string;
++} {
++  const matches = collectAssistantCitations(text);
++  if (matches.length === 0) return { citations: [], rest: text };
++  let rest = "";
++  let cursor = 0;
++  for (const match of matches) {
++    rest += text.slice(cursor, match.start);
++    cursor = match.end;
++  }
++  rest += text.slice(cursor);
++  return {
++    citations: matches.map((match) => match.citation),
++    rest: rest.replace(/^\s+/, "").replace(/\n{3,}/g, "\n\n"),
++  };
+ }
+diff --git a/apps/mobile/src/sergey/quoteInsert.tsx b/apps/mobile/src/sergey/quoteInsert.tsx
+index 76664a8469..99069a47cf 100644
+--- a/apps/mobile/src/sergey/quoteInsert.tsx
++++ b/apps/mobile/src/sergey/quoteInsert.tsx
+@@ -1,34 +1,117 @@
+ /**
+- * t3-patch: цитаты из сообщений треда в поле ввода.
++ * t3-patch: цитаты из сообщений треда — как «Ответить» в Telegram.
+  *
+- * - Выделить текст в сообщении (своём или ответе Claude) → в меню выделения «Цитировать»
+- *   (нативный пункт, modules/t3-markdown-text) → выделенное встаёт в черновик блоком «> …».
++ * - Выделить текст в сообщении (своём или ответе Claude) → кнопка «❝» в панели выделения
++ *   (нативный пункт, modules/t3-markdown-text) → над полем ввода появляется карточка цитаты.
+  * - Кнопка с кавычками рядом с «Копировать» — цитата сообщения целиком.
+- *
+- * Цитата добавляется в конец черновика текущего треда отдельным абзацем; можно набрать
+- * несколько цитат подряд. Куда вставлять, знает открытый тред (useT3patchQuoteTarget).
++ * - Текст черновика цитата не трогает: свой вопрос пишется в пустом поле. При отправке цитаты
++ *   уходят штатным форматом T3 (AssistantCitation, quoteFormat.ts) перед текстом сообщения;
++ *   в ленте они рисуются карточкой над текстом (T3patchQuoteCard).
+  */
+ import { requireOptionalNativeModule } from "expo";
+ import * as Haptics from "expo-haptics";
+-import { memo, useEffect } from "react";
+-import { Platform, Pressable, type ColorValue } from "react-native";
++import { memo, useEffect, useSyncExternalStore } from "react";
++import { Platform, Pressable, Text, View, type ColorValue } from "react-native";
+ 
+ import { SymbolView } from "../components/AppSymbol";
+-import { appendComposerDraftText, getComposerDraftSnapshot } from "../state/use-composer-drafts";
++import { useUniwindTheme } from "../lib/useUniwindTheme";
++import { getComposerDraftSnapshot, setComposerDraftText } from "../state/use-composer-drafts";
+ import { t3patchBreadcrumb } from "./crashReport";
+-import { t3patchQuoteText } from "./quoteFormat";
++import {
++  t3patchCitationFor,
++  t3patchFindQuoteSource,
++  t3patchMessageWithCitations,
++  type T3patchPendingQuote,
++  type T3patchQuoteMessage,
++} from "./quoteFormat";
++
++// ── Хранилище цитат черновиков (в памяти приложения) ─────────────────────────────
++const pending = new Map<string, ReadonlyArray<T3patchPendingQuote>>();
++const listeners = new Set<() => void>();
++const EMPTY: ReadonlyArray<T3patchPendingQuote> = [];
++let nextQuoteId = 1;
+ 
++function emit() {
++  for (const listener of listeners) listener();
++}
++
++function subscribe(listener: () => void) {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++export function t3patchPendingQuotes(draftKey: string): ReadonlyArray<T3patchPendingQuote> {
++  return pending.get(draftKey) ?? EMPTY;
++}
++
++export function useT3patchPendingQuotes(draftKey: string): ReadonlyArray<T3patchPendingQuote> {
++  return useSyncExternalStore(subscribe, () => t3patchPendingQuotes(draftKey));
++}
++
++function setQuotes(draftKey: string, quotes: ReadonlyArray<T3patchPendingQuote>) {
++  if (quotes.length === 0) pending.delete(draftKey);
++  else pending.set(draftKey, quotes);
++  emit();
++}
++
++export function t3patchRemoveQuote(draftKey: string, id: string) {
++  setQuotes(
++    draftKey,
++    t3patchPendingQuotes(draftKey).filter((quote) => quote.id !== id),
++  );
++}
++
++// ── Открытый тред: куда идут цитаты и из каких сообщений ─────────────────────────
+ let activeDraftKey: string | null = null;
++let activeMessages: ReadonlyArray<T3patchQuoteMessage> = [];
+ 
+-export function t3patchInsertQuote(selected: string): boolean {
++export function t3patchInsertQuote(selected: string, source?: T3patchQuoteMessage): boolean {
+   if (!activeDraftKey) return false;
+-  const value = t3patchQuoteText(getComposerDraftSnapshot(activeDraftKey).text, selected);
+-  if (!value) return false;
+-  appendComposerDraftText(activeDraftKey, value);
++  const text = selected.replace(/\r\n?/g, "\n").trim();
++  if (!text) return false;
++  const message = source ?? t3patchFindQuoteSource(activeMessages, text);
++  setQuotes(activeDraftKey, [
++    ...t3patchPendingQuotes(activeDraftKey),
++    {
++      id: `q${nextQuoteId++}`,
++      text,
++      messageId: message?.id ?? null,
++      role: message?.role ?? null,
++    },
++  ]);
+   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+   return true;
+ }
+ 
++/**
++ * Перед отправкой: цитаты — в текст черновика штатными ссылками T3. Возвращает, что сделать
++ * после отправки: `sent=true` — убрать карточки, `false` — вернуть черновик как был.
++ */
++export function t3patchApplyQuotesBeforeSend(input: {
++  readonly draftKey: string;
++  readonly environmentId: string;
++  readonly threadId: string;
++}): ((sent: boolean) => void) | null {
++  const quotes = t3patchPendingQuotes(input.draftKey);
++  if (quotes.length === 0) return null;
++  const original = getComposerDraftSnapshot(input.draftKey).text;
++  const citations = quotes.map((quote) =>
++    t3patchCitationFor({
++      environmentId: input.environmentId,
++      threadId: input.threadId,
++      quote,
++      sourceText: activeMessages.find((message) => message.id === quote.messageId)?.text ?? null,
++    }),
++  );
++  setComposerDraftText(input.draftKey, t3patchMessageWithCitations(original, citations));
++  return (sent) => {
++    if (sent) setQuotes(input.draftKey, EMPTY);
++    else setComposerDraftText(input.draftKey, original);
++  };
++}
++
+ interface QuoteSelectionModule {
+   addListener?: (
+     event: "onQuoteSelection",
+@@ -36,8 +119,14 @@ interface QuoteSelectionModule {
+   ) => { remove(): void };
+ }
+ 
+-/** Открытый тред: сюда уходят цитаты из меню выделения и кнопки «Цитировать целиком». */
+-export function useT3patchQuoteTarget(draftKey: string | null): void {
++/** Открытый тред: сюда уходят цитаты из панели выделения и кнопки «Цитировать целиком». */
++export function useT3patchQuoteTarget(
++  draftKey: string | null,
++  messages: ReadonlyArray<T3patchQuoteMessage>,
++): void {
++  useEffect(() => {
++    activeMessages = messages;
++  }, [messages]);
+   useEffect(() => {
+     if (!draftKey) return;
+     t3patchBreadcrumb(`Открыт тред ${draftKey}`); // t3-patch: журнал на случай зависания
+@@ -56,9 +145,93 @@ export function useT3patchQuoteTarget(draftKey: string | null): void {
+   }, [draftKey]);
+ }
+ 
++// ── Карточка цитаты ─────────────────────────────────────────────────────────────
++const sourceLabel = (role: string | null) =>
++  role === "user"
++    ? "Цитата из вашего сообщения"
++    : role === "assistant"
++      ? "Цитата из ответа"
++      : "Цитата";
++
++/** Карточка: цветная полоса слева, подпись источника, текст в две (или три) строки. */
++export const T3patchQuoteCard = memo(function T3patchQuoteCard(props: {
++  readonly text: string;
++  readonly role: string | null;
++  readonly lines?: number;
++  readonly onRemove?: () => void;
++  /** Внутри пузыря своего сообщения — фон и цвета от пузыря. */
++  readonly inBubble?: boolean;
++}) {
++  const colors = useUniwindTheme();
++  const accent = colors["--color-primary"];
++  return (
++    <View
++      className={props.inBubble ? "bg-user-bubble-foreground/10" : "bg-subtle"}
++      style={{ flexDirection: "row", borderRadius: 10, overflow: "hidden", minWidth: 0 }}
++    >
++      <View style={{ width: 3, backgroundColor: accent }} />
++      <View style={{ flex: 1, minWidth: 0, paddingVertical: 6, paddingLeft: 9, paddingRight: 8 }}>
++        <Text className="font-t3-medium text-xs" style={{ color: accent }} numberOfLines={1}>
++          {sourceLabel(props.role)}
++        </Text>
++        <Text
++          className={
++            props.inBubble ? "text-sm text-user-bubble-foreground" : "text-sm text-foreground"
++          }
++          numberOfLines={props.lines ?? 2}
++        >
++          {props.text}
++        </Text>
++      </View>
++      {props.onRemove ? (
++        <Pressable
++          accessibilityRole="button"
++          accessibilityLabel="Убрать цитату"
++          hitSlop={8}
++          onPress={props.onRemove}
++          style={({ pressed }) => ({
++            width: 36,
++            alignItems: "center",
++            justifyContent: "center",
++            opacity: pressed ? 0.5 : 1,
++          })}
++        >
++          <SymbolView
++            name="xmark"
++            size={11}
++            tintColorClassName="accent-foreground"
++            type="monochrome"
++            weight="bold"
++          />
++        </Pressable>
++      ) : null}
++    </View>
++  );
++});
++
++/** Над полем ввода: цитаты, которые уйдут с ближайшим сообщением. */
++export function T3patchQuoteBar(props: { readonly draftKey: string }) {
++  const quotes = useT3patchPendingQuotes(props.draftKey);
++  if (quotes.length === 0) return null;
++  return (
++    <View style={{ gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
++      {quotes.map((quote) => (
++        <T3patchQuoteCard
++          key={quote.id}
++          text={quote.text}
++          role={quote.role}
++          onRemove={() => t3patchRemoveQuote(props.draftKey, quote.id)}
++        />
++      ))}
++    </View>
++  );
++}
++
+ /** Кнопка рядом с «Копировать»: цитата всего сообщения. */
+ export const T3patchQuoteMessageButton = memo(function T3patchQuoteMessageButton(props: {
+   readonly text: string;
++  readonly messageId?: string;
++  readonly role?: string;
+   readonly tintColor?: ColorValue;
+   readonly buttonSize?: number;
+   readonly iconSize?: number;
+@@ -70,7 +243,12 @@ export const T3patchQuoteMessageButton = memo(function T3patchQuoteMessageButton
+       disabled={props.text.trim().length === 0}
+       hitSlop={8}
+       onPress={() => {
+-        t3patchInsertQuote(props.text);
++        t3patchInsertQuote(
++          props.text,
++          props.messageId
++            ? { id: props.messageId, role: props.role ?? "assistant", text: props.text }
++            : undefined,
++        );
+       }}
+       style={({ pressed }) => ({
+         width: props.buttonSize ?? 30,
+-- 
+2.43.0
+

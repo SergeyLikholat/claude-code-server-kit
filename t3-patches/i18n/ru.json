@@ -206,6 +206,8 @@
     },
     "mobile/features/threads/thread-list-v2-items.tsx": {
       "Delete": "Удалить",
+      "Settled": "Завершённые",
+      "Snoozed": "Отложенные",
       "Working": "Работает"
     },
     "mobile/features/threads/threadPresentation.ts": {
@@ -233,6 +235,9 @@
       "{0}d": "{0} дн",
       "{0}h": "{0} ч",
       "{0}m": "{0} мин"
+    },
+    "mobile/widgets/subscriptionUsageSnapshot.ts": {
+      "Subscription remaining": "Остаток подписки"
     },
     "packages/client-runtime/src/work-log/presentation.ts": {
       "Changed {0} {1}": "Изменено {0} {0|файл|файла|файлов}",
