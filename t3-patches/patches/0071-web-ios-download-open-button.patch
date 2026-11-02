@@ -1,0 +1,109 @@
+From 0fff9007045450d902ae589750059e463344d852 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 12:06:30 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20iOS=20PWA=20download=20=E2=80=94=20t?=
+ =?UTF-8?q?oast=20with=20Open=20button=20(window.open=20blocked=20after=20?=
+ =?UTF-8?q?async)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/sergey/fileActions.ts | 41 +++++++++++--------
+ .../web/src/components/sergey/fileLinkMenu.ts |  9 +++-
+ 2 files changed, 31 insertions(+), 19 deletions(-)
+
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 0d815a4145..96418bf9e4 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -235,26 +235,33 @@ function t3patchIsIosStandalone(): boolean {
+   );
+ }
+ 
+-export function startDownload(url: string) {
++/**
++ * Начать скачивание. Возвращает true, если файл уже пошёл; false — если на iPhone вместо этого
++ * показано уведомление с кнопкой «Открыть» (тогда своё «Скачивание началось» не показывать).
++ */
++export function startDownload(url: string): boolean {
+   // t3-patch: в приложении с экрана «Домой» на iPhone ссылка «скачать» открывала файл прямо в окне
+-  // T3 — без кнопки «назад», выйти было нельзя (скриншот 2026-11-02). Там файл открываем в окне
+-  // Safari поверх приложения: есть «Готово» и «Поделиться → Сохранить в Файлы». Ссылка подписана
++  // T3 — без кнопки «назад», выйти было нельзя. Открыть окно Safari сразу тоже нельзя: до этого
++  // ждём ссылку от сервера, и iPhone уже не считает это нажатием — окно молча блокируется
++  // (проверка 2026-11-02). Поэтому — уведомление с кнопкой: её нажатие свежее, окно Safari
++  // открывается поверх T3 («Готово» — назад, «Поделиться → Сохранить в Файлы»). Ссылка подписана
+   // разовым токеном и открывается без входа.
+   if (t3patchIsIosStandalone()) {
+     const absolute = resolvePrimaryEnvironmentHttpUrl(url);
+-    if (window.open(absolute, "_blank", "noopener") === null) {
+-      // Открытие окна заблокировано (нет свежего нажатия) — открыть по кнопке в уведомлении.
+-      toastManager.add({
+-        type: "info",
+-        title: "Файл готов",
+-        description: "Нажмите «Открыть», чтобы посмотреть или сохранить его.",
+-        actionProps: {
+-          children: "Открыть",
+-          onClick: () => void window.open(absolute, "_blank", "noopener"),
++    const name = decodeURIComponent(absolute.slice(absolute.lastIndexOf("/") + 1));
++    toastManager.add({
++      type: "success",
++      title: "Файл готов",
++      description: `${name}. «Открыть» — файл откроется в Safari, сохранить: «Поделиться → Сохранить в Файлы».`,
++      timeout: 30_000,
++      actionProps: {
++        children: "Открыть",
++        onClick: () => {
++          window.open(absolute, "_blank");
+         },
+-      });
+-    }
+-    return;
++      },
++    });
++    return false;
+   }
+   const link = document.createElement("a");
+   link.href = resolvePrimaryEnvironmentHttpUrl(url);
+@@ -263,6 +270,7 @@ export function startDownload(url: string) {
+   document.body.append(link);
+   link.click();
+   link.remove();
++  return true;
+ }
+ 
+ /** Обработать пункт меню патча. Возвращает false, если пункт не наш. */
+@@ -296,8 +304,7 @@ export async function handleT3PatchFileMenu(
+     const info = await fetchT3PatchFileInfo(input.cwd, input.relativePath);
+     if (clicked === MENU_COPY_REAL_PATH) {
+       await copyWithToast(info.realPath, "Полный путь скопирован");
+-    } else if (info.downloadUrl) {
+-      startDownload(info.downloadUrl);
++    } else if (info.downloadUrl && startDownload(info.downloadUrl)) {
+       toastManager.add({
+         type: "success",
+         title: "Скачивание началось",
+diff --git a/apps/web/src/components/sergey/fileLinkMenu.ts b/apps/web/src/components/sergey/fileLinkMenu.ts
+index d50a1e67c0..4e92646a46 100644
+--- a/apps/web/src/components/sergey/fileLinkMenu.ts
++++ b/apps/web/src/components/sergey/fileLinkMenu.ts
+@@ -35,8 +35,13 @@ export async function t3patchDownloadLinkedFile(cwd: string, path: string): Prom
+   try {
+     const info = await fetchT3PatchFileInfo(cwd, await workspacePath(cwd, path));
+     if (!info.downloadUrl) throw new Error("Сервер не дал ссылку на файл.");
+-    startDownload(info.downloadUrl);
+-    toastManager.add({ type: "success", title: "Скачивание началось", description: info.realPath });
++    if (startDownload(info.downloadUrl)) {
++      toastManager.add({
++        type: "success",
++        title: "Скачивание началось",
++        description: info.realPath,
++      });
++    }
+   } catch (error) {
+     reportError("Не удалось скачать", error);
+   }
+-- 
+2.43.0
+

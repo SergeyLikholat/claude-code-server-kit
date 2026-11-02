@@ -1,0 +1,134 @@
+From 0dc5643c434c3462df3c2e6e93b464d7127337b0 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 15:46:47 +0300
+Subject: [PATCH] t3patch: Claude provider status banner in Russian
+
+---
+ .../server/src/provider/Layers/ClaudeProvider.ts | 16 ++++++++--------
+ .../src/provider/Layers/ProviderRegistry.test.ts |  4 ++--
+ .../src/components/chat/ProviderStatusBanner.tsx |  8 ++++----
+ 3 files changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/apps/server/src/provider/Layers/ClaudeProvider.ts b/apps/server/src/provider/Layers/ClaudeProvider.ts
+index fd62f9375e..25e73dc1d4 100644
+--- a/apps/server/src/provider/Layers/ClaudeProvider.ts
++++ b/apps/server/src/provider/Layers/ClaudeProvider.ts
+@@ -457,7 +457,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         version: null,
+         status: "warning",
+         auth: { status: "unknown" },
+-        message: "Claude is disabled in T3 Code settings.",
++        message: "Claude выключен в настройках T3.",
+       },
+     });
+   }
+@@ -484,8 +484,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         status: "error",
+         auth: { status: "unknown" },
+         message: isCommandMissingCause(error)
+-          ? "Claude Agent CLI (`claude`) was not found on PATH."
+-          : "Failed to execute Claude Agent CLI health check.",
++          ? "Claude (`claude`) не найден на сервере."
++          : "Не удалось выполнить проверку Claude.",
+       },
+     });
+   }
+@@ -502,7 +502,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         status: "error",
+         auth: { status: "unknown" },
+         message:
+-          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
++          "Claude установлен, но не запустился: проверка не ответила вовремя. Обычно это из-за нагрузки на сервер.",
+       },
+     });
+   }
+@@ -525,7 +525,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         version: parsedVersion,
+         status: "error",
+         auth: { status: "unknown" },
+-        message: "Claude Agent CLI is installed but failed to run.",
++        message: "Claude установлен, но не запустился.",
+       },
+     });
+   }
+@@ -557,7 +557,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
+         version: parsedVersion,
+         status: "warning",
+         auth: { status: "unknown" },
+-        message: "Could not verify Claude authentication status from initialization result.",
++        message: "Не удалось проверить вход в Claude: проверка не ответила вовремя. Обычно это из-за нагрузки на сервер — работе не мешает, плашка уйдёт при следующей проверке.",
+       },
+     });
+   }
+@@ -629,7 +629,7 @@ export const makePendingClaudeProvider = (
+           version: null,
+           status: "warning",
+           auth: { status: "unknown" },
+-          message: "Claude is disabled in T3 Code settings.",
++          message: "Claude выключен в настройках T3.",
+         },
+       });
+     }
+@@ -644,7 +644,7 @@ export const makePendingClaudeProvider = (
+         version: null,
+         status: "warning",
+         auth: { status: "unknown" },
+-        message: "Claude provider status has not been checked in this session yet.",
++        message: "Состояние Claude ещё не проверялось.",
+       },
+     });
+   });
+diff --git a/apps/server/src/provider/Layers/ProviderRegistry.test.ts b/apps/server/src/provider/Layers/ProviderRegistry.test.ts
+index 0970ea8874..1914532e01 100644
+--- a/apps/server/src/provider/Layers/ProviderRegistry.test.ts
++++ b/apps/server/src/provider/Layers/ProviderRegistry.test.ts
+@@ -3090,7 +3090,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+           );
+           assert.strictEqual(status.status, "error");
+           assert.strictEqual(status.installed, true);
+-          assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
++          assert.strictEqual(status.message, "Claude установлен, но не запустился.");
+           assert.ok(!(status.message ?? "").includes(secretStderr));
+         }).pipe(
+           Effect.provide(
+@@ -3119,7 +3119,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
+           assert.strictEqual(status.auth.status, "unknown");
+           assert.strictEqual(
+             status.message,
+-            "Could not verify Claude authentication status from initialization result.",
++            "Не удалось проверить вход в Claude: проверка не ответила вовремя. Обычно это из-за нагрузки на сервер — работе не мешает, плашка уйдёт при следующей проверке.",
+           );
+         }).pipe(
+           Effect.provide(
+diff --git a/apps/web/src/components/chat/ProviderStatusBanner.tsx b/apps/web/src/components/chat/ProviderStatusBanner.tsx
+index c83aef7caf..66fc47a164 100644
+--- a/apps/web/src/components/chat/ProviderStatusBanner.tsx
++++ b/apps/web/src/components/chat/ProviderStatusBanner.tsx
+@@ -77,9 +77,9 @@ export function getProviderStatusMessage(status: ServerProvider): string {
+     if (hasProviderSetup(status)) {
+       return status.driver === "antigravity"
+         ? "Open provider setup to sign in with Google."
+-        : "Open provider setup to sign in.";
++        : "Откройте настройки провайдера, чтобы войти.";
+     }
+-    return "Sign in via the CLI to authenticate again.";
++    return "Войдите заново через командную строку (`claude auth login`).";
+   }
+   return status.status === "ready"
+     ? "No models are available for this provider."
+@@ -105,10 +105,10 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+   const incompatible = getIncompatibleVersion(status);
+   const title = isUnauthenticated
+-    ? `${providerName} is unauthenticated`
++    ? `${providerName}: не выполнен вход` // t3-patch: по-русски
+     : incompatible
+       ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+-      : `${providerName} provider status`;
++      : `${providerName}: состояние подключения`; // t3-patch: по-русски
+   const message = incompatible?.message ?? getProviderStatusMessage(status);
+   const isWarning =
+     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
+-- 
+2.43.0
+

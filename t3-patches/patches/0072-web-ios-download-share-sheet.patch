@@ -1,0 +1,105 @@
+From e7df3be30f8fdcf10def3f2026f00e39f4a73101 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 15:15:00 +0300
+Subject: [PATCH] t3patch: iOS PWA download via share sheet (prefetch file,
+ Save button)
+
+---
+ apps/web/src/components/sergey/fileActions.ts | 74 +++++++++++++++----
+ 1 file changed, 60 insertions(+), 14 deletions(-)
+
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 96418bf9e4..3140d29e62 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -235,6 +235,65 @@ function t3patchIsIosStandalone(): boolean {
+   );
+ }
+ 
++/** Больше этого файл в память телефона не грузим — открываем ссылкой в Safari. */
++const T3PATCH_IOS_SHARE_MAX_BYTES = 150 * 1024 * 1024;
++
++/**
++ * t3-patch: «Скачать» в приложении с экрана «Домой» на iPhone.
++ *
++ * Ссылка с download открывала файл прямо в окне T3 без «назад»; окно Safari из приложения такие
++ * файлы не скачивает — пустая страница (скриншоты 2026-11-02). Работает системное окно
++ * «Поделиться» с самим файлом: «Сохранить в Файлы», «Открыть в Excel», AirDrop. Его можно открыть
++ * только сразу по нажатию, поэтому файл сначала загружается («Готовлю файл…»), а потом
++ * уведомление «Файл готов» с кнопкой «Сохранить» — её нажатие и открывает окно.
++ */
++async function t3patchIosSaveFile(absoluteUrl: string): Promise<void> {
++  const name = decodeURIComponent(absoluteUrl.slice(absoluteUrl.lastIndexOf("/") + 1));
++  const toastId = toastManager.add({
++    type: "loading",
++    title: "Готовлю файл…",
++    description: name,
++    timeout: 0,
++  });
++  const openInSafari = () => void window.open(absoluteUrl, "_blank");
++  try {
++    const response = await fetch(absoluteUrl);
++    if (!response.ok) throw new Error(`Сервер ответил ${response.status}`);
++    const size = Number(response.headers.get("content-length") ?? 0);
++    if (size > T3PATCH_IOS_SHARE_MAX_BYTES) throw new Error("too-large");
++    const blob = await response.blob();
++    const file = new File([blob], name, { type: blob.type || "application/octet-stream" });
++    const canShare =
++      typeof navigator.share === "function" && navigator.canShare?.({ files: [file] });
++    toastManager.update(toastId, {
++      type: "success",
++      title: "Файл готов",
++      description: canShare ? `${name}. «Сохранить» — в Файлы, Excel или AirDrop.` : name,
++      timeout: 60_000,
++      actionProps: {
++        children: canShare ? "Сохранить" : "Открыть",
++        onClick: () => {
++          if (!canShare) return openInSafari();
++          navigator.share({ files: [file] }).catch((error: unknown) => {
++            // Закрыли окно «Поделиться» — это не ошибка.
++            if (error instanceof DOMException && error.name === "AbortError") return;
++            reportError("Не удалось сохранить файл", error);
++          });
++        },
++      },
++    });
++  } catch (error) {
++    const tooLarge = error instanceof Error && error.message === "too-large";
++    toastManager.update(toastId, {
++      type: tooLarge ? "info" : "error",
++      title: tooLarge ? "Файл большой — откройте его в Safari" : "Не удалось подготовить файл",
++      description: tooLarge ? name : error instanceof Error ? error.message : String(error),
++      timeout: 30_000,
++      actionProps: { children: "Открыть", onClick: openInSafari },
++    });
++  }
++}
++
+ /**
+  * Начать скачивание. Возвращает true, если файл уже пошёл; false — если на iPhone вместо этого
+  * показано уведомление с кнопкой «Открыть» (тогда своё «Скачивание началось» не показывать).
+@@ -247,20 +306,7 @@ export function startDownload(url: string): boolean {
+   // открывается поверх T3 («Готово» — назад, «Поделиться → Сохранить в Файлы»). Ссылка подписана
+   // разовым токеном и открывается без входа.
+   if (t3patchIsIosStandalone()) {
+-    const absolute = resolvePrimaryEnvironmentHttpUrl(url);
+-    const name = decodeURIComponent(absolute.slice(absolute.lastIndexOf("/") + 1));
+-    toastManager.add({
+-      type: "success",
+-      title: "Файл готов",
+-      description: `${name}. «Открыть» — файл откроется в Safari, сохранить: «Поделиться → Сохранить в Файлы».`,
+-      timeout: 30_000,
+-      actionProps: {
+-        children: "Открыть",
+-        onClick: () => {
+-          window.open(absolute, "_blank");
+-        },
+-      },
+-    });
++    void t3patchIosSaveFile(resolvePrimaryEnvironmentHttpUrl(url));
+     return false;
+   }
+   const link = document.createElement("a");
+-- 
+2.43.0
+

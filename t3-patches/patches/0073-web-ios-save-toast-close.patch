@@ -1,0 +1,40 @@
+From 5c739f0f1ba21eb10f417e5191abe7bf05587528 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 15:40:47 +0300
+Subject: [PATCH] t3patch: iOS save toast closes on tap
+
+---
+ apps/web/src/components/sergey/fileActions.ts | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index 3140d29e62..a80c73a783 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -273,6 +273,8 @@ async function t3patchIosSaveFile(absoluteUrl: string): Promise<void> {
+       actionProps: {
+         children: canShare ? "Сохранить" : "Открыть",
+         onClick: () => {
++          // Уведомление своё дело сделало — убрать, не ждать таймера (просьба 2026-11-02).
++          toastManager.close(toastId);
+           if (!canShare) return openInSafari();
+           navigator.share({ files: [file] }).catch((error: unknown) => {
+             // Закрыли окно «Поделиться» — это не ошибка.
+@@ -289,7 +291,13 @@ async function t3patchIosSaveFile(absoluteUrl: string): Promise<void> {
+       title: tooLarge ? "Файл большой — откройте его в Safari" : "Не удалось подготовить файл",
+       description: tooLarge ? name : error instanceof Error ? error.message : String(error),
+       timeout: 30_000,
+-      actionProps: { children: "Открыть", onClick: openInSafari },
++      actionProps: {
++        children: "Открыть",
++        onClick: () => {
++          toastManager.close(toastId);
++          openInSafari();
++        },
++      },
+     });
+   }
+ }
+-- 
+2.43.0
+

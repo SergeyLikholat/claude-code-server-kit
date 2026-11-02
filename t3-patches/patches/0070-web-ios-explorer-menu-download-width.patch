@@ -1,0 +1,212 @@
+From 20ebe3d1878353eb874edd19d41c93864558b57e Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 10:56:11 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20explorer=20on=20iPhone=20=E2=80=94?=
+ =?UTF-8?q?=20no=20ghost=20tap=20on=20menu,=20download=20in=20Safari=20she?=
+ =?UTF-8?q?et,=20tree=20fits=20panel,=20readable=20truncation?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/components/files/FileBrowserPanel.tsx |  4 +-
+ apps/web/src/components/sergey/fileActions.ts | 38 ++++++++++++++++++-
+ .../components/sergey/useT3patchTouchMenu.ts  | 30 +++++++++++++--
+ apps/web/src/pierre-tree-theme.ts             | 16 ++++++++
+ 4 files changed, 82 insertions(+), 6 deletions(-)
+
+diff --git a/apps/web/src/components/files/FileBrowserPanel.tsx b/apps/web/src/components/files/FileBrowserPanel.tsx
+index 5a95e7903f..3dcbeb4b8c 100644
+--- a/apps/web/src/components/files/FileBrowserPanel.tsx
++++ b/apps/web/src/components/files/FileBrowserPanel.tsx
+@@ -519,7 +519,7 @@ export default function FileBrowserPanel({
+     <div
+       ref={panelRef}
+       // t3-patch: подсветка при перетаскивании файлов с компьютера
+-      className="flex min-h-0 flex-1 flex-col bg-background data-t3patch-drop:outline-2 data-t3patch-drop:-outline-offset-2 data-t3patch-drop:outline-primary data-t3patch-drop:bg-primary/5"
++      className="flex min-h-0 w-full min-w-0 max-w-full flex-1 flex-col bg-background data-t3patch-drop:outline-2 data-t3patch-drop:-outline-offset-2 data-t3patch-drop:outline-primary data-t3patch-drop:bg-primary/5"
+       data-file-browser-panel={`${environmentId}:${cwd}`}
+     >
+       <div
+@@ -585,7 +585,7 @@ export default function FileBrowserPanel({
+       <FileTree
+         model={model}
+         aria-label={`${projectName} files`}
+-        className="min-h-0 flex-1 overflow-hidden"
++        className="min-h-0 min-w-0 max-w-full flex-1 overflow-hidden"
+         style={{
+           ...pierreTreeStyle(resolvedTheme),
+           // t3-patch: размер шрифта из меню «⋯» (inline-стиль на хосте сильнее :host в теме)
+diff --git a/apps/web/src/components/sergey/fileActions.ts b/apps/web/src/components/sergey/fileActions.ts
+index f38786e83f..0d815a4145 100644
+--- a/apps/web/src/components/sergey/fileActions.ts
++++ b/apps/web/src/components/sergey/fileActions.ts
+@@ -66,7 +66,12 @@ export function t3patchFileMenuItems(treePath: string): Array<{ id: string; labe
+ export function t3patchRootMenuItems(): Array<{ id: string; label: string }> {
+   return [
+     ...(t3patchSharedFileCount() > 0
+-      ? [{ id: MENU_UPLOAD_SHARED, label: `Загрузить сюда полученные (${t3patchSharedFileCount()})` }]
++      ? [
++          {
++            id: MENU_UPLOAD_SHARED,
++            label: `Загрузить сюда полученные (${t3patchSharedFileCount()})`,
++          },
++        ]
+       : []),
+     { id: MENU_UPLOAD, label: "Загрузить сюда…" },
+     { id: MENU_MKDIR, label: "Новая папка…" },
+@@ -219,7 +224,38 @@ export async function copyWithToast(text: string, title: string) {
+   }
+ }
+ 
++/** Приложение с экрана «Домой» на iPhone/iPad. */
++function t3patchIsIosStandalone(): boolean {
++  const ua = navigator.userAgent;
++  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++  return (
++    ios &&
++    (window.matchMedia?.("(display-mode: standalone)").matches === true ||
++      (navigator as { standalone?: boolean }).standalone === true)
++  );
++}
++
+ export function startDownload(url: string) {
++  // t3-patch: в приложении с экрана «Домой» на iPhone ссылка «скачать» открывала файл прямо в окне
++  // T3 — без кнопки «назад», выйти было нельзя (скриншот 2026-11-02). Там файл открываем в окне
++  // Safari поверх приложения: есть «Готово» и «Поделиться → Сохранить в Файлы». Ссылка подписана
++  // разовым токеном и открывается без входа.
++  if (t3patchIsIosStandalone()) {
++    const absolute = resolvePrimaryEnvironmentHttpUrl(url);
++    if (window.open(absolute, "_blank", "noopener") === null) {
++      // Открытие окна заблокировано (нет свежего нажатия) — открыть по кнопке в уведомлении.
++      toastManager.add({
++        type: "info",
++        title: "Файл готов",
++        description: "Нажмите «Открыть», чтобы посмотреть или сохранить его.",
++        actionProps: {
++          children: "Открыть",
++          onClick: () => void window.open(absolute, "_blank", "noopener"),
++        },
++      });
++    }
++    return;
++  }
+   const link = document.createElement("a");
+   link.href = resolvePrimaryEnvironmentHttpUrl(url);
+   link.rel = "noopener";
+diff --git a/apps/web/src/components/sergey/useT3patchTouchMenu.ts b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+index 94137e8527..7d120d9782 100644
+--- a/apps/web/src/components/sergey/useT3patchTouchMenu.ts
++++ b/apps/web/src/components/sergey/useT3patchTouchMenu.ts
+@@ -10,6 +10,8 @@ import { type RefObject, useEffect } from "react";
+ 
+ const HOLD_MS = 500;
+ const MOVE_TOLERANCE_PX = 10;
++/** Сколько после отпускания пальца гасить нажатия (ложный клик по пункту меню под пальцем). */
++const GHOST_CLICK_MS = 400;
+ 
+ // Строка дерева, а если палец на пустом месте дерева — само дерево (меню корня проекта,
+ // useT3patchRootMenu).
+@@ -30,6 +32,8 @@ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): vo
+     let timer: ReturnType<typeof setTimeout> | null = null;
+     let start: { x: number; y: number } | null = null;
+     let fired = false;
++    /** До какого момента гасить нажатия после меню (см. swallowGhost). */
++    let guardUntil = 0;
+ 
+     const cancel = () => {
+       if (timer !== null) clearTimeout(timer);
+@@ -38,6 +42,7 @@ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): vo
+     };
+     const onTouchStart = (event: TouchEvent) => {
+       fired = false;
++      guardUntil = 0;
+       if (event.touches.length !== 1) return cancel();
+       const row = rowFromEvent(event);
+       if (!row) return;
+@@ -46,6 +51,7 @@ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): vo
+       timer = setTimeout(() => {
+         timer = null;
+         fired = true;
++        guardUntil = Number.POSITIVE_INFINITY; // до отпускания пальца
+         navigator.vibrate?.(10);
+         row.dispatchEvent(
+           new MouseEvent("contextmenu", {
+@@ -70,9 +76,21 @@ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): vo
+         cancel();
+       }
+     };
++    // Меню открывается под пальцем, первый пункт («Скопировать упоминание») оказывается прямо под
++    // ним. На iPhone отпускание пальца засчитывалось нажатием на этот пункт (скриншот 2026-11-02:
++    // «Упоминание скопировано» без выбора). Меню — вне панели, поэтому гасим нажатия по всему
++    // документу до отпускания пальца и ещё GHOST_CLICK_MS после.
++    const swallowGhost = (event: Event) => {
++      if (performance.now() > guardUntil) return;
++      event.preventDefault();
++      event.stopPropagation();
++    };
+     const onTouchEnd = (event: TouchEvent) => {
+       cancel();
+-      if (fired) event.preventDefault(); // не превращать удержание в клик по строке
++      if (fired) {
++        event.preventDefault(); // не превращать удержание в клик по строке
++        guardUntil = performance.now() + GHOST_CLICK_MS;
++      }
+     };
+     const swallowAfterMenu = (event: Event) => {
+       if (!fired) return;
+@@ -95,16 +113,22 @@ export function useT3patchTouchMenu(panelRef: RefObject<HTMLElement | null>): vo
+     panel.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+     panel.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
+     panel.addEventListener("touchend", onTouchEnd, { capture: true });
+-    panel.addEventListener("touchcancel", cancel, { capture: true });
++    panel.addEventListener("touchcancel", onTouchEnd, { capture: true });
+     panel.addEventListener("click", swallowAfterMenu, true);
+     panel.addEventListener("dragstart", blockDragWhileHolding, true);
+     window.addEventListener("contextmenu", blockNativeMenu, true);
++    for (const type of ["click", "mouseup", "pointerup"]) {
++      window.addEventListener(type, swallowGhost, true);
++    }
+     return () => {
++      for (const type of ["click", "mouseup", "pointerup"]) {
++        window.removeEventListener(type, swallowGhost, true);
++      }
+       cancel();
+       panel.removeEventListener("touchstart", onTouchStart, { capture: true });
+       panel.removeEventListener("touchmove", onTouchMove, { capture: true });
+       panel.removeEventListener("touchend", onTouchEnd, { capture: true });
+-      panel.removeEventListener("touchcancel", cancel, { capture: true });
++      panel.removeEventListener("touchcancel", onTouchEnd, { capture: true });
+       panel.removeEventListener("click", swallowAfterMenu, true);
+       panel.removeEventListener("dragstart", blockDragWhileHolding, true);
+       window.removeEventListener("contextmenu", blockNativeMenu, true);
+diff --git a/apps/web/src/pierre-tree-theme.ts b/apps/web/src/pierre-tree-theme.ts
+index af537c56c7..b1dd0bc376 100644
+--- a/apps/web/src/pierre-tree-theme.ts
++++ b/apps/web/src/pierre-tree-theme.ts
+@@ -16,6 +16,22 @@ export const PIERRE_TREE_UNSAFE_CSS = `
+   [data-truncate-content] {
+     white-space: pre;
+   }
++  /* t3-patch: на телефоне сокращение «посередине» ломалось — многоточия не было, конец имени
++     прилипал к началу («2026·docx», «(Дxlsx»; скриншот iPhone 2026-11-02). На сенсорном экране:
++     начало имени с «…», расширение целиком. */
++  @media (pointer: coarse) {
++    button[data-type='item'] [data-item-section='content'] { min-width: 0 !important; overflow: hidden; flex: 1 1 auto; }
++    [data-truncate-group-container='middle'] { display: flex !important; min-width: 0; overflow: hidden; }
++    [data-truncate-segment-priority='2'] { flex: 0 1 auto !important; min-width: 0 !important; overflow: hidden; }
++    [data-truncate-segment-priority='1'] { flex: 0 0 auto !important; min-width: auto !important; }
++    [data-truncate-group-container='middle'] [data-truncate-grid] { display: block !important; }
++    [data-truncate-group-container='middle'] [data-truncate-content='overflow'],
++    [data-truncate-group-container='middle'] [data-truncate-marker-cell],
++    [data-truncate-group-container='middle'] [data-truncate-fill] { display: none !important; }
++    [data-truncate-segment-priority='2'] [data-truncate-content='visible'] {
++      display: block; overflow: hidden; text-overflow: ellipsis; white-space: pre;
++    }
++  }
+ `;
+ 
+ /** Host styles that keep a Pierre tree on the active color scheme and foreground. */
+-- 
+2.43.0
+

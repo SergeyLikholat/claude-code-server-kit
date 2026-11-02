@@ -67,3 +67,8 @@
 0067-web-mobile-collapsed-citation-preview.patch
 0068-web-mobile-statusbar-tint.patch
 0069-web-mobile-theme-color-header.patch
+0070-web-ios-explorer-menu-download-width.patch
+0071-web-ios-download-open-button.patch
+0072-web-ios-download-share-sheet.patch
+0073-web-ios-save-toast-close.patch
+0074-claude-provider-status-ru.patch
