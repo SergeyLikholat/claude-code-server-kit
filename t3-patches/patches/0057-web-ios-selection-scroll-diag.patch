@@ -1,0 +1,205 @@
+From 61d3a7ddb1c20154de66ae77e67757943a35b764 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 1 Nov 2026 12:43:07 +0300
+Subject: [PATCH] =?UTF-8?q?chore(web):=20=D0=92=D0=A0=D0=95=D0=9C=D0=95?=
+ =?UTF-8?q?=D0=9D=D0=9D=D0=9E=20=D0=B7=D0=B0=D0=BC=D0=B5=D1=80=20=D1=81?=
+ =?UTF-8?q?=D0=B4=D0=B2=D0=B8=D0=B3=D0=B0=20=D0=BB=D0=B5=D0=BD=D1=82=D1=8B?=
+ =?UTF-8?q?=20=D0=BF=D1=80=D0=B8=20=D0=B2=D1=8B=D0=B4=D0=B5=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=BD=D0=B8=D0=B8=20=D1=82=D0=B5=D0=BA=D1=81=D1=82=D0=B0=20?=
+ =?UTF-8?q?=D0=BD=D0=B0=20iPhone?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |   2 +
+ .../components/sergey/selectionScrollDiag.tsx | 157 ++++++++++++++++++
+ 2 files changed, 159 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/selectionScrollDiag.tsx
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 464b7c0d5b..2b5bfec913 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -57,6 +57,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «назад» в PWA → список тредов
+ import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
+ import { T3patchIosEdgeSwipe } from "./sergey/iosEdgeSwipe"; // t3-patch: свой свайп меню вместо системного «назад» на iPhone
++import { T3patchSelectionScrollDiag } from "./sergey/selectionScrollDiag"; // t3-patch ВРЕМЕННО: замер сдвига ленты при выделении
+ import { T3patchIosKeyboardViewport } from "./sergey/iosKeyboardViewport"; // t3-patch: поле ввода над клавиатурой iPhone
+ 
+ const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+@@ -339,6 +340,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+         <T3patchBackToMenu />
+         <T3patchIosLongPressMenu />
+         <T3patchIosEdgeSwipe />
++        <T3patchSelectionScrollDiag />
+         <T3patchIosKeyboardViewport />
+       </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+diff --git a/apps/web/src/components/sergey/selectionScrollDiag.tsx b/apps/web/src/components/sergey/selectionScrollDiag.tsx
+new file mode 100644
+index 0000000000..31b1802bab
+--- /dev/null
++++ b/apps/web/src/components/sergey/selectionScrollDiag.tsx
+@@ -0,0 +1,157 @@
++/**
++ * t3-patch, ВРЕМЕННО: замер «лента уезжает во время выделения текста» — PWA на iPhone.
++ *
++ * Записи экрана 2026-11-01: при выделении текста в ответе лента плавно сдвигалась на ~45 px,
++ * выделение срывалось. В эмуляторе не повторяется. Здесь: после начала выделения 4 с пишутся
++ * прокрутки ленты (сдвиг, время) и кто их вызвал — код (scrollTop/scrollTo, файл:колонка из стека)
++ * или нет (тогда это сам iOS); изменения высоты сообщений; сброс выделения. Итог — строка вверху.
++ *
++ * Только iPhone/iPad. Убрать после разбора (вместе со строкой в AppSidebarLayout).
++ */
++import { useEffect } from "react";
++
++const RECORD_MS = 4000;
++const SHOW_MS = 12_000;
++
++function isIosTouchDevice(): boolean {
++  const ua = navigator.userAgent;
++  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++}
++
++function findTimelineViewport(): HTMLElement | null {
++  const candidates = [...document.querySelectorAll<HTMLElement>("main *")].filter(
++    (element) =>
++      element.scrollHeight > element.clientHeight + 50 &&
++      /auto|scroll/.test(getComputedStyle(element).overflowY),
++  );
++  candidates.sort((a, b) => b.clientHeight - a.clientHeight);
++  return candidates[0] ?? null;
++}
++
++function callerOf(stack: string | undefined): string {
++  const frames = (stack ?? "").split("\n").slice(2, 6);
++  for (const frame of frames) {
++    const match = /([^/]+\.js):\d+:(\d+)/.exec(frame);
++    if (match && !match[1]!.startsWith("selectionScrollDiag")) return `${match[1]}:${match[2]}`;
++  }
++  return "?";
++}
++
++export function T3patchSelectionScrollDiag(): null {
++  useEffect(() => {
++    if (!isIosTouchDevice()) return;
++    let recording = false;
++    let t0 = 0;
++    let events: string[] = [];
++    let strip: HTMLDivElement | null = null;
++    let hideTimer: ReturnType<typeof setTimeout> | null = null;
++    let undo: (() => void) | null = null;
++    let lastCode = { at: 0, who: "" };
++
++    const log = (entry: string) => {
++      if (recording) events.push(`${Math.round(performance.now() - t0)}${entry}`);
++    };
++    const show = () => {
++      if (!strip) {
++        strip = document.createElement("div");
++        strip.style.cssText =
++          "position:fixed;left:0;right:0;top:env(safe-area-inset-top);z-index:2147483647;" +
++          "font:10px/1.3 ui-monospace,monospace;background:#000d;color:#0f0;padding:2px 6px;" +
++          "pointer-events:none;white-space:normal;word-break:break-all";
++        document.body.appendChild(strip);
++      }
++      strip.textContent = `sel: ${events.join(" ").slice(0, 600)}`;
++      if (hideTimer !== null) clearTimeout(hideTimer);
++      hideTimer = setTimeout(() => {
++        strip?.remove();
++        strip = null;
++      }, SHOW_MS);
++    };
++
++    const start = () => {
++      const viewport = findTimelineViewport();
++      if (!viewport) return;
++      recording = true;
++      t0 = performance.now();
++      events = [`0·выд(${viewport.scrollTop | 0})`];
++      let lastTop = viewport.scrollTop;
++      const onScroll = () => {
++        const top = viewport.scrollTop;
++        const byCode = performance.now() - lastCode.at < 50 ? `@${lastCode.who}` : "@ios?";
++        log(`·прокр${Math.round(top - lastTop)}${byCode}`);
++        lastTop = top;
++      };
++      viewport.addEventListener("scroll", onScroll, { passive: true });
++
++      // Кто прокручивает кодом: перехват scrollTop/scrollTo/scrollBy именно у ленты.
++      const proto = Object.getPrototypeOf(viewport) as HTMLElement;
++      const topDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
++      Object.defineProperty(viewport, "scrollTop", {
++        configurable: true,
++        get() {
++          return topDescriptor.get!.call(this);
++        },
++        set(value: number) {
++          lastCode = { at: performance.now(), who: `top:${callerOf(new Error().stack)}` };
++          topDescriptor.set!.call(this, value);
++        },
++      });
++      const wrap = (name: "scrollTo" | "scrollBy") => {
++        const original = proto[name];
++        (viewport as unknown as Record<string, unknown>)[name] = function (
++          this: HTMLElement,
++          ...args: unknown[]
++        ) {
++          lastCode = { at: performance.now(), who: `${name}:${callerOf(new Error().stack)}` };
++          return (original as (...a: unknown[]) => void).apply(this, args);
++        };
++      };
++      wrap("scrollTo");
++      wrap("scrollBy");
++
++      // Высота сообщений над экраном: её рост сдвигает текст без всякой прокрутки.
++      const resize = new ResizeObserver((entries) => {
++        for (const entry of entries) {
++          const box = entry.target.getBoundingClientRect();
++          if (box.bottom < viewport.getBoundingClientRect().top + 40) {
++            log(`·выше${Math.round(entry.contentRect.height)}`);
++          }
++        }
++      });
++      for (const child of viewport.querySelectorAll(":scope > * > *, :scope > * > * > *")) {
++        resize.observe(child);
++      }
++
++      undo = () => {
++        viewport.removeEventListener("scroll", onScroll);
++        delete (viewport as unknown as Record<string, unknown>).scrollTop;
++        delete (viewport as unknown as Record<string, unknown>).scrollTo;
++        delete (viewport as unknown as Record<string, unknown>).scrollBy;
++        resize.disconnect();
++      };
++      setTimeout(() => {
++        recording = false;
++        undo?.();
++        undo = null;
++        show();
++      }, RECORD_MS);
++    };
++
++    let wasSelected = false;
++    const onSelectionChange = () => {
++      const selection = window.getSelection();
++      const selected = !!selection && !selection.isCollapsed;
++      if (selected && !recording) start();
++      if (!selected && wasSelected) log("·сброс");
++      wasSelected = selected;
++    };
++    document.addEventListener("selectionchange", onSelectionChange);
++    return () => {
++      document.removeEventListener("selectionchange", onSelectionChange);
++      undo?.();
++      if (hideTimer !== null) clearTimeout(hideTimer);
++      strip?.remove();
++    };
++  }, []);
++  return null;
++}
+-- 
+2.43.0
+

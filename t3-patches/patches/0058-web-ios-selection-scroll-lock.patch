@@ -1,0 +1,144 @@
+From 45ed02fbf345b3df7236eff42d3521a1585fd755 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 1 Nov 2026 16:18:13 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20iPhone=20=E2=80=94=20=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=BD=D1=82=D0=B0=20=D0=BD=D0=B5=20=D1=83=D0=B5=D0=B7=D0=B6?=
+ =?UTF-8?q?=D0=B0=D0=B5=D1=82=20=D0=BF=D1=80=D0=B8=20=D0=B2=D1=8B=D0=B4?=
+ =?UTF-8?q?=D0=B5=D0=BB=D0=B5=D0=BD=D0=B8=D0=B8=20=D1=82=D0=B5=D0=BA=D1=81?=
+ =?UTF-8?q?=D1=82=D0=B0=20(=D0=B0=D0=B2=D1=82=D0=BE=D0=BF=D1=80=D0=BE?=
+ =?UTF-8?q?=D0=BA=D1=80=D1=83=D1=82=D0=BA=D0=B0=20iOS=20=D0=BE=D1=82=D0=BA?=
+ =?UTF-8?q?=D0=B0=D1=82=D1=8B=D0=B2=D0=B0=D0=B5=D1=82=D1=81=D1=8F)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |  2 +
+ .../sergey/iosSelectionScrollLock.tsx         | 95 +++++++++++++++++++
+ 2 files changed, 97 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/iosSelectionScrollLock.tsx
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 2b5bfec913..b50bc34f48 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -58,6 +58,7 @@ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «наза
+ import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
+ import { T3patchIosEdgeSwipe } from "./sergey/iosEdgeSwipe"; // t3-patch: свой свайп меню вместо системного «назад» на iPhone
+ import { T3patchSelectionScrollDiag } from "./sergey/selectionScrollDiag"; // t3-patch ВРЕМЕННО: замер сдвига ленты при выделении
++import { T3patchIosSelectionScrollLock } from "./sergey/iosSelectionScrollLock"; // t3-patch: лента стоит, пока на iPhone выделяют текст
+ import { T3patchIosKeyboardViewport } from "./sergey/iosKeyboardViewport"; // t3-patch: поле ввода над клавиатурой iPhone
+ 
+ const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+@@ -341,6 +342,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+         <T3patchIosLongPressMenu />
+         <T3patchIosEdgeSwipe />
+         <T3patchSelectionScrollDiag />
++        <T3patchIosSelectionScrollLock />
+         <T3patchIosKeyboardViewport />
+       </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+diff --git a/apps/web/src/components/sergey/iosSelectionScrollLock.tsx b/apps/web/src/components/sergey/iosSelectionScrollLock.tsx
+new file mode 100644
+index 0000000000..dacde63915
+--- /dev/null
++++ b/apps/web/src/components/sergey/iosSelectionScrollLock.tsx
+@@ -0,0 +1,95 @@
++/**
++ * t3-patch: лента не уезжает, пока на iPhone выделяют текст.
++ *
++ * Замер 2026-11-01 (selectionScrollDiag): пока тянешь ручку выделения, iOS сам подкручивает
++ * ленту по 1–3 px за кадр (автопрокрутка выделения внутри прокручиваемой области) — кода T3 в
++ * этом нет. Текст уезжает из-под пальца, выделение срывается; особенно с левой ручкой.
++ *
++ * Здесь: пока есть выделение, прокрутка ленты, сделанная не пальцем по странице, откатывается.
++ * Ручку выделения iPhone рисует сам, её касания до страницы не доходят — так их и отличаем.
++ * Листание пальцем (и инерция после него) работает как обычно.
++ *
++ * Только iPhone/iPad.
++ */
++import { useEffect } from "react";
++
++/** Сколько после касания страницы прокрутка ещё считается пальцевой (инерция после взмаха). */
++const FINGER_SCROLL_GRACE_MS = 1200;
++
++function isIosTouchDevice(): boolean {
++  const ua = navigator.userAgent;
++  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++}
++
++function scrollableAncestor(node: Node | null): HTMLElement | null {
++  let element: HTMLElement | null =
++    node instanceof HTMLElement ? node : (node?.parentElement ?? null);
++  while (element && element !== document.body) {
++    const overflowY = getComputedStyle(element).overflowY;
++    if (/auto|scroll/.test(overflowY) && element.scrollHeight > element.clientHeight)
++      return element;
++    element = element.parentElement;
++  }
++  return null;
++}
++
++export function T3patchIosSelectionScrollLock(): null {
++  useEffect(() => {
++    if (!isIosTouchDevice()) return;
++    let fingerDown = false;
++    let moved = false;
++    /** До какого момента прокрутка — инерция после взмаха пальцем. */
++    let momentumUntil = 0;
++    let locked: { element: HTMLElement; top: number } | null = null;
++
++    const onTouchStart = () => {
++      fingerDown = true;
++      moved = false;
++    };
++    const onTouchMove = () => {
++      moved = true;
++    };
++    const onTouchEnd = () => {
++      fingerDown = false;
++      // Долгое нажатие (им и создаётся выделение) кончается без движения — инерции нет.
++      momentumUntil = moved ? performance.now() + FINGER_SCROLL_GRACE_MS : 0;
++    };
++
++    const onScroll = (event: Event) => {
++      if (!locked || event.target !== locked.element) return;
++      const byFinger = (fingerDown && moved) || performance.now() < momentumUntil;
++      if (byFinger) {
++        locked.top = locked.element.scrollTop;
++        return;
++      }
++      if (locked.element.scrollTop !== locked.top) locked.element.scrollTop = locked.top;
++    };
++
++    const onSelectionChange = () => {
++      const selection = window.getSelection();
++      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
++        locked = null;
++        return;
++      }
++      if (locked) return;
++      const element = scrollableAncestor(selection.anchorNode);
++      if (element) locked = { element, top: element.scrollTop };
++    };
++
++    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
++    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
++    document.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
++    document.addEventListener("touchcancel", onTouchEnd, { capture: true, passive: true });
++    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
++    document.addEventListener("selectionchange", onSelectionChange);
++    return () => {
++      document.removeEventListener("touchstart", onTouchStart, { capture: true });
++      document.removeEventListener("touchmove", onTouchMove, { capture: true });
++      document.removeEventListener("touchend", onTouchEnd, { capture: true });
++      document.removeEventListener("touchcancel", onTouchEnd, { capture: true });
++      document.removeEventListener("scroll", onScroll, { capture: true });
++      document.removeEventListener("selectionchange", onSelectionChange);
++    };
++  }, []);
++  return null;
++}
+-- 
+2.43.0
+

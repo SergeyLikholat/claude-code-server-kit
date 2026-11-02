@@ -1,0 +1,193 @@
+From c6f3e0ee3a5cfbf24d169b4936f6e133f2ae9cfd Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 1 Nov 2026 23:26:34 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20=D1=82=D0=B5=D0=BB=D0=B5=D1=84?=
+ =?UTF-8?q?=D0=BE=D0=BD=20=E2=80=94=20=D1=88=D0=B0=D0=BF=D0=BA=D0=B0=20?=
+ =?UTF-8?q?=D1=82=D1=80=D0=B5=D0=B4=D0=B0=20=D0=BA=D0=B0=D0=BA=20=D0=B2=20?=
+ =?UTF-8?q?Android-=D0=BF=D1=80=D0=B8=D0=BB=D0=BE=D0=B6=D0=B5=D0=BD=D0=B8?=
+ =?UTF-8?q?=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Слева «←» вместо значка панели, под заголовком «проект · сервер», справа «⋮» без «+».
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |  5 ++++
+ apps/web/src/components/chat/ChatHeader.tsx   | 29 +++++++++++++++----
+ .../src/components/sergey/businessMode.tsx    |  7 +++--
+ apps/web/src/components/ui/sidebar.tsx        | 13 +++++++--
+ 4 files changed, 44 insertions(+), 10 deletions(-)
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index f46485abc5..91406c7b2e 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -54,6 +54,8 @@ import {
+   useSidebarVisibility,
+ } from "./ui/sidebar";
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
++import { ArrowLeftIcon } from "lucide-react"; // t3-patch: стрелка «←» вместо значка панели на телефоне
++import { useIsMobile } from "../hooks/useMediaQuery"; // t3-patch: шапка как в Android только на узком экране
+ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «назад» в PWA → список тредов
+ import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
+ import { T3patchIosEdgeSwipe } from "./sergey/iosEdgeSwipe"; // t3-patch: свой свайп меню вместо системного «назад» на iPhone
+@@ -88,6 +90,7 @@ function SidebarControl() {
+   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+   const { toggleSidebar } = useSidebar();
+   const isSidebarVisible = useSidebarVisibility();
++  const isMobile = useIsMobile(); // t3-patch: на телефоне кнопка — «←» к списку тредов, как в Android
+   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+   const stageBackdropVariant = useSidebarStageBackdropVariant(
+     environmentIdentificationMode === "artwork",
+@@ -150,6 +153,8 @@ function SidebarControl() {
+                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+               )}
+               aria-label="Toggle main sidebar"
++              // t3-patch: на телефоне стрелка «←», как в Android-приложении; действие то же
++              {...(isMobile ? { icon: <ArrowLeftIcon className="size-5" /> } : {})}
+             />
+           }
+         />
+diff --git a/apps/web/src/components/chat/ChatHeader.tsx b/apps/web/src/components/chat/ChatHeader.tsx
+index 5369999633..dfdcc71f73 100644
+--- a/apps/web/src/components/chat/ChatHeader.tsx
++++ b/apps/web/src/components/chat/ChatHeader.tsx
+@@ -11,7 +11,7 @@ import {
+   isAtomCommandInterrupted,
+   squashAtomCommandFailure,
+ } from "@t3tools/client-runtime/state/runtime";
+-import { ChevronDownIcon, EllipsisIcon } from "lucide-react";
++import { ChevronDownIcon, EllipsisIcon, EllipsisVerticalIcon } from "lucide-react"; // t3-patch: «⋮» на телефоне
+ import {
+   memo,
+   useCallback,
+@@ -34,7 +34,7 @@ import ProjectScriptsControl, {
+ } from "../ProjectScriptsControl";
+ import { OpenInPicker } from "./OpenInPicker";
+ import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
+-import { usePrimaryEnvironmentId } from "../../state/environments";
++import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments"; // t3-patch: имя сервера под заголовком
+ import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
+ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+ import { readLocalApi } from "~/localApi";
+@@ -205,6 +205,13 @@ export const ChatHeader = memo(function ChatHeader({
+   if (!actionsCollapsed && actionsOpen) setActionsOpen(false);
+   const primaryEnvironmentId = usePrimaryEnvironmentId();
+   const activeProjectName = activeProject?.title;
++  // t3-patch: под заголовком на телефоне «проект · сервер», как в Android («ТК · Вектор · koara»).
++  // Имя сервера — его собственная метка (hostname), иначе метка подключения; нет — только проект.
++  const t3patchEnvironment = useEnvironment(activeThreadEnvironmentId);
++  const t3patchServerLabel =
++    t3patchEnvironment?.serverConfig?.environment.label?.trim() ||
++    t3patchEnvironment?.label?.trim() ||
++    null;
+   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+   const fileScripts = useT3ProjectFileScripts(
+     activeThreadEnvironmentId,
+@@ -500,8 +507,12 @@ export const ChatHeader = memo(function ChatHeader({
+           )}
+           {activeProject && renamingTitle === null ? (
+             <span className="flex max-w-full min-w-0 items-center gap-1 text-xs font-normal text-muted-foreground sm:hidden">
+-              <ProjectFavicon project={activeProject} className="size-3" />
+-              <span className="truncate">{activeProjectName}</span>
++              {/* t3-patch: как в Android — без значка, «проект · сервер» */}
++              <span className="truncate">
++                {t3patchServerLabel
++                  ? `${activeProjectName} · ${t3patchServerLabel}`
++                  : activeProjectName}
++              </span>
+             </span>
+           ) : null}
+         </WorkspaceBreadcrumbItem>
+@@ -537,7 +548,12 @@ export const ChatHeader = memo(function ChatHeader({
+                 }
+                 render={<Button size="icon-sm" variant="ghost" aria-label="More header actions" />}
+               >
+-                <EllipsisIcon className="size-4" />
++                {/* t3-patch: на телефоне «⋮», как в Android */}
++                {isMobile ? (
++                  <EllipsisVerticalIcon className="size-4" />
++                ) : (
++                  <EllipsisIcon className="size-4" />
++                )}
+               </MenuTrigger>
+               <div ref={mountInlineActions} className="contents" />
+               <MenuPopup
+@@ -554,7 +570,8 @@ export const ChatHeader = memo(function ChatHeader({
+           </>
+         ) : null}
+         <T3patchBusinessHeaderActions
+-          onNewThread={!t3patchDevMode && activeProject ? onNewThreadInProject : null}
++          // t3-patch: на телефоне «+» в шапке нет, как в Android — новый тред из списка тредов
++          onNewThread={!t3patchDevMode && activeProject && !isMobile ? onNewThreadInProject : null}
+           terminalAvailable={t3patchTerminalAvailable}
+           terminalOpen={t3patchTerminalOpen}
+           onToggleTerminal={() => t3patchOnToggleTerminal?.()}
+diff --git a/apps/web/src/components/sergey/businessMode.tsx b/apps/web/src/components/sergey/businessMode.tsx
+index b136d5c689..23d7f42eb1 100644
+--- a/apps/web/src/components/sergey/businessMode.tsx
++++ b/apps/web/src/components/sergey/businessMode.tsx
+@@ -7,9 +7,10 @@
+  * В «⋯» — терминал и переключатель «Режим разработчика», который возвращает штатную шапку.
+  * Режим хранится на устройстве (localStorage), горячие клавиши работают в обоих режимах.
+  */
+-import { EllipsisIcon, PlusIcon } from "lucide-react";
++import { EllipsisIcon, EllipsisVerticalIcon, PlusIcon } from "lucide-react";
+ import { useSyncExternalStore } from "react";
+ 
++import { useIsMobile } from "../../hooks/useMediaQuery";
+ import { Button } from "../ui/button";
+ import { Menu, MenuCheckboxItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+ 
+@@ -59,6 +60,8 @@ export function T3patchBusinessHeaderActions(props: {
+   readonly onToggleTerminal: () => void;
+ }) {
+   const devMode = useT3patchDevMode();
++  // На телефоне «⋮» вместо «…», как в Android-приложении.
++  const isMobile = useIsMobile();
+   return (
+     <>
+       {/* Кнопки одного калибра с переключателем панели справа (Toggle sm): без рамки и заливки,
+@@ -77,7 +80,7 @@ export function T3patchBusinessHeaderActions(props: {
+       ) : null}
+       <Menu>
+         <MenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Ещё" />}>
+-          <EllipsisIcon />
++          {isMobile ? <EllipsisVerticalIcon /> : <EllipsisIcon />}
+         </MenuTrigger>
+         <MenuPopup align="end" className="w-72">
+           <MenuCheckboxItem
+diff --git a/apps/web/src/components/ui/sidebar.tsx b/apps/web/src/components/ui/sidebar.tsx
+index 64455ee227..dc7cf7dd83 100644
+--- a/apps/web/src/components/ui/sidebar.tsx
++++ b/apps/web/src/components/ui/sidebar.tsx
+@@ -346,7 +346,15 @@ function Sidebar({
+   );
+ }
+ 
+-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
++function SidebarTrigger({
++  className,
++  onClick,
++  icon,
++  ...props
++}: React.ComponentProps<typeof Button> & {
++  // t3-patch: свой значок для неподвижной кнопки (на телефоне — стрелка «←», как в Android)
++  icon?: React.ReactNode;
++}) {
+   const { toggleSidebar } = useSidebar();
+   const isOpen = useSidebarVisibility();
+ 
+@@ -367,7 +375,8 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
+       variant="ghost"
+       {...props}
+     >
+-      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
++      {icon ??
++        (isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />)}
+       <span className="sr-only">Toggle Sidebar</span>
+     </Button>
+   );
+-- 
+2.43.0
+

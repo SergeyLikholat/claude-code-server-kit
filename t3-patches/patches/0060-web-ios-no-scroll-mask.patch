@@ -1,0 +1,41 @@
+From 7f59c94b6cc25c3272238650fc3a792d877d3f9c Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 1 Nov 2026 21:14:07 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20iPhone=20=E2=80=94=20=D0=B1=D0=B5?=
+ =?UTF-8?q?=D0=B7=20=D0=BC=D0=B0=D1=81=D0=BA=D0=B8-=D0=B7=D0=B0=D1=82?=
+ =?UTF-8?q?=D1=83=D1=85=D0=B0=D0=BD=D0=B8=D1=8F=20=D1=83=20=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=BD=D1=82=D1=8B=20(mask-image=20=D0=BB=D0=BE=D0=BC=D0=B0?=
+ =?UTF-8?q?=D0=BB=20=D0=B7=D0=B0=D1=85=D0=B2=D0=B0=D1=82=20=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B9=20=D1=80=D1=83=D1=87=D0=BA=D0=B8=20=D0=B2?=
+ =?UTF-8?q?=D1=8B=D0=B4=D0=B5=D0=BB=D0=B5=D0=BD=D0=B8=D1=8F)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/index.css | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index 565da4b331..ecec740cdf 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2315,3 +2315,15 @@ html[data-t3patch-back-menu="true"] [data-slot="sidebar-inset"] {
+   .text-foreground {
+   color: var(--color-secondary-label);
+ }
++
++/* t3-patch: на iPhone/iPad у ленты и прокручиваемых групп внутри неё нет маски-затухания у краёв.
++   Маска (mask-image) на прокручиваемой области ломает в Safari iOS захват левой ручки выделения:
++   её нельзя потянуть влево/вверх. Найдено пошагово на проверочных страницах 2026-11-01 (виновата
++   только маска). @supports (-webkit-touch-callout) — это свойство понимает только Safari на iOS. */
++@supports (-webkit-touch-callout: none) {
++  .topbar-scroll-fade,
++  .virtualized-scroll-fade {
++    -webkit-mask-image: none !important;
++    mask-image: none !important;
++  }
++}
+-- 
+2.43.0
+

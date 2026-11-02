@@ -1,0 +1,65 @@
+From 73f9130f5404fe3c4aa5b49a8aa506d69f4ed719 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 29 Oct 2026 22:06:16 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20iPhone=20=E2=80=94=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=D0=BB=D0=B5=20=D0=B2=D0=B2=D0=BE=D0=B4=D0=B0=20=D1=81=20=D0=BE?=
+ =?UTF-8?q?=D0=B4=D0=BD=D0=BE=D0=B3=D0=BE=20=D0=BA=D0=B0=D1=81=D0=B0=D0=BD?=
+ =?UTF-8?q?=D0=B8=D1=8F,=20=D0=B1=D0=B5=D0=B7=20=D0=B4=D0=B2=D0=BE=D0=B9?=
+ =?UTF-8?q?=D0=BD=D0=BE=D0=B9=20=D0=BA=D0=BD=D0=BE=D0=BF=D0=BA=D0=B8=20?=
+ =?UTF-8?q?=D0=BC=D0=B5=D0=BD=D1=8E=20=D0=B8=20=D1=80=D0=B0=D0=B7=D0=BC?=
+ =?UTF-8?q?=D1=8B=D1=82=D0=BE=D0=B9=20=D0=BF=D0=BE=D0=B4=D0=BB=D0=BE=D0=B6?=
+ =?UTF-8?q?=D0=BA=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/chat/ChatComposer.tsx |  7 +++++--
+ apps/web/src/index.css                        | 14 ++++++++++++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+index f0383dbaf1..af9530394b 100644
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -3903,10 +3903,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+       window.cancelAnimationFrame(mobileComposerExpandReleaseFrameRef.current);
+     }
+     mobileComposerExpandInFlightRef.current = true;
+-    setIsComposerFocused(true);
++    // t3-patch: фокус — прямо в обработчике касания. iPhone открывает клавиатуру только на
++    // focus() внутри жеста; через requestAnimationFrame фокус молча игнорировался, и поле
++    // приходилось нажимать второй раз. flushSync раскрывает редактор до вызова focus().
++    flushSync(() => setIsComposerFocused(true));
++    composerEditorRef.current?.focusAtEnd();
+     mobileComposerExpandFrameRef.current = window.requestAnimationFrame(() => {
+       mobileComposerExpandFrameRef.current = null;
+-      composerEditorRef.current?.focusAtEnd();
+       mobileComposerExpandReleaseFrameRef.current = window.requestAnimationFrame(() => {
+         mobileComposerExpandReleaseFrameRef.current = null;
+         mobileComposerExpandInFlightRef.current = false;
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index bec27a9b87..d66bbae1a8 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2241,3 +2241,17 @@ html[data-t3patch-instant-sheet="true"] [data-slot="sidebar"][data-mobile="true"
+ html[data-t3patch-instant-sheet="true"] [data-slot="sheet-backdrop"] {
+   transition: none !important;
+ }
++
++/* t3-patch: пока мобильное меню открыто (оно во весь экран), плавающие кнопки страницы поверх него
++   не показываем — иначе кнопка меню двоится со своей кнопкой в шапке меню, а папка висит сверху.
++   Подложку меню без размытия: под меню во весь экран её не видно, а backdrop-filter в Safari на
++   iPhone даёт короткие чёрные кадры. */
++html:has([data-slot="sidebar"][data-mobile="true"][data-open])
++  :is([data-sidebar-control], [data-workspace-titlebar-controls]) {
++  visibility: hidden;
++}
++html:has([data-slot="sidebar"][data-mobile="true"]) [data-slot="sheet-backdrop"] {
++  backdrop-filter: none;
++  -webkit-backdrop-filter: none;
++  background: transparent;
++}
+-- 
+2.43.0
+

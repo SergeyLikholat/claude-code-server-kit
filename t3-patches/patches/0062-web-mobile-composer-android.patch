@@ -1,0 +1,494 @@
+From 22bae8d3095c194c99001fb0dde4b075c8e886b7 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sun, 1 Nov 2026 23:34:56 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20=D1=82=D0=B5=D0=BB=D0=B5=D1=84?=
+ =?UTF-8?q?=D0=BE=D0=BD=20=E2=80=94=20=D0=BF=D0=BE=D0=BB=D0=B5=20=D0=B2?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B4=D0=B0=20=D0=BA=D0=B0=D0=BA=20=D0=B2=20Androi?=
+ =?UTF-8?q?d-=D0=BF=D1=80=D0=B8=D0=BB=D0=BE=D0=B6=D0=B5=D0=BD=D0=B8=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Свёрнутое поле: «+» (вложения), «Задача агенту или команда…», отправить/стоп; без строки настроек.
+Развёрнутое: «+» слева, справа выбор модели и кнопка. Глубина рассуждения и режим — в меню модели.
+---
+ apps/web/src/components/chat/ChatComposer.tsx | 252 +++++++++++-------
+ .../components/chat/ProviderModelPicker.tsx   |   8 +-
+ .../sergey/mobileAndroidComposer.tsx          |  84 ++++++
+ 3 files changed, 251 insertions(+), 93 deletions(-)
+ create mode 100644 apps/web/src/components/sergey/mobileAndroidComposer.tsx
+
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+index 9186441bc2..e638e2009f 100644
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -985,7 +985,13 @@ import {
+ } from "@t3tools/client-runtime/providerSkills";
+ import { searchProviderSkills } from "../../providerSkillSearch";
+ import { useDelayedStatus } from "../../hooks/useDelayedStatus";
+-import { useMediaQuery } from "../../hooks/useMediaQuery";
++import { useIsMobile, useMediaQuery } from "../../hooks/useMediaQuery"; // t3-patch: useIsMobile — вид как в Android
++import {
++  T3PATCH_MOBILE_COMPOSER_PLACEHOLDER,
++  T3patchCollapsedStopButton,
++  T3patchComposerPlusButton,
++  T3patchModelPickerExtras,
++} from "../sergey/mobileAndroidComposer"; // t3-patch: поле ввода на телефоне как в Android
+ import { usePanelAnimationSettings } from "../../panelAnimations";
+ import { useAtomCommand } from "../../state/use-atom-command";
+ import { serverEnvironment } from "../../state/server";
+@@ -2127,6 +2133,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+   const isMobileViewport = useMediaQuery("max-sm");
++  // t3-patch: телефон в браузере (< 768px) — поле ввода как в Android-приложении
++  const t3patchAndroidLook = useIsMobile();
+   const {
+     isComposerFocused,
+     setIsComposerFocused,
+@@ -4768,8 +4776,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+     setIsComposerModelPickerOpen(false);
+   }
+   useLayoutEffect(() => {
+-    onRestingControlsVisibilityChange(composerControlsVisibleInStrip);
+-  }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange]);
++    // t3-patch: на телефоне строки «модель / глубина / режим» под полем нет, как в Android
++    onRestingControlsVisibilityChange(composerControlsVisibleInStrip && !t3patchAndroidLook);
++  }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange, t3patchAndroidLook]);
+   useLayoutEffect(() => {
+     onRestingChange(isComposerResting);
+   }, [isComposerResting, onRestingChange]);
+@@ -5009,6 +5018,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+   const hiddenRestingBlockIds = restingBlockDefs
+     .slice(restingBlockDefs.length - restingHiddenBlockCount)
+     .map((def) => def.id);
++  // t3-patch: на телефоне глубина рассуждения и режим — разделы в меню выбора модели (как в
++  // Android); внутри штатные переключатели T3 с теми же обработчиками.
++  const t3patchModelPickerExtras = t3patchAndroidLook ? (
++    <T3patchModelPickerExtras
++      effort={renderProviderTraitsPicker({ ...providerTraitsPickerInput, size: "sm" })}
++      mode={
++        <ComposerFooterModeControls
++          showInteractionModeToggle={planModeUiEnabled}
++          interactionMode={interactionMode}
++          runtimeMode={runtimeMode}
++          size="sm"
++          onToggleInteractionMode={toggleInteractionMode}
++          onRuntimeModeChange={handleRuntimeModeChange}
++        />
++      }
++    />
++  ) : null;
+   const composerControls = showProviderUnavailable ? (
+     <ComposerControl
+       type="button"
+@@ -5090,7 +5116,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+         triggerClassName={
+           composerControlsInStrip
+             ? "min-w-13 shrink text-xs! @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-0 @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:flex-none"
+-            : "-ms-2.5 min-w-13"
++            : t3patchAndroidLook
++              ? "min-w-13" // t3-patch: на телефоне выбор модели справа, рядом с кнопкой
++              : "-ms-2.5 min-w-13"
+         }
+         terminalOpen={terminalOpen}
+         open={isComposerModelPickerOpen}
+@@ -5115,54 +5143,60 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+           onProviderModelSelect(instanceId, model);
+         }}
+         onOpenProviderSetup={onOpenProviderSetup}
++        t3patchExtraContent={t3patchModelPickerExtras}
+       />
+ 
+-      <>
+-        {restingBlockDefs.map((def, index) => {
+-          const hidden = index >= restingBlockDefs.length - restingHiddenBlockCount;
+-          return (
+-            <div
+-              key={def.id}
+-              data-resting-block={def.id}
+-              data-composer-block-icon-only={
+-                index >= restingBlockDefs.length - iconOnlyBlockCount ? "true" : "false"
++      {/* t3-patch: на телефоне глубина, режим и «…» не показываются в строке — они в меню модели */}
++      {t3patchAndroidLook ? null : (
++        <>
++          {restingBlockDefs.map((def, index) => {
++            const hidden = index >= restingBlockDefs.length - restingHiddenBlockCount;
++            return (
++              <div
++                key={def.id}
++                data-resting-block={def.id}
++                data-composer-block-icon-only={
++                  index >= restingBlockDefs.length - iconOnlyBlockCount ? "true" : "false"
++                }
++                aria-hidden={hidden || undefined}
++                inert={hidden || undefined}
++                className={cn(
++                  "flex w-max min-w-max shrink-0 items-center gap-1",
++                  hidden && "pointer-events-none invisible absolute",
++                  index >= restingBlockDefs.length - iconOnlyBlockCount &&
++                    "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",
++                )}
++              >
++                {def.content}
++              </div>
++            );
++          })}
++          <div
++            data-resting-controls-overflow
++            aria-hidden={hiddenRestingBlockIds.length === 0 || undefined}
++            inert={hiddenRestingBlockIds.length === 0 || undefined}
++            className={cn(
++              "min-w-0 shrink-0",
++              hiddenRestingBlockIds.length === 0 && "pointer-events-none invisible absolute",
++            )}
++          >
++            <CompactComposerControlsMenu
++              interactionMode={interactionMode}
++              runtimeMode={runtimeMode}
++              size={composerControlsInStrip ? "xs" : "sm"}
++              hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
++              showInteractionModeToggle={
++                planModeUiEnabled && hiddenRestingBlockIds.includes("mode")
+               }
+-              aria-hidden={hidden || undefined}
+-              inert={hidden || undefined}
+-              className={cn(
+-                "flex w-max min-w-max shrink-0 items-center gap-1",
+-                hidden && "pointer-events-none invisible absolute",
+-                index >= restingBlockDefs.length - iconOnlyBlockCount &&
+-                  "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",
+-              )}
+-            >
+-              {def.content}
+-            </div>
+-          );
+-        })}
+-        <div
+-          data-resting-controls-overflow
+-          aria-hidden={hiddenRestingBlockIds.length === 0 || undefined}
+-          inert={hiddenRestingBlockIds.length === 0 || undefined}
+-          className={cn(
+-            "min-w-0 shrink-0",
+-            hiddenRestingBlockIds.length === 0 && "pointer-events-none invisible absolute",
+-          )}
+-        >
+-          <CompactComposerControlsMenu
+-            interactionMode={interactionMode}
+-            runtimeMode={runtimeMode}
+-            size={composerControlsInStrip ? "xs" : "sm"}
+-            hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
+-            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
+-            traitsMenuContent={
+-              hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+-            }
+-            onToggleInteractionMode={toggleInteractionMode}
+-            onRuntimeModeChange={handleRuntimeModeChange}
+-          />
+-        </div>
+-      </>
++              traitsMenuContent={
++                hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
++              }
++              onToggleInteractionMode={toggleInteractionMode}
++              onRuntimeModeChange={handleRuntimeModeChange}
++            />
++          </div>
++        </>
++      )}
+     </>
+   );
+   const showTasksTab =
+@@ -6192,7 +6226,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+       className="mx-auto w-full min-w-0 max-w-(--chat-max-width)"
+       data-chat-composer-form="true"
+     >
+-      {composerControlsInStrip && restingControlsHost
++      {/* t3-patch: на телефоне строки настроек под полем нет — они в меню выбора модели */}
++      {composerControlsInStrip && restingControlsHost && !t3patchAndroidLook
+         ? createPortal(
+             <div
+               ref={attachRestingComposerControls}
+@@ -6397,8 +6432,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+               composerProviderState.composerSurfaceClassName,
+             )}
+           >
++            {/* t3-patch: поле выбора файлов — общее для «+» свёрнутого поля и скрепки/«+» внизу
++                развёрнутого (раньше жило в нижней строке, которой у свёрнутого поля нет) */}
++            {showComposerAttachAction ? (
++              <input
++                ref={attachmentInputRef}
++                type="file"
++                multiple
++                className="hidden"
++                onChange={(event) => {
++                  const files = Array.from(event.currentTarget.files ?? []);
++                  event.currentTarget.value = "";
++                  // Inserting a chip refocuses the editor after the draft renders;
++                  // focusing synchronously here would report the editor's stale text
++                  // over the prompt that was just written.
++                  void addComposerAttachments(files).then((inserted) => {
++                    if (!inserted) focusComposer();
++                  });
++                }}
++              />
++            ) : null}
+             {showCollapsedMobilePromptRow ? (
+               <div className="flex items-center justify-between gap-2 px-3 py-2">
++                {/* t3-patch: «+» слева в свёрнутом поле, как в Android — вложения */}
++                {t3patchAndroidLook && showComposerAttachAction && !activePendingProgress ? (
++                  <T3patchComposerPlusButton onClick={() => attachmentInputRef.current?.click()} />
++                ) : null}
+                 <button
+                   type="button"
+                   data-chat-composer-transition-prompt="true"
+@@ -6421,31 +6480,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+                     : prompt.trim() ||
+                       (showProviderUnavailable
+                         ? "Enable a provider in Settings"
+-                        : "Ask anything...")}
++                        : t3patchAndroidLook
++                          ? T3PATCH_MOBILE_COMPOSER_PLACEHOLDER // t3-patch: подсказка как в Android
++                          : "Ask anything...")}
+                 </button>
+                 {collapsedComposerImagePreviews}
+-                <button
+-                  type="button"
+-                  data-chat-composer-transition-actions="true"
+-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
+-                  disabled={collapsedComposerPrimaryActionDisabled}
+-                  aria-label={collapsedComposerPrimaryActionLabel}
+-                  onPointerDown={(event) => event.preventDefault()}
+-                  onClick={(event) => {
+-                    event.stopPropagation();
+-                    submitComposer();
+-                  }}
+-                >
+-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+-                    <path
+-                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
+-                      stroke="currentColor"
+-                      strokeWidth="2"
+-                      strokeLinecap="round"
+-                      strokeLinejoin="round"
+-                    />
+-                  </svg>
+-                </button>
++                {/* t3-patch: пока агент работает и поле пустое — «стоп», как в Android */}
++                {t3patchAndroidLook &&
++                phase === "running" &&
++                !composerSendState.hasSendableContent ? (
++                  <T3patchCollapsedStopButton onInterrupt={handleInterruptPrimaryAction} />
++                ) : (
++                  <button
++                    type="button"
++                    data-chat-composer-transition-actions="true"
++                    className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
++                    disabled={collapsedComposerPrimaryActionDisabled}
++                    aria-label={collapsedComposerPrimaryActionLabel}
++                    onPointerDown={(event) => event.preventDefault()}
++                    onClick={(event) => {
++                      event.stopPropagation();
++                      submitComposer();
++                    }}
++                  >
++                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
++                      <path
++                        d="M8 3L8 13M8 3L4 7M8 3L12 7"
++                        stroke="currentColor"
++                        strokeWidth="2"
++                        strokeLinecap="round"
++                        strokeLinejoin="round"
++                      />
++                    </svg>
++                  </button>
++                )}
+               </div>
+             ) : null}
+ 
+@@ -6937,7 +7005,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+                                 ? "Enable a provider in Settings to send a message"
+                                 : phase === "disconnected"
+                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
+-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
++                                  : t3patchAndroidLook
++                                    ? T3PATCH_MOBILE_COMPOSER_PLACEHOLDER // t3-patch: как в Android
++                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                     }
+                     disabled={
+                       isConnecting ||
+@@ -7007,7 +7077,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+                     isComposerResting && "hidden",
+                   )}
+                 >
+-                  {composerControlsInStrip ? null : composerControls}
++                  {/* t3-patch: на телефоне слева только «+» (вложения), выбор модели — справа */}
++                  {t3patchAndroidLook ? (
++                    showComposerAttachAction ? (
++                      <T3patchComposerPlusButton
++                        onClick={() => attachmentInputRef.current?.click()}
++                      />
++                    ) : null
++                  ) : composerControlsInStrip ? null : (
++                    composerControls
++                  )}
+                 </div>
+ 
+                 {/* Right side: send / stop button */}
+@@ -7019,24 +7098,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+                   }
+                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                 >
+-                  {showComposerAttachAction ? (
++                  {/* t3-patch: на телефоне вместо скрепки — выбор модели (скрепка стала «+» слева) */}
++                  {t3patchAndroidLook ? (
++                    composerControlsInStrip ? null : (
++                      <div className="flex min-w-0 shrink items-center">{composerControls}</div>
++                    )
++                  ) : showComposerAttachAction ? (
+                     <>
+-                      <input
+-                        ref={attachmentInputRef}
+-                        type="file"
+-                        multiple
+-                        className="hidden"
+-                        onChange={(event) => {
+-                          const files = Array.from(event.currentTarget.files ?? []);
+-                          event.currentTarget.value = "";
+-                          // Inserting a chip refocuses the editor after the draft renders;
+-                          // focusing synchronously here would report the editor's stale text
+-                          // over the prompt that was just written.
+-                          void addComposerAttachments(files).then((inserted) => {
+-                            if (!inserted) focusComposer();
+-                          });
+-                        }}
+-                      />
+                       <Tooltip>
+                         <TooltipTrigger
+                           render={
+diff --git a/apps/web/src/components/chat/ProviderModelPicker.tsx b/apps/web/src/components/chat/ProviderModelPicker.tsx
+index 05ace6d80b..dd712c561f 100644
+--- a/apps/web/src/components/chat/ProviderModelPicker.tsx
++++ b/apps/web/src/components/chat/ProviderModelPicker.tsx
+@@ -4,7 +4,7 @@ import {
+   type ProviderDriverKind,
+   type ResolvedKeybindingsConfig,
+ } from "@t3tools/contracts";
+-import { memo, useEffect, useMemo, useState } from "react";
++import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+ import { Badge } from "../ui/badge";
+ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+@@ -56,6 +56,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
+   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
++  /** t3-patch: разделы под списком моделей (на телефоне — глубина рассуждения и режим). */
++  t3patchExtraContent?: ReactNode;
+ }) {
+   const composerFloatingLayerProps = useComposerMenuProps();
+   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
+@@ -312,6 +314,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+         {props.selectedModels === undefined ? (
+           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
+         ) : null}
++        {
++          props.t3patchExtraContent ??
++            null /* t3-patch: глубина и режим в меню модели на телефоне */
++        }
+       </PopoverPopup>
+     </Popover>
+   );
+diff --git a/apps/web/src/components/sergey/mobileAndroidComposer.tsx b/apps/web/src/components/sergey/mobileAndroidComposer.tsx
+new file mode 100644
+index 0000000000..8dc6208821
+--- /dev/null
++++ b/apps/web/src/components/sergey/mobileAndroidComposer.tsx
+@@ -0,0 +1,84 @@
++/**
++ * t3-patch: поле ввода на телефоне в браузере — как в Android-приложении.
++ *
++ * Свёрнутое поле — одна строка: «+» (вложения) слева, подсказка, справа «отправить» или «стоп».
++ * Строки «модель / глубина / режим» под полем нет. В развёрнутом поле снизу «+» слева, справа выбор
++ * модели и кнопка. Глубина рассуждения и режим переехали в меню выбора модели (разделы ниже списка
++ * моделей) — там стоят штатные переключатели T3, логика не дублируется.
++ *
++ * Узкий экран — useIsMobile() (< 768px). Компьютер не меняется.
++ */
++import { PlusIcon } from "lucide-react";
++import type { ReactNode } from "react";
++
++/** Подсказка в поле ввода на телефоне, как в Android-приложении. */
++export const T3PATCH_MOBILE_COMPOSER_PLACEHOLDER = "Задача агенту или команда…";
++
++/** «+» слева в поле ввода: открывает выбор файлов (то же, что скрепка на компьютере). */
++export function T3patchComposerPlusButton(props: {
++  readonly onClick: () => void;
++  readonly disabled?: boolean;
++}) {
++  return (
++    <button
++      type="button"
++      data-t3patch-composer-plus="true"
++      className="-ms-1 flex size-8 shrink-0 items-center justify-center rounded-full text-foreground/80 transition-colors hover:bg-accent active:bg-accent disabled:opacity-50"
++      aria-label="Прикрепить файлы"
++      disabled={props.disabled}
++      // Не забирать фокус у редактора: иначе развёрнутое поле свернётся до открытия выбора файлов.
++      onPointerDown={(event) => event.preventDefault()}
++      onClick={(event) => {
++        event.stopPropagation();
++        props.onClick();
++      }}
++    >
++      <PlusIcon className="size-5" />
++    </button>
++  );
++}
++
++/** «Стоп» в свёрнутом поле, пока агент работает, — как в Android. */
++export function T3patchCollapsedStopButton(props: { readonly onInterrupt: () => void }) {
++  return (
++    <button
++      type="button"
++      data-chat-composer-transition-actions="true"
++      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-white hover:bg-destructive"
++      aria-label="Stop generation"
++      onPointerDown={(event) => event.preventDefault()}
++      onClick={(event) => {
++        event.stopPropagation();
++        props.onInterrupt();
++      }}
++    >
++      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
++        <rect x="2" y="2" width="8" height="8" rx="1.5" />
++      </svg>
++    </button>
++  );
++}
++
++/** Разделы «Глубина рассуждения» и «Режим» внизу меню выбора модели. */
++export function T3patchModelPickerExtras(props: {
++  readonly effort: ReactNode;
++  readonly mode: ReactNode;
++}) {
++  return (
++    <div
++      data-t3patch-model-picker-extras="true"
++      className="flex flex-col gap-1 border-t border-border/60 px-3 py-2"
++    >
++      {props.effort ? (
++        <div className="flex min-h-9 items-center justify-between gap-3">
++          <span className="text-xs font-medium text-muted-foreground">Глубина рассуждения</span>
++          <div className="flex min-w-0 items-center justify-end">{props.effort}</div>
++        </div>
++      ) : null}
++      <div className="flex min-h-9 items-center justify-between gap-3">
++        <span className="text-xs font-medium text-muted-foreground">Режим</span>
++        <div className="flex min-w-0 items-center justify-end gap-1">{props.mode}</div>
++      </div>
++    </div>
++  );
++}
+-- 
+2.43.0
+

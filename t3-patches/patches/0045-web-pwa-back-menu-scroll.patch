@@ -1,0 +1,106 @@
+From 8354f0532b637bdfd40de9b4b07d0640648ba752 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sat, 31 Oct 2026 11:36:16 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20=C2=AB=D0=BD=D0=B0=D0=B7=D0=B0?=
+ =?UTF-8?q?=D0=B4=C2=BB=20=D0=B2=20PWA=20=E2=80=94=20=D0=B2=D0=BE=D1=81?=
+ =?UTF-8?q?=D1=81=D1=82=D0=B0=D0=BD=D0=B0=D0=B2=D0=BB=D0=B8=D0=B2=D0=B0?=
+ =?UTF-8?q?=D1=82=D1=8C=20=D0=BF=D1=80=D0=BE=D0=BA=D1=80=D1=83=D1=82=D0=BA?=
+ =?UTF-8?q?=D1=83=20=D1=81=D0=BF=D0=B8=D1=81=D0=BA=D0=B0=20=D0=B2=20=D0=BC?=
+ =?UTF-8?q?=D0=B5=D0=BD=D1=8E;=20=D0=B7=D0=B0=D0=BC=D0=B5=D1=80=20=D0=B2?=
+ =?UTF-8?q?=D0=B5=D1=80=D1=82=D0=B8=D0=BA=D0=B0=D0=BB=D1=8C=D0=BD=D0=BE?=
+ =?UTF-8?q?=D0=B3=D0=BE=20=D1=81=D0=B4=D0=B2=D0=B8=D0=B3=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/components/sergey/backFlashDiag.tsx   | 11 +++++++-
+ apps/web/src/components/sergey/backToMenu.tsx | 25 +++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/apps/web/src/components/sergey/backFlashDiag.tsx b/apps/web/src/components/sergey/backFlashDiag.tsx
+index 682610338c..3fab8e0fcc 100644
+--- a/apps/web/src/components/sergey/backFlashDiag.tsx
++++ b/apps/web/src/components/sergey/backFlashDiag.tsx
+@@ -54,10 +54,19 @@ export function T3patchBackFlashDiag(): null {
+     };
+     const watchFrames = () => {
+       let previous = performance.now();
++      let rowTop: number | null = null;
+       const tick = (now: number) => {
+         if (!recording) return;
+         const gap = now - previous;
+         if (gap > LONG_FRAME_MS) log(`·кадр${Math.round(gap)}`);
++        // Вертикальный сдвиг списка: положение первой строки меню от кадра к кадру.
++        const row = document.querySelector(
++          '[data-slot="sidebar"][data-mobile="true"] [data-testid^="sidebar-row"]',
++        );
++        const top = row ? Math.round(row.getBoundingClientRect().top) : null;
++        if (top !== null && rowTop !== null && top !== rowTop) log(`·сдвиг${top - rowTop}`);
++        if (top !== null && rowTop === null) log(`·строка${top}`);
++        rowTop = top;
+         previous = now;
+         requestAnimationFrame(tick);
+       };
+@@ -66,7 +75,7 @@ export function T3patchBackFlashDiag(): null {
+     const start = () => {
+       t0 = performance.now();
+       recording = true;
+-      events = [`s45 0·назад(${document.visibilityState})`];
++      events = [`s46 0·назад(${document.visibilityState})`];
+       lastPath = location.pathname;
+       observer.observe(document.body, {
+         childList: true,
+diff --git a/apps/web/src/components/sergey/backToMenu.tsx b/apps/web/src/components/sergey/backToMenu.tsx
+index 93715d5da9..d937c3e36b 100644
+--- a/apps/web/src/components/sergey/backToMenu.tsx
++++ b/apps/web/src/components/sergey/backToMenu.tsx
+@@ -43,6 +43,25 @@ const BACK_COVER_MAX_MS = 1500;
+ /** Когда проверить, что меню открыто, и при необходимости открыть снова. */
+ const MENU_RETRY_MS = [50, 300, 800];
+ 
++const MENU_VIEWPORT_SELECTOR =
++  '[data-slot="sidebar"][data-mobile="true"] [data-slot="scroll-area-viewport"]';
++/**
++ * Прокрутка списка тредов в мобильном меню. Меню при закрытии удаляется целиком и при открытии
++ * начинает с верха списка, а iPhone во время свайпа показывает снимок меню с прежней прокруткой —
++ * после свайпа список вертикально «перескакивал». Запоминаем и восстанавливаем до отрисовки.
++ */
++let lastMenuScrollTop = 0;
++function rememberMenuScroll(event: Event): void {
++  const target = event.target;
++  if (target instanceof Element && target.matches(MENU_VIEWPORT_SELECTOR)) {
++    lastMenuScrollTop = target.scrollTop;
++  }
++}
++function restoreMenuScroll(): void {
++  const viewport = document.querySelector(MENU_VIEWPORT_SELECTOR);
++  if (viewport && lastMenuScrollTop > 0) viewport.scrollTop = lastMenuScrollTop;
++}
++
+ function waitForMenu(reopen: () => void): void {
+   const root = document.documentElement;
+   const started = performance.now();
+@@ -67,6 +86,11 @@ function waitForMenu(reopen: () => void): void {
+ export function T3patchBackToMenu(): null {
+   const { isMobile, openMobile, setOpenMobile } = useSidebar();
+   const standalone = useStandalonePwa();
++  useEffect(() => {
++    if (!standalone || !isMobile) return;
++    document.addEventListener("scroll", rememberMenuScroll, { capture: true, passive: true });
++    return () => document.removeEventListener("scroll", rememberMenuScroll, { capture: true });
++  }, [standalone, isMobile]);
+   useBlocker({
+     disabled: !standalone || !isMobile || openMobile,
+     enableBeforeUnload: false,
+@@ -82,6 +106,7 @@ export function T3patchBackToMenu(): null {
+       // пока меню не открылось; если меню закрылось или опоздало — открыть ещё раз.
+       root.dataset.t3patchBackMenu = "true";
+       flushSync(() => setOpenMobile(true));
++      restoreMenuScroll();
+       waitForMenu(() => setOpenMobile(true));
+       return false;
+     },
+-- 
+2.43.0
+

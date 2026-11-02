@@ -1,0 +1,94 @@
+From 721906884ecbd1c72c3d67538c84d19e3265aef6 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 30 Oct 2026 19:43:35 +0300
+Subject: [PATCH] =?UTF-8?q?chore(web):=20=D0=92=D0=A0=D0=95=D0=9C=D0=95?=
+ =?UTF-8?q?=D0=9D=D0=9D=D0=9E=20=D0=B7=D0=B0=D0=BC=D0=B5=D1=80=20=E2=80=94?=
+ =?UTF-8?q?=20=D0=B7=D0=B0=D0=BF=D0=B8=D1=81=D1=8C=20theme-color:=20=D0=B1?=
+ =?UTF-8?q?=D1=8B=D0=BB=D0=BE=E2=86=92=D1=81=D1=82=D0=B0=D0=BB=D0=BE=20?=
+ =?UTF-8?q?=D0=B8=20=D0=BA=D1=82=D0=BE=20=D0=B7=D0=B0=D0=BF=D0=B8=D1=81?=
+ =?UTF-8?q?=D0=B0=D0=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../src/components/sergey/backFlashDiag.tsx   | 41 ++++++++++++++++---
+ 1 file changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/apps/web/src/components/sergey/backFlashDiag.tsx b/apps/web/src/components/sergey/backFlashDiag.tsx
+index f9249434db..895d8123c2 100644
+--- a/apps/web/src/components/sergey/backFlashDiag.tsx
++++ b/apps/web/src/components/sergey/backFlashDiag.tsx
+@@ -66,7 +66,7 @@ export function T3patchBackFlashDiag(): null {
+     const start = () => {
+       t0 = performance.now();
+       recording = true;
+-      events = [`0·назад(${document.visibilityState})`];
++      events = [`s44 0·назад(${document.visibilityState})`];
+       lastPath = location.pathname;
+       observer.observe(document.body, {
+         childList: true,
+@@ -103,10 +103,36 @@ export function T3patchBackFlashDiag(): null {
+       const marker = menuOpen ? "меню+" : "меню-";
+       if (!events.some((entry) => entry.endsWith(marker))) log(`·${marker}`);
+     });
+-    const themeObserver = new MutationObserver(() => {
+-      const color = document.querySelector('meta[name="theme-color"]')?.getAttribute("content");
+-      log(`·цвет${color ?? ""}`);
++    const themeObserver = new MutationObserver((records) => {
++      const metas = document.querySelectorAll('meta[name="theme-color"]').length;
++      for (const record of records) {
++        const now = (record.target as Element).getAttribute("content");
++        log(
++          `·цвет[${metas}]${record.oldValue ?? "∅"}→${now ?? ""}${lastThemeWriter ? `@${lastThemeWriter}` : ""}`,
++        );
++      }
+     });
++    // Кто пишет theme-color: имя функции из стека записи (на iPhone видно в строке).
++    let lastThemeWriter = "";
++    const originalSetAttribute = Element.prototype.setAttribute;
++    Element.prototype.setAttribute = function (this: Element, name: string, value: string) {
++      if (
++        this.tagName === "META" &&
++        name === "content" &&
++        this.getAttribute("name") === "theme-color"
++      ) {
++        const frame = (new Error().stack ?? "").split("\n")[1] ?? "";
++        // Safari: «имя@https://…/assets/файл.js:1:12345» → «имя@файл.js:12345».
++        const name =
++          frame
++            .replace(/^\s*at\s+/, "")
++            .split("@")[0]
++            ?.slice(0, 12) ?? "";
++        const where = /([^/]+\.js):\d+:(\d+)/.exec(frame);
++        lastThemeWriter = `${name}@${where ? `${where[1]}:${where[2]}` : "?"}`;
++      }
++      return originalSetAttribute.call(this, name, value);
++    };
+ 
+     window.addEventListener("popstate", onPopState);
+     window.addEventListener("resize", onResize);
+@@ -115,7 +141,11 @@ export function T3patchBackFlashDiag(): null {
+     window.addEventListener("pagehide", onPageHide);
+     document.addEventListener("visibilitychange", onVisibility);
+     for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+-      themeObserver.observe(meta, { attributes: true, attributeFilter: ["content"] });
++      themeObserver.observe(meta, {
++        attributes: true,
++        attributeFilter: ["content"],
++        attributeOldValue: true,
++      });
+     }
+     return () => {
+       recording = false;
+@@ -123,6 +153,7 @@ export function T3patchBackFlashDiag(): null {
+       strip?.remove();
+       observer.disconnect();
+       themeObserver.disconnect();
++      Element.prototype.setAttribute = originalSetAttribute;
+       window.removeEventListener("popstate", onPopState);
+       window.removeEventListener("resize", onResize);
+       viewport?.removeEventListener("resize", onViewport);
+-- 
+2.43.0
+

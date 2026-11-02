@@ -1,0 +1,33 @@
+From 5906560986b5334f62a189015d337ea700e399ba Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 09:52:54 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20web=20mobile=20=E2=80=94=20status=20?=
+ =?UTF-8?q?bar=20strip=20tinted=20like=20header?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/index.css | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index c30189b87d..6e05df9651 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2374,3 +2374,12 @@ html[data-t3patch-kb="true"] [data-t3patch-composer-spacer] {
+ [data-slot="popover-viewport"]:has([data-t3patch-model-picker-extras]) [data-model-picker-content] {
+   max-height: min(21.625rem, calc(var(--available-height, 100vh) - 6.5rem));
+ }
++
++/* t3-patch: телефон — полоса под часами и островком (отступ #root сверху) в цвет шапки, чтобы
++   шапка шла сплошной плашкой до верхнего края, как в Android (скриншот iPhone 2026-11-02:
++   полоса была белой — её красил фон страницы, а не шапка). */
++@media (max-width: 767px) {
++  #root {
++    background-color: var(--sidebar);
++  }
++}
+-- 
+2.43.0
+

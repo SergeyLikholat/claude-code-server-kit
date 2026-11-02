@@ -1,0 +1,228 @@
+From 3684c2f51ffb6f0d3f6842c37e32f54d7a85e800 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 29 Oct 2026 23:40:07 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20iPhone=20=E2=80=94=20=D0=BA=D0=BB?=
+ =?UTF-8?q?=D0=B0=D0=B2=D0=B8=D0=B0=D1=82=D1=83=D1=80=D0=B0=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=20=D1=84=D0=BE=D0=BA=D1=83=D1=81=D1=83=20=D0=B8=20=D0=B2=D0=B8?=
+ =?UTF-8?q?=D0=B4=D0=B8=D0=BC=D0=BE=D0=B9=20=D0=B2=D1=8B=D1=81=D0=BE=D1=82?=
+ =?UTF-8?q?=D0=B5=20(+=D1=81=D1=82=D1=80=D0=BE=D0=BA=D0=B0=20=D0=B7=D0=B0?=
+ =?UTF-8?q?=D0=BC=D0=B5=D1=80=D0=BE=D0=B2),=20=D0=B2=D0=B8=D0=B4=D0=B8?=
+ =?UTF-8?q?=D0=BC=D1=8B=D0=B9=20=D0=BE=D1=82=D0=BA=D0=BB=D0=B8=D0=BA=20?=
+ =?UTF-8?q?=D0=B2=D0=BC=D0=B5=D1=81=D1=82=D0=BE=20=D0=B2=D0=B8=D0=B1=D1=80?=
+ =?UTF-8?q?=D0=B0=D1=86=D0=B8=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../components/sergey/iosKeyboardViewport.tsx | 61 +++++++++++++++++--
+ .../components/sergey/iosLongPressMenu.tsx    | 44 ++++++++-----
+ apps/web/src/index.css                        | 12 ++++
+ 3 files changed, 97 insertions(+), 20 deletions(-)
+
+diff --git a/apps/web/src/components/sergey/iosKeyboardViewport.tsx b/apps/web/src/components/sergey/iosKeyboardViewport.tsx
+index a76cd569fe..1190bfef34 100644
+--- a/apps/web/src/components/sergey/iosKeyboardViewport.tsx
++++ b/apps/web/src/components/sergey/iosKeyboardViewport.tsx
+@@ -6,28 +6,71 @@
+  * и поле ввода внизу оказывается под ней. Здесь: высота видимой части (visualViewport) → CSS-
+  * переменная --t3patch-vvh, приложение ужимается до неё (index.css), поле встаёт над клавиатурой.
+  *
+- * Только iPhone/iPad.
++ * Клавиатуру определяем не по window.innerHeight (в приложении с экрана «Домой» он уменьшается
++ * вместе с видимой частью, и разницы нет), а так: фокус в поле ввода и видимая высота меньше
++ * наибольшей, что была без клавиатуры.
++ *
++ * Только iPhone/iPad. Временно — строка с замерами вверху экрана (DEBUG_STRIP), для отладки.
+  */
+ import { useEffect } from "react";
+ 
+-/** Разница высот больше этого — значит, открыта клавиатура, а не мелькнула панель Safari. */
+-const KEYBOARD_MIN_PX = 80;
++/** Видимая высота меньше обычной на столько — значит, открыта клавиатура. */
++const KEYBOARD_MIN_PX = 120;
++const DEBUG_STRIP = true;
+ 
+ function isIosTouchDevice(): boolean {
+   const ua = navigator.userAgent;
+   return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+ }
+ 
++function isEditable(element: Element | null): boolean {
++  if (!(element instanceof HTMLElement)) return false;
++  if (element.isContentEditable) return true;
++  return (
++    element.tagName === "TEXTAREA" ||
++    (element.tagName === "INPUT" && element.getAttribute("type") !== "checkbox")
++  );
++}
++
+ export function T3patchIosKeyboardViewport(): null {
+   useEffect(() => {
+     const viewport = window.visualViewport;
+     if (!viewport || !isIosTouchDevice()) return;
+     const root = document.documentElement;
+     let frame: number | null = null;
++    let fullHeight = viewport.height;
++    let strip: HTMLDivElement | null = null;
++
++    const showDebug = (text: string | null) => {
++      if (!DEBUG_STRIP) return;
++      if (text === null) {
++        strip?.remove();
++        strip = null;
++        return;
++      }
++      if (!strip) {
++        strip = document.createElement("div");
++        strip.style.cssText =
++          "position:fixed;left:0;right:0;top:env(safe-area-inset-top);z-index:2147483647;" +
++          "font:11px/1.3 ui-monospace,monospace;background:#000c;color:#0f0;padding:2px 6px;pointer-events:none";
++        document.body.appendChild(strip);
++      }
++      strip.textContent = text;
++    };
+ 
+     const apply = () => {
+       frame = null;
+-      const keyboardOpen = window.innerHeight - viewport.height > KEYBOARD_MIN_PX;
++      const focused = isEditable(document.activeElement);
++      if (!focused) fullHeight = Math.max(fullHeight, viewport.height);
++      const keyboardOpen = focused && fullHeight - viewport.height > KEYBOARD_MIN_PX;
++      const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]');
++      showDebug(
++        focused
++          ? `kb:${keyboardOpen ? 1 : 0} vv:${Math.round(viewport.height)}/${Math.round(viewport.offsetTop)} ` +
++              `full:${Math.round(fullHeight)} inner:${window.innerHeight} sy:${Math.round(window.scrollY)} ` +
++              `wrap:${wrapper ? Math.round(wrapper.getBoundingClientRect().height) : "-"}`
++          : null,
++      );
+       if (!keyboardOpen) {
+         root.removeAttribute("data-t3patch-kb");
+         root.style.removeProperty("--t3patch-vvh");
+@@ -41,14 +84,24 @@ export function T3patchIosKeyboardViewport(): null {
+     const schedule = () => {
+       if (frame === null) frame = window.requestAnimationFrame(apply);
+     };
++    // Клавиатура выезжает не мгновенно: после фокуса ещё несколько замеров.
++    const scheduleBurst = () => {
++      schedule();
++      for (const delay of [100, 300, 600]) window.setTimeout(schedule, delay);
++    };
+ 
+     viewport.addEventListener("resize", schedule);
+     viewport.addEventListener("scroll", schedule);
++    document.addEventListener("focusin", scheduleBurst, true);
++    document.addEventListener("focusout", scheduleBurst, true);
+     apply();
+     return () => {
+       if (frame !== null) window.cancelAnimationFrame(frame);
+       viewport.removeEventListener("resize", schedule);
+       viewport.removeEventListener("scroll", schedule);
++      document.removeEventListener("focusin", scheduleBurst, true);
++      document.removeEventListener("focusout", scheduleBurst, true);
++      showDebug(null);
+       root.removeAttribute("data-t3patch-kb");
+       root.style.removeProperty("--t3patch-vvh");
+     };
+diff --git a/apps/web/src/components/sergey/iosLongPressMenu.tsx b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+index 8862f74efc..10817da633 100644
+--- a/apps/web/src/components/sergey/iosLongPressMenu.tsx
++++ b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+@@ -14,23 +14,17 @@ const HOLD_MS = 500;
+ const MOVE_TOLERANCE_PX = 10;
+ const SIDEBAR_SELECTOR = '[data-slot="sidebar"]';
+ 
++/** Через сколько после касания строка начинает «продавливаться» (быстрые прокрутки не мигают). */
++const PRESS_FEEDBACK_DELAY_MS = 120;
++const PRESSING_ATTR = "data-t3patch-pressing";
++
+ /**
+- * Короткий отклик вибрацией. В Safari на iPhone navigator.vibrate нет; единственный способ —
+- * переключить скрытый системный переключатель (<input type="checkbox" switch>, iOS 18+):
+- * его переключение iPhone сопровождает тактильным щелчком.
++ * Вибрации в момент удержания на iPhone из браузера не получить: Safari даёт тактильный отклик
++ * только на настоящее касание переключателя, программный щелчок он игнорирует (проверено
++ * 2026-10-29). Поэтому отклик видимый: строка под пальцем плавно продавливается (index.css).
+  */
+-function haptic(): void {
+-  if (typeof navigator.vibrate === "function" && navigator.vibrate(10)) return;
+-  const label = document.createElement("label");
+-  label.setAttribute("aria-hidden", "true");
+-  label.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none";
+-  const input = document.createElement("input");
+-  input.type = "checkbox";
+-  input.setAttribute("switch", "");
+-  label.appendChild(input);
+-  document.body.appendChild(label);
+-  label.click();
+-  label.remove();
++function rowFor(target: Element): HTMLElement | null {
++  return target.closest<HTMLElement>('[data-testid^="sidebar-row"]');
+ }
+ 
+ function isIosTouchDevice(): boolean {
+@@ -44,11 +38,21 @@ export function T3patchIosLongPressMenu(): null {
+     let timer: ReturnType<typeof setTimeout> | null = null;
+     let start: { x: number; y: number } | null = null;
+     let fired = false;
++    let pressed: HTMLElement | null = null;
++    let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
++
++    const release = () => {
++      if (feedbackTimer !== null) clearTimeout(feedbackTimer);
++      feedbackTimer = null;
++      pressed?.removeAttribute(PRESSING_ATTR);
++      pressed = null;
++    };
+ 
+     const cancel = () => {
+       if (timer !== null) clearTimeout(timer);
+       timer = null;
+       start = null;
++      release();
+     };
+     const onTouchStart = (event: TouchEvent) => {
+       fired = false;
+@@ -59,9 +63,17 @@ export function T3patchIosLongPressMenu(): null {
+       const touch = event.touches[0]!;
+       const point = { x: touch.clientX, y: touch.clientY };
+       start = point;
++      const row = rowFor(target);
++      if (row) {
++        feedbackTimer = setTimeout(() => {
++          feedbackTimer = null;
++          pressed = row;
++          row.setAttribute(PRESSING_ATTR, "true");
++        }, PRESS_FEEDBACK_DELAY_MS);
++      }
+       timer = setTimeout(() => {
+         timer = null;
+-        haptic(); // до fired: щелчок скрытого переключателя не должен попасть под swallowClickAfterMenu
++        release();
+         fired = true;
+         target.dispatchEvent(
+           new MouseEvent("contextmenu", {
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index 838b062fca..0ea589a108 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2274,3 +2274,15 @@ html[data-t3patch-kb="true"] [data-slot="sidebar-wrapper"] {
+   min-height: 0 !important;
+   max-height: var(--t3patch-vvh) !important;
+ }
++
++/* t3-patch: удержание пальца на треде (iPhone) — строка продавливается, к 500 мс откроется меню. */
++[data-slot="sidebar"][data-mobile="true"] [data-testid^="sidebar-row"] {
++  transition:
++    transform 380ms cubic-bezier(0.2, 0, 0, 1),
++    background-color 380ms ease;
++}
++[data-slot="sidebar"][data-mobile="true"]
++  [data-testid^="sidebar-row"][data-t3patch-pressing="true"] {
++  transform: scale(0.96);
++  background-color: color-mix(in oklab, var(--foreground) 9%, transparent);
++}
+-- 
+2.43.0
+

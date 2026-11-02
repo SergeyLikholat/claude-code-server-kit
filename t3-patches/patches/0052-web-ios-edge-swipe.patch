@@ -1,0 +1,218 @@
+From 302380234e2680bdefc7d0029af7b3883f6334c6 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sat, 31 Oct 2026 18:09:50 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20iPhone=20PWA=20=E2=80=94=20=D1=81?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B9=20=D1=81=D0=B2=D0=B0=D0=B9=D0=BF=20=D0=BC?=
+ =?UTF-8?q?=D0=B5=D0=BD=D1=8E=20=D0=BE=D1=82=20=D0=BB=D0=B5=D0=B2=D0=BE?=
+ =?UTF-8?q?=D0=B3=D0=BE=20=D0=BA=D1=80=D0=B0=D1=8F=20=D0=B2=D0=BC=D0=B5?=
+ =?UTF-8?q?=D1=81=D1=82=D0=BE=20=D1=81=D0=B8=D1=81=D1=82=D0=B5=D0=BC=D0=BD?=
+ =?UTF-8?q?=D0=BE=D0=B3=D0=BE=20=C2=AB=D0=BD=D0=B0=D0=B7=D0=B0=D0=B4=C2=BB?=
+ =?UTF-8?q?=20(=D0=B1=D0=B5=D0=B7=20=D0=B8=D1=81=D1=82=D0=BE=D1=80=D0=B8?=
+ =?UTF-8?q?=D0=B8=20=D0=BF=D0=B5=D1=80=D0=B5=D1=85=D0=BE=D0=B4=D0=BE=D0=B2?=
+ =?UTF-8?q?)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |   2 +
+ .../src/components/sergey/iosEdgeSwipe.tsx    | 167 ++++++++++++++++++
+ 2 files changed, 169 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/iosEdgeSwipe.tsx
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 2cc2d52aa0..464b7c0d5b 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -56,6 +56,7 @@ import {
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «назад» в PWA → список тредов
+ import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
++import { T3patchIosEdgeSwipe } from "./sergey/iosEdgeSwipe"; // t3-patch: свой свайп меню вместо системного «назад» на iPhone
+ import { T3patchIosKeyboardViewport } from "./sergey/iosKeyboardViewport"; // t3-patch: поле ввода над клавиатурой iPhone
+ 
+ const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+@@ -337,6 +338,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+         <MainAppLocationTracker />
+         <T3patchBackToMenu />
+         <T3patchIosLongPressMenu />
++        <T3patchIosEdgeSwipe />
+         <T3patchIosKeyboardViewport />
+       </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+diff --git a/apps/web/src/components/sergey/iosEdgeSwipe.tsx b/apps/web/src/components/sergey/iosEdgeSwipe.tsx
+new file mode 100644
+index 0000000000..318f567654
+--- /dev/null
++++ b/apps/web/src/components/sergey/iosEdgeSwipe.tsx
+@@ -0,0 +1,167 @@
++/**
++ * t3-patch: свой свайп от левого края вместо системного «назад» — PWA на iPhone.
++ *
++ * Системный свайп iPhone показывает снимок прошлой страницы, а в конце подменяет его живой
++ * страницей. Пять записей экрана (2026-10-31): в момент подмены на 1–3 кадра пусто (сплошной
++ * серый/чёрный) — это поведение iOS, правками внутри T3 оно не убиралось. Поэтому:
++ *
++ *  1. Переходы между тредами не копятся в истории (push → replace): возвращаться iPhone некуда,
++ *     и его свайп «назад» со снимками не включается.
++ *  2. Свайп от левого края двигает меню вслед за пальцем, как в Telegram. Отпустили дальше трети
++ *     экрана или резким движением — меню открылось; иначе уехало обратно.
++ *
++ * Только установленная PWA на iPhone/iPad и узкий экран; Android, браузер и компьютер не трогаем.
++ */
++import { useRouter } from "@tanstack/react-router";
++import { useEffect, useRef, useState } from "react";
++import { flushSync } from "react-dom";
++
++import { useSidebar } from "../ui/sidebar";
++
++/** Насколько близко к левому краю должно начаться касание, чтобы это был свайп меню. */
++const EDGE_PX = 28;
++/** Сдвиг, после которого понятно направление жеста (горизонтальный или прокрутка). */
++const DIRECTION_LOCK_PX = 10;
++/** Отпустили дальше этой доли ширины — меню открывается. */
++const OPEN_FRACTION = 0.33;
++/** Или быстрее этого (пикселей в миллисекунду) — тоже открывается. */
++const OPEN_VELOCITY = 0.45;
++const SETTLE_MS = 220;
++const SETTLE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
++const MENU_SELECTOR = '[data-slot="sidebar"][data-mobile="true"]';
++
++function isIosTouchDevice(): boolean {
++  const ua = navigator.userAgent;
++  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++}
++
++function useIosStandalone(): boolean {
++  const [value] = useState(
++    () =>
++      isIosTouchDevice() &&
++      (window.matchMedia?.("(display-mode: standalone)").matches === true ||
++        (navigator as { standalone?: boolean }).standalone === true),
++  );
++  return value;
++}
++
++/** Переходы не копятся в истории — у iPhone нет «назад», системный свайп не включается. */
++function useNoHistoryStack(enabled: boolean): void {
++  const router = useRouter();
++  useEffect(() => {
++    if (!enabled) return;
++    const history = router.history;
++    const originalPush = history.push;
++    history.push = (...args: Parameters<typeof history.replace>) => history.replace(...args);
++    return () => {
++      history.push = originalPush;
++    };
++  }, [enabled, router]);
++}
++
++export function T3patchIosEdgeSwipe(): null {
++  const { isMobile, openMobile, setOpenMobile } = useSidebar();
++  const standalone = useIosStandalone();
++  const enabled = standalone && isMobile;
++  useNoHistoryStack(enabled);
++
++  const openRef = useRef(openMobile);
++  openRef.current = openMobile;
++
++  useEffect(() => {
++    if (!enabled) return;
++    const root = document.documentElement;
++    type Gesture = {
++      startX: number;
++      startY: number;
++      startTime: number;
++      dragging: boolean;
++      menu: HTMLElement | null;
++      width: number;
++      dx: number;
++    };
++    let gesture: Gesture | null = null;
++
++    const placeMenu = (menu: HTMLElement, offset: number) => {
++      menu.style.transform = `translateX(${offset}px)`;
++    };
++    const finish = (menu: HTMLElement, open: boolean, width: number) => {
++      menu.style.transition = `transform ${SETTLE_MS}ms ${SETTLE_EASING}`;
++      placeMenu(menu, open ? 0 : -width);
++      window.setTimeout(() => {
++        menu.style.transition = "";
++        menu.style.transform = "";
++        if (!open) flushSync(() => setOpenMobile(false));
++        root.removeAttribute("data-t3patch-instant-sheet");
++      }, SETTLE_MS + 20);
++    };
++
++    const onTouchStart = (event: TouchEvent) => {
++      gesture = null;
++      if (openRef.current || event.touches.length !== 1) return;
++      const touch = event.touches[0]!;
++      if (touch.clientX > EDGE_PX) return;
++      gesture = {
++        startX: touch.clientX,
++        startY: touch.clientY,
++        startTime: performance.now(),
++        dragging: false,
++        menu: null,
++        width: window.innerWidth,
++        dx: 0,
++      };
++    };
++
++    const onTouchMove = (event: TouchEvent) => {
++      if (!gesture) return;
++      const touch = event.touches[0];
++      if (!touch) return;
++      const dx = touch.clientX - gesture.startX;
++      const dy = touch.clientY - gesture.startY;
++      if (!gesture.dragging) {
++        if (Math.abs(dy) > DIRECTION_LOCK_PX && Math.abs(dy) > Math.abs(dx)) {
++          gesture = null; // это прокрутка
++          return;
++        }
++        if (dx < DIRECTION_LOCK_PX || dx < Math.abs(dy)) return;
++        // Жест наш: меню открыть сразу (без своей анимации появления) и вести за пальцем.
++        root.setAttribute("data-t3patch-instant-sheet", "true");
++        flushSync(() => setOpenMobile(true));
++        const menu = document.querySelector<HTMLElement>(MENU_SELECTOR);
++        if (!menu) {
++          gesture = null;
++          return;
++        }
++        menu.style.transition = "none";
++        gesture.menu = menu;
++        gesture.dragging = true;
++      }
++      event.preventDefault();
++      gesture.dx = dx;
++      if (gesture.menu) placeMenu(gesture.menu, Math.min(0, dx - gesture.width));
++    };
++
++    const onTouchEnd = () => {
++      const current = gesture;
++      gesture = null;
++      if (!current?.dragging || !current.menu) return;
++      const elapsed = Math.max(1, performance.now() - current.startTime);
++      const open =
++        current.dx > current.width * OPEN_FRACTION || current.dx / elapsed > OPEN_VELOCITY;
++      finish(current.menu, open, current.width);
++    };
++
++    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
++    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
++    document.addEventListener("touchend", onTouchEnd, { capture: true });
++    document.addEventListener("touchcancel", onTouchEnd, { capture: true });
++    return () => {
++      document.removeEventListener("touchstart", onTouchStart, { capture: true });
++      document.removeEventListener("touchmove", onTouchMove, { capture: true });
++      document.removeEventListener("touchend", onTouchEnd, { capture: true });
++      document.removeEventListener("touchcancel", onTouchEnd, { capture: true });
++    };
++  }, [enabled, setOpenMobile]);
++
++  return null;
++}
+-- 
+2.43.0
+

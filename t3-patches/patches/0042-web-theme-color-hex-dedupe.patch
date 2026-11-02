@@ -1,0 +1,91 @@
+From 9db9b685a05d84c3bd7d6ed86f477a2b127e02bc Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Fri, 30 Oct 2026 19:17:45 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20theme-color=20=E2=80=94=20=D0=BF?=
+ =?UTF-8?q?=D0=B8=D1=81=D0=B0=D1=82=D1=8C=20=D1=82=D0=BE=D0=BB=D1=8C=D0=BA?=
+ =?UTF-8?q?=D0=BE=20=D0=BF=D1=80=D0=B8=20=D0=B8=D0=B7=D0=BC=D0=B5=D0=BD?=
+ =?UTF-8?q?=D0=B5=D0=BD=D0=B8=D0=B8=20=D0=B8=20=D0=B2=20#rrggbb=20(=D0=BC?=
+ =?UTF-8?q?=D0=BE=D1=80=D0=B3=D0=B0=D0=BD=D0=B8=D0=B5=20=D1=87=D1=91=D1=80?=
+ =?UTF-8?q?=D0=BD=D1=8B=D0=BC=20=D0=BF=D1=80=D0=B8=20=D1=81=D0=B2=D0=B0?=
+ =?UTF-8?q?=D0=B9=D0=BF=D0=B5=20=D0=BD=D0=B0=D0=B7=D0=B0=D0=B4=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=20iPhone)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/hooks/useTheme.ts | 42 ++++++++++++++++++++++++++++++----
+ 1 file changed, 38 insertions(+), 4 deletions(-)
+
+diff --git a/apps/web/src/hooks/useTheme.ts b/apps/web/src/hooks/useTheme.ts
+index 7a750fd743..250d6d3bb8 100644
+--- a/apps/web/src/hooks/useTheme.ts
++++ b/apps/web/src/hooks/useTheme.ts
+@@ -291,6 +291,34 @@ function resolveBrowserChromeSurface(): HTMLElement {
+   );
+ }
+ 
++// t3-patch: цвет для meta theme-color — в виде #rrggbb. Safari на iPhone (PWA с экрана «Домой»)
++// перекрашивает системную полосу и фон за страницей на каждую запись theme-color; значение
++// oklch(...) и повторная запись того же цвета при каждой смене страницы давали короткое
++// чёрное моргание (запасной #161616 из манифеста) при свайпе назад. Перевод — через пиксель
++// холста: так понимается любой CSS-цвет, включая oklch.
++const t3patchHexColorCache = new Map<string, string>();
++function t3patchToHexColor(value: string): string {
++  const cached = t3patchHexColorCache.get(value);
++  if (cached) return cached;
++  let hex = value;
++  try {
++    const canvas = document.createElement("canvas");
++    canvas.width = 1;
++    canvas.height = 1;
++    const context = canvas.getContext("2d");
++    if (context) {
++      context.fillStyle = value;
++      context.fillRect(0, 0, 1, 1);
++      const [red = 0, green = 0, blue = 0] = context.getImageData(0, 0, 1, 1).data;
++      hex = `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
++    }
++  } catch {
++    // Холст недоступен — оставляем цвет как есть.
++  }
++  t3patchHexColorCache.set(value, hex);
++  return hex;
++}
++
+ export function syncBrowserChromeTheme() {
+   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
+   const rootStyles = getComputedStyle(document.documentElement);
+@@ -304,19 +332,25 @@ export function syncBrowserChromeTheme() {
+   const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+   if (!backgroundColor) return;
+ 
+-  document.documentElement.style.backgroundColor = backgroundColor;
+-  document.body.style.backgroundColor = backgroundColor;
++  // t3-patch: писать только изменившееся (см. t3patchToHexColor).
++  if (document.documentElement.style.backgroundColor !== backgroundColor) {
++    document.documentElement.style.backgroundColor = backgroundColor;
++  }
++  if (document.body.style.backgroundColor !== backgroundColor) {
++    document.body.style.backgroundColor = backgroundColor;
++  }
++  const metaColor = t3patchToHexColor(backgroundColor);
+   // Update every theme-color meta so any element another layer added (for
+   // example a media-scoped one) carries the resolved color too.
+   const themeColorMetas = document.querySelectorAll<HTMLMetaElement>(
+     `meta[name="${THEME_COLOR_META_NAME}"]`,
+   );
+   if (themeColorMetas.length === 0) {
+-    ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
++    ensureThemeColorMetaTag().setAttribute("content", metaColor);
+     return;
+   }
+   for (const element of themeColorMetas) {
+-    element.setAttribute("content", backgroundColor);
++    if (element.getAttribute("content") !== metaColor) element.setAttribute("content", metaColor);
+   }
+ }
+ 
+-- 
+2.43.0
+

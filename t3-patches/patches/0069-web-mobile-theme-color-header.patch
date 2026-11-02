@@ -1,0 +1,41 @@
+From ac76a22cdd64b5b360aa92af494a15f8f9e79a2b Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 10:11:05 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20web=20mobile=20=E2=80=94=20theme-col?=
+ =?UTF-8?q?or=20(status=20bar)=20uses=20header=20color?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/hooks/useTheme.ts | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/apps/web/src/hooks/useTheme.ts b/apps/web/src/hooks/useTheme.ts
+index 250d6d3bb8..c411a993ba 100644
+--- a/apps/web/src/hooks/useTheme.ts
++++ b/apps/web/src/hooks/useTheme.ts
+@@ -322,9 +322,17 @@ function t3patchToHexColor(value: string): string {
+ export function syncBrowserChromeTheme() {
+   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
+   const rootStyles = getComputedStyle(document.documentElement);
+-  const themeChromeColor = document.documentElement.dataset.themeId
+-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+-    : null;
++  // t3-patch: на телефоне системная полоса под часами (её цвет — theme-color) в цвет шапки
++  // (--sidebar), чтобы шапка шла сплошной плашкой до верха, как в Android (скриншот 2026-11-02).
++  const t3patchPhoneHeaderColor =
++    typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches
++      ? normalizeThemeColor(rootStyles.getPropertyValue("--sidebar"))
++      : null;
++  const themeChromeColor =
++    t3patchPhoneHeaderColor ??
++    (document.documentElement.dataset.themeId
++      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
++      : null);
+   const surfaceColor = normalizeThemeColor(
+     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
+   );
+-- 
+2.43.0
+

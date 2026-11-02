@@ -1,0 +1,163 @@
+From 526989bd0d0bdbc7e31699903a0fe0b829b1d885 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 29 Oct 2026 22:08:28 +0300
+Subject: [PATCH] =?UTF-8?q?feat(web):=20iPhone=20=E2=80=94=20=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=BB=D0=B3=D0=BE=D0=B5=20=D0=BD=D0=B0=D0=B6=D0=B0=D1=82=D0=B8?=
+ =?UTF-8?q?=D0=B5=20=D0=BD=D0=B0=20=D1=82=D1=80=D0=B5=D0=B4=20=D0=BE=D1=82?=
+ =?UTF-8?q?=D0=BA=D1=80=D1=8B=D0=B2=D0=B0=D0=B5=D1=82=20=D0=BC=D0=B5=D0=BD?=
+ =?UTF-8?q?=D1=8E=20=D1=82=D1=80=D0=B5=D0=B4=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |  2 +
+ .../components/sergey/iosLongPressMenu.tsx    | 95 +++++++++++++++++++
+ apps/web/src/index.css                        | 12 +++
+ 3 files changed, 109 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/iosLongPressMenu.tsx
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 62b821a98e..2908194c96 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -55,6 +55,7 @@ import {
+ } from "./ui/sidebar";
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «назад» в PWA → список тредов
++import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
+ 
+ const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+ 
+@@ -334,6 +335,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+         <NavigationHistoryShortcuts />
+         <MainAppLocationTracker />
+         <T3patchBackToMenu />
++        <T3patchIosLongPressMenu />
+       </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+   );
+diff --git a/apps/web/src/components/sergey/iosLongPressMenu.tsx b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+new file mode 100644
+index 0000000000..5d9ee48320
+--- /dev/null
++++ b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+@@ -0,0 +1,95 @@
++/**
++ * t3-patch: долгое нажатие на тред в списке на iPhone открывает меню треда.
++ *
++ * Меню строки открывается событием contextmenu (правая кнопка мыши). Android при удержании
++ * пальца сам присылает contextmenu, а Safari на iPhone — нет: удержание просто начинало
++ * прокрутку списка. Здесь: удержание 500 мс без сдвига внутри бокового меню → contextmenu на
++ * той строке, что под пальцем, плюс отмена следующего «клика» (иначе после меню открылся бы тред).
++ *
++ * Только iPhone/iPad: на Android своё событие уже есть, и меню открылось бы дважды.
++ */
++import { useEffect } from "react";
++
++const HOLD_MS = 500;
++const MOVE_TOLERANCE_PX = 10;
++const SIDEBAR_SELECTOR = '[data-slot="sidebar"]';
++
++function isIosTouchDevice(): boolean {
++  const ua = navigator.userAgent;
++  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++}
++
++export function T3patchIosLongPressMenu(): null {
++  useEffect(() => {
++    if (!isIosTouchDevice()) return;
++    let timer: ReturnType<typeof setTimeout> | null = null;
++    let start: { x: number; y: number } | null = null;
++    let fired = false;
++
++    const cancel = () => {
++      if (timer !== null) clearTimeout(timer);
++      timer = null;
++      start = null;
++    };
++    const onTouchStart = (event: TouchEvent) => {
++      fired = false;
++      cancel();
++      if (event.touches.length !== 1) return;
++      const target = event.target;
++      if (!(target instanceof Element) || !target.closest(SIDEBAR_SELECTOR)) return;
++      const touch = event.touches[0]!;
++      const point = { x: touch.clientX, y: touch.clientY };
++      start = point;
++      timer = setTimeout(() => {
++        timer = null;
++        fired = true;
++        target.dispatchEvent(
++          new MouseEvent("contextmenu", {
++            bubbles: true,
++            cancelable: true,
++            composed: true,
++            clientX: point.x,
++            clientY: point.y,
++            button: 2,
++          }),
++        );
++      }, HOLD_MS);
++    };
++    const onTouchMove = (event: TouchEvent) => {
++      if (!start || timer === null) return;
++      const touch = event.touches[0];
++      if (!touch) return cancel();
++      if (
++        Math.abs(touch.clientX - start.x) > MOVE_TOLERANCE_PX ||
++        Math.abs(touch.clientY - start.y) > MOVE_TOLERANCE_PX
++      ) {
++        cancel();
++      }
++    };
++    const onTouchEnd = (event: TouchEvent) => {
++      cancel();
++      if (fired) event.preventDefault(); // не превращать удержание в нажатие на тред
++    };
++    const swallowClickAfterMenu = (event: MouseEvent) => {
++      if (!fired) return;
++      fired = false;
++      event.preventDefault();
++      event.stopPropagation();
++    };
++
++    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
++    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
++    document.addEventListener("touchend", onTouchEnd, { capture: true });
++    document.addEventListener("touchcancel", cancel, { capture: true });
++    document.addEventListener("click", swallowClickAfterMenu, true);
++    return () => {
++      cancel();
++      document.removeEventListener("touchstart", onTouchStart, { capture: true });
++      document.removeEventListener("touchmove", onTouchMove, { capture: true });
++      document.removeEventListener("touchend", onTouchEnd, { capture: true });
++      document.removeEventListener("touchcancel", cancel, { capture: true });
++      document.removeEventListener("click", swallowClickAfterMenu, true);
++    };
++  }, []);
++  return null;
++}
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index d66bbae1a8..c31b3534e9 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2255,3 +2255,15 @@ html:has([data-slot="sidebar"][data-mobile="true"]) [data-slot="sheet-backdrop"]
+   -webkit-backdrop-filter: none;
+   background: transparent;
+ }
++
++/* t3-patch: на iPhone удержание пальца на треде — наше меню (sergey/iosLongPressMenu.tsx),
++   а не выделение текста и системная лупа. */
++[data-slot="sidebar"][data-mobile="true"] {
++  -webkit-touch-callout: none;
++  -webkit-user-select: none;
++  user-select: none;
++}
++[data-slot="sidebar"][data-mobile="true"] :is(input, textarea, [contenteditable="true"]) {
++  -webkit-user-select: text;
++  user-select: text;
++}
+-- 
+2.43.0
+

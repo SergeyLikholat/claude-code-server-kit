@@ -1,0 +1,83 @@
+From 92f04b610d95ac1b0f17e5badaaac6debf5913b5 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 08:13:38 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20web=20mobile=20=E2=80=94=20collapsed?=
+ =?UTF-8?q?=20composer=20shows=20citations=20as=20quote=20text,=20not=20ra?=
+ =?UTF-8?q?w=20link?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/chat/ChatComposer.tsx |  3 +-
+ .../sergey/mobileAndroidComposer.tsx          | 29 ++++++++++++++++++-
+ 2 files changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+index e638e2009f..23e9ed44a5 100644
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -991,6 +991,7 @@ import {
+   T3patchCollapsedStopButton,
+   T3patchComposerPlusButton,
+   T3patchModelPickerExtras,
++  T3patchCollapsedPromptPreview,
+ } from "../sergey/mobileAndroidComposer"; // t3-patch: поле ввода на телефоне как в Android
+ import { usePanelAnimationSettings } from "../../panelAnimations";
+ import { useAtomCommand } from "../../state/use-atom-command";
+@@ -6477,7 +6478,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+                       ? "Choose an option above"
+                       : activePendingProgress.customAnswer ||
+                         "Type your own answer, or leave this blank to use the selected option"
+-                    : prompt.trim() ||
++                    : (prompt.trim() && <T3patchCollapsedPromptPreview prompt={prompt.trim()} />) ||
+                       (showProviderUnavailable
+                         ? "Enable a provider in Settings"
+                         : t3patchAndroidLook
+diff --git a/apps/web/src/components/sergey/mobileAndroidComposer.tsx b/apps/web/src/components/sergey/mobileAndroidComposer.tsx
+index 8dc6208821..fe55144407 100644
+--- a/apps/web/src/components/sergey/mobileAndroidComposer.tsx
++++ b/apps/web/src/components/sergey/mobileAndroidComposer.tsx
+@@ -8,7 +8,8 @@
+  *
+  * Узкий экран — useIsMobile() (< 768px). Компьютер не меняется.
+  */
+-import { PlusIcon } from "lucide-react";
++import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
++import { PlusIcon, QuoteIcon } from "lucide-react";
+ import type { ReactNode } from "react";
+ 
+ /** Подсказка в поле ввода на телефоне, как в Android-приложении. */
+@@ -82,3 +83,29 @@ export function T3patchModelPickerExtras(props: {
+     </div>
+   );
+ }
++
++/**
++ * Текст свёрнутого поля: цитаты из ответа — значком кавычек и самим текстом (или комментарием),
++ * а не служебной ссылкой «[Assistant quote](t3-citation://…)» (скриншот iPhone 2026-11-02).
++ */
++export function T3patchCollapsedPromptPreview(props: { readonly prompt: string }) {
++  const matches = collectAssistantCitations(props.prompt);
++  if (matches.length === 0) return <>{props.prompt}</>;
++  const parts: ReactNode[] = [];
++  let cursor = 0;
++  matches.forEach((match, index) => {
++    const before = props.prompt.slice(cursor, match.start).trim();
++    if (before) parts.push(<span key={`t${index}`}>{before} </span>);
++    const label = (match.citation.comment?.trim() || match.citation.text).replace(/\s+/g, " ");
++    parts.push(
++      <span key={`q${index}`} className="text-muted-foreground">
++        <QuoteIcon aria-hidden="true" className="me-1 inline size-3.5 align-[-2px]" />
++        {label}{" "}
++      </span>,
++    );
++    cursor = match.end;
++  });
++  const rest = props.prompt.slice(cursor).trim();
++  if (rest) parts.push(<span key="rest">{rest}</span>);
++  return <>{parts}</>;
++}
+-- 
+2.43.0
+

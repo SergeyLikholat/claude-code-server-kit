@@ -1,0 +1,64 @@
+From ab84cc7672c78457342bbd2655af801c8c84f6a8 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Sat, 31 Oct 2026 12:57:21 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20=C2=AB=D0=BD=D0=B0=D0=B7=D0=B0?=
+ =?UTF-8?q?=D0=B4=C2=BB=20=D0=B2=20PWA=20=E2=80=94=20=D0=BF=D1=80=D0=BE?=
+ =?UTF-8?q?=D1=88=D0=BB=D0=B0=D1=8F=20=D1=81=D1=82=D1=80=D0=B0=D0=BD=D0=B8?=
+ =?UTF-8?q?=D1=86=D0=B0=20=D1=80=D0=B8=D1=81=D1=83=D0=B5=D1=82=D1=81=D1=8F?=
+ =?UTF-8?q?=20=D1=87=D0=B5=D1=80=D0=B5=D0=B7=20350=20=D0=BC=D1=81,=20?=
+ =?UTF-8?q?=D0=BF=D0=BE=D1=81=D0=BB=D0=B5=20=D0=BF=D0=BE=D0=BA=D0=B0=D0=B7?=
+ =?UTF-8?q?=D0=B0=20=D0=BC=D0=B5=D0=BD=D1=8E=20(=D1=80=D1=8B=D0=B2=D0=BE?=
+ =?UTF-8?q?=D0=BA=20=D0=B2=20=D0=BA=D0=BE=D0=BD=D1=86=D0=B5=20=D1=81=D0=B2?=
+ =?UTF-8?q?=D0=B0=D0=B9=D0=BF=D0=B0)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/sergey/backFlashDiag.tsx | 2 +-
+ apps/web/src/components/sergey/backToMenu.tsx    | 9 ++++++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/apps/web/src/components/sergey/backFlashDiag.tsx b/apps/web/src/components/sergey/backFlashDiag.tsx
+index 954d0f7f31..6056ba1cd6 100644
+--- a/apps/web/src/components/sergey/backFlashDiag.tsx
++++ b/apps/web/src/components/sergey/backFlashDiag.tsx
+@@ -75,7 +75,7 @@ export function T3patchBackFlashDiag(): null {
+     const start = () => {
+       t0 = performance.now();
+       recording = true;
+-      events = [`s48 0·назад(${document.visibilityState})`];
++      events = [`s49 0·назад(${document.visibilityState})`];
+       lastPath = location.pathname;
+       observer.observe(document.body, {
+         childList: true,
+diff --git a/apps/web/src/components/sergey/backToMenu.tsx b/apps/web/src/components/sergey/backToMenu.tsx
+index 35a48d22a9..dc744642af 100644
+--- a/apps/web/src/components/sergey/backToMenu.tsx
++++ b/apps/web/src/components/sergey/backToMenu.tsx
+@@ -38,6 +38,8 @@ function useStandalonePwa(): boolean {
+ }
+ 
+ const MENU_OPEN_SELECTOR = '[data-slot="sidebar"][data-mobile="true"][data-open]';
++/** На сколько отложить отрисовку прошлой страницы после жеста «назад» (меню уже на экране). */
++const DEFER_PAGE_RENDER_MS = 350;
+ /** Дольше этого прошлую страницу не прячем, даже если меню так и не открылось. */
+ const BACK_COVER_MAX_MS = 1500;
+ /** Когда проверить, что меню открыто, и при необходимости открыть снова. */
+@@ -115,7 +117,12 @@ export function T3patchBackToMenu(): null {
+       flushSync(() => setOpenMobile(true));
+       restoreMenuScroll();
+       waitForMenu(() => setOpenMobile(true));
+-      return false;
++      // Замер 2026-10-31: прошлая страница отрисовывается ~230 мс, и эта пауза приходилась ровно
++      // на конец анимации свайпа — рывок. Роутер ждёт ответа: сначала показываем меню (оно
++      // готово, keepMounted), а прошлую страницу он рисует позже, когда на экране всё неподвижно.
++      return new Promise<boolean>((resolve) => {
++        window.setTimeout(() => resolve(false), DEFER_PAGE_RENDER_MS);
++      });
+     },
+   });
+   return null;
+-- 
+2.43.0
+

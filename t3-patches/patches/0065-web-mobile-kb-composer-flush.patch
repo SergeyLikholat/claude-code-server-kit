@@ -1,0 +1,44 @@
+From 593efb10b017fc006cb7fc6221a95d5ecf3980d0 Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Mon, 2 Nov 2026 00:18:41 +0300
+Subject: [PATCH] =?UTF-8?q?t3patch:=20web=20mobile=20=E2=80=94=20composer?=
+ =?UTF-8?q?=20flush=20to=20keyboard=20(no=20safe-area=20spacer=20while=20k?=
+ =?UTF-8?q?b=20open)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/ChatView.tsx | 1 +
+ apps/web/src/index.css               | 6 ++++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
+index 0e70543612..25b17d0e9f 100644
+--- a/apps/web/src/components/ChatView.tsx
++++ b/apps/web/src/components/ChatView.tsx
+@@ -10180,6 +10180,7 @@ export default function ChatView(props: ChatViewProps) {
+                     </ComposerSurface.Shell>
+                     <div
+                       aria-hidden
++                      data-t3patch-composer-spacer=""
+                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                     />
+                   </div>
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index a879150ae7..28dd371b3e 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2345,3 +2345,9 @@ html[data-t3patch-back-menu="true"] [data-slot="sidebar-inset"] {
+     overflow: hidden;
+   }
+ }
++
++/* t3-patch: при открытой клавиатуре отступ под полоску «Домой» не нужен — поле встаёт
++   вплотную к клавиатуре, как в Android-приложении (скриншот iPhone 2026-11-02: зазор ~50 pt). */
++html[data-t3patch-kb="true"] [data-t3patch-composer-spacer] {
++  height: 0.5rem !important;
++}
+-- 
+2.43.0
+

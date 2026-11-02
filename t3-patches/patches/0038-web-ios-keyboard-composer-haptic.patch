@@ -1,0 +1,207 @@
+From c26757e6466a6abe5843f28747742fa15414f6ff Mon Sep 17 00:00:00 2001
+From: t3-patch <t3-patch@local>
+Date: Thu, 29 Oct 2026 23:29:11 +0300
+Subject: [PATCH] =?UTF-8?q?fix(web):=20iPhone=20=E2=80=94=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=D0=BB=D0=B5=20=D0=B2=D0=B2=D0=BE=D0=B4=D0=B0=20=D0=BD=D0=B0?=
+ =?UTF-8?q?=D0=B4=20=D0=BA=D0=BB=D0=B0=D0=B2=D0=B8=D0=B0=D1=82=D1=83=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=B9,=20=D1=81=D0=BA=D1=80=D0=B5=D0=BF=D0=BA=D0=B0=20?=
+ =?UTF-8?q?=D0=BD=D0=B5=20=D1=81=D0=B2=D0=BE=D1=80=D0=B0=D1=87=D0=B8=D0=B2?=
+ =?UTF-8?q?=D0=B0=D0=B5=D1=82=20=D0=BF=D0=BE=D0=BB=D0=B5,=20=D0=B2=D0=B8?=
+ =?UTF-8?q?=D0=B1=D1=80=D0=B0=D1=86=D0=B8=D1=8F=20=D0=BF=D1=80=D0=B8=20?=
+ =?UTF-8?q?=D1=83=D0=B4=D0=B5=D1=80=D0=B6=D0=B0=D0=BD=D0=B8=D0=B8=20=D0=BD?=
+ =?UTF-8?q?=D0=B0=20=D1=82=D1=80=D0=B5=D0=B4=D0=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/web/src/components/AppSidebarLayout.tsx  |  2 +
+ apps/web/src/components/chat/ChatComposer.tsx | 11 ++++
+ .../components/sergey/iosKeyboardViewport.tsx | 57 +++++++++++++++++++
+ .../components/sergey/iosLongPressMenu.tsx    | 20 +++++++
+ apps/web/src/index.css                        |  7 +++
+ 5 files changed, 97 insertions(+)
+ create mode 100644 apps/web/src/components/sergey/iosKeyboardViewport.tsx
+
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 2908194c96..2cc2d52aa0 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -56,6 +56,7 @@ import {
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+ import { T3patchBackToMenu } from "./sergey/backToMenu"; // t3-patch: «назад» в PWA → список тредов
+ import { T3patchIosLongPressMenu } from "./sergey/iosLongPressMenu"; // t3-patch: удержание на iPhone → меню треда
++import { T3patchIosKeyboardViewport } from "./sergey/iosKeyboardViewport"; // t3-patch: поле ввода над клавиатурой iPhone
+ 
+ const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+ 
+@@ -336,6 +337,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+         <MainAppLocationTracker />
+         <T3patchBackToMenu />
+         <T3patchIosLongPressMenu />
++        <T3patchIosKeyboardViewport />
+       </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+   );
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+index af9530394b..9186441bc2 100644
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -394,6 +394,8 @@ function SnapShotAttachmentFrame({
+   );
+ }
+ 
++/** t3-patch: сколько после касания поля ввода не сворачивать его при потере фокуса. */
++const T3PATCH_COMPOSER_TOUCH_GRACE_MS = 700;
+ const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
+ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
+ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
+@@ -2159,6 +2161,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+   });
+   const attachmentInputRef = useRef<HTMLInputElement>(null);
+   const composerFormRef = useRef<HTMLFormElement>(null);
++  // t3-patch: когда палец последний раз касался поля ввода (см. scheduleComposerCollapseCheck)
++  const t3patchComposerTouchAtRef = useRef(0);
+   const composerSurfaceRef = useRef<HTMLDivElement>(null);
+   const providerInputRejectedRef = useRef(false);
+   const composerSelectLockRef = useRef(false);
+@@ -5805,6 +5809,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+       if (mobileComposerExpandInFlightRef.current) {
+         return;
+       }
++      // t3-patch: Safari на iPhone не ставит фокус на кнопку при нажатии — касание скрепки или
++      // другой кнопки поля выглядело как уход из поля, оно сворачивалось, кнопка исчезала, и
++      // нажатие до неё не доходило. Касание внутри поля только что — не сворачиваем.
++      if (performance.now() - t3patchComposerTouchAtRef.current < T3PATCH_COMPOSER_TOUCH_GRACE_MS) {
++        return;
++      }
+       const composerSurface = composerSurfaceRef.current;
+       const composerForm = composerFormRef.current;
+       const activeElement = document.activeElement;
+@@ -6120,6 +6130,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+       ref={composerFormRef}
+       onSubmit={submitComposer}
+       onPointerDownCapture={(event) => {
++        t3patchComposerTouchAtRef.current = performance.now();
+         const target = event.target;
+         if (isInsideRestingComposerControlScope(target)) return;
+         if (isInsideCollapsedComposerControls(target)) return;
+diff --git a/apps/web/src/components/sergey/iosKeyboardViewport.tsx b/apps/web/src/components/sergey/iosKeyboardViewport.tsx
+new file mode 100644
+index 0000000000..a76cd569fe
+--- /dev/null
++++ b/apps/web/src/components/sergey/iosKeyboardViewport.tsx
+@@ -0,0 +1,57 @@
++/**
++ * t3-patch: на iPhone клавиатура не закрывает поле ввода.
++ *
++ * Android Chrome при появлении клавиатуры сам ужимает страницу (interactive-widget=resizes-content
++ * в meta viewport). Safari на iPhone эту настройку не знает: клавиатура ложится поверх страницы,
++ * и поле ввода внизу оказывается под ней. Здесь: высота видимой части (visualViewport) → CSS-
++ * переменная --t3patch-vvh, приложение ужимается до неё (index.css), поле встаёт над клавиатурой.
++ *
++ * Только iPhone/iPad.
++ */
++import { useEffect } from "react";
++
++/** Разница высот больше этого — значит, открыта клавиатура, а не мелькнула панель Safari. */
++const KEYBOARD_MIN_PX = 80;
++
++function isIosTouchDevice(): boolean {
++  const ua = navigator.userAgent;
++  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++}
++
++export function T3patchIosKeyboardViewport(): null {
++  useEffect(() => {
++    const viewport = window.visualViewport;
++    if (!viewport || !isIosTouchDevice()) return;
++    const root = document.documentElement;
++    let frame: number | null = null;
++
++    const apply = () => {
++      frame = null;
++      const keyboardOpen = window.innerHeight - viewport.height > KEYBOARD_MIN_PX;
++      if (!keyboardOpen) {
++        root.removeAttribute("data-t3patch-kb");
++        root.style.removeProperty("--t3patch-vvh");
++        return;
++      }
++      root.style.setProperty("--t3patch-vvh", `${Math.round(viewport.height)}px`);
++      root.setAttribute("data-t3patch-kb", "true");
++      // Safari сдвигает страницу вверх, чтобы показать поле; приложение уже ужато — сдвиг не нужен.
++      if (window.scrollY !== 0) window.scrollTo(0, 0);
++    };
++    const schedule = () => {
++      if (frame === null) frame = window.requestAnimationFrame(apply);
++    };
++
++    viewport.addEventListener("resize", schedule);
++    viewport.addEventListener("scroll", schedule);
++    apply();
++    return () => {
++      if (frame !== null) window.cancelAnimationFrame(frame);
++      viewport.removeEventListener("resize", schedule);
++      viewport.removeEventListener("scroll", schedule);
++      root.removeAttribute("data-t3patch-kb");
++      root.style.removeProperty("--t3patch-vvh");
++    };
++  }, []);
++  return null;
++}
+diff --git a/apps/web/src/components/sergey/iosLongPressMenu.tsx b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+index 5d9ee48320..8862f74efc 100644
+--- a/apps/web/src/components/sergey/iosLongPressMenu.tsx
++++ b/apps/web/src/components/sergey/iosLongPressMenu.tsx
+@@ -14,6 +14,25 @@ const HOLD_MS = 500;
+ const MOVE_TOLERANCE_PX = 10;
+ const SIDEBAR_SELECTOR = '[data-slot="sidebar"]';
+ 
++/**
++ * Короткий отклик вибрацией. В Safari на iPhone navigator.vibrate нет; единственный способ —
++ * переключить скрытый системный переключатель (<input type="checkbox" switch>, iOS 18+):
++ * его переключение iPhone сопровождает тактильным щелчком.
++ */
++function haptic(): void {
++  if (typeof navigator.vibrate === "function" && navigator.vibrate(10)) return;
++  const label = document.createElement("label");
++  label.setAttribute("aria-hidden", "true");
++  label.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none";
++  const input = document.createElement("input");
++  input.type = "checkbox";
++  input.setAttribute("switch", "");
++  label.appendChild(input);
++  document.body.appendChild(label);
++  label.click();
++  label.remove();
++}
++
+ function isIosTouchDevice(): boolean {
+   const ua = navigator.userAgent;
+   return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+@@ -42,6 +61,7 @@ export function T3patchIosLongPressMenu(): null {
+       start = point;
+       timer = setTimeout(() => {
+         timer = null;
++        haptic(); // до fired: щелчок скрытого переключателя не должен попасть под swallowClickAfterMenu
+         fired = true;
+         target.dispatchEvent(
+           new MouseEvent("contextmenu", {
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index c31b3534e9..838b062fca 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2267,3 +2267,10 @@ html:has([data-slot="sidebar"][data-mobile="true"]) [data-slot="sheet-backdrop"]
+   -webkit-user-select: text;
+   user-select: text;
+ }
++
++/* t3-patch: клавиатура iPhone — приложение по высоте видимой части (sergey/iosKeyboardViewport.tsx). */
++html[data-t3patch-kb="true"] [data-slot="sidebar-wrapper"] {
++  height: var(--t3patch-vvh) !important;
++  min-height: 0 !important;
++  max-height: var(--t3patch-vvh) !important;
++}
+-- 
+2.43.0
+
