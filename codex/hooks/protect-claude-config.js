@@ -29,7 +29,7 @@ try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { process.
 const tool = String(input.tool_name || '');
 const ti = input.tool_input || {};
 const reason = 'Файлы настроек Claude Code (settings.json, .credentials.json, .env, plugins/, ~/.claude.json) '
-  + 'Codex не правит. Подготовь новую версию под /root/projects/_scratch/staging/ и попроси Сергея положить её на место.';
+  + 'Codex не правит. Подготовь новую версию отдельным файлом (у Сергея — в /root/projects/_scratch/staging/) и попроси владельца сервера положить её на место.';
 
 if (ti.file_path) {
   const p = String(ti.file_path).replace(/\/+/g, '/');

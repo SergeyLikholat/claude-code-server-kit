@@ -24,18 +24,31 @@ backup() { [[ -f "$1" ]] && cp -p "$1" "$1.bak.$STAMP" && log "бэкап: $1.ba
 
 command -v codex >/dev/null || die "codex не найден в PATH"
 command -v node  >/dev/null || die "node не найден в PATH"
-[[ -f "$ROOT_CLAUDE_MD" ]] || die "нет $ROOT_CLAUDE_MD"
+# Два устройства сервера:
+#  - «сервер Сергея»: хуки памяти в ~/.claude/scripts/hooks, правила в /root/CLAUDE.md;
+#  - «сервер kit» (сотрудники): память из ~/llm-memory-kit (run.sh hooks/<имя>), CLAUDE.md может не быть.
+MEMKIT_RUN="${MEMKIT_RUN:-$HOME/llm-memory-kit/run.sh}"
+if [[ -f "$CLAUDE_HOOKS/memory-retrieval.js" ]]; then LAYOUT=sergey
+elif [[ -f "$MEMKIT_RUN" ]]; then LAYOUT=kit
+else die "не найдены хуки памяти: ни $CLAUDE_HOOKS, ни $MEMKIT_RUN"; fi
+HEADER="${CODEX_HEADER:-$HERE/AGENTS.header.md}"
+[[ "$LAYOUT" == kit && -z "${CODEX_HEADER:-}" ]] && HEADER="$HERE/AGENTS.header.kit.md"
+[[ -f "$HEADER" ]] || die "нет шапки $HEADER"
+log "устройство: $LAYOUT, шапка: $(basename "$HEADER")"
 mkdir -p "$CODEX_HOME"
 
 # ---------- 1. AGENTS.md: шапка Codex + /root/CLAUDE.md + общие правила ----------
 build_agents() {
-  cat "$HERE/AGENTS.header.md"
-  printf '\n# Правила Сергея (/root/CLAUDE.md)\n\n'
-  cat "$ROOT_CLAUDE_MD"
+  cat "$HEADER"
+  if [[ -f "$ROOT_CLAUDE_MD" ]]; then
+    printf '\n# Правила владельца (%s)\n\n' "$ROOT_CLAUDE_MD"
+    cat "$ROOT_CLAUDE_MD"
+  fi
   for dir in common web; do
-    [[ -d "$CLAUDE_DIR/rules/$dir" ]] || continue
-    printf '\n\n# Правила разработки: %s (%s/rules/%s)\n' "$dir" "$CLAUDE_DIR" "$dir"
-    for f in "$CLAUDE_DIR/rules/$dir"/*.md; do
+    rd="$CLAUDE_DIR/rules/$dir"; [[ -d "$rd" ]] || rd="$CLAUDE_DIR/rules/ecc/$dir"
+    [[ -d "$rd" ]] || continue
+    printf '\n\n# Правила разработки: %s (%s)\n' "$dir" "$rd"
+    for f in "$rd"/*.md; do
       printf '\n<!-- %s -->\n' "$f"
       # Заголовки правил на уровень ниже, чтобы не спорили с разделами выше.
       sed 's/^#/##/' "$f"
@@ -51,7 +64,7 @@ fi
 
 # ---------- 2. hooks.json: наши хуки + чужие (Orca), что уже стоят ----------
 TMP_HOOKS="$(mktemp)"
-HERE="$HERE" CLAUDE_HOOKS="$CLAUDE_HOOKS" CODEX_HOME="$CODEX_HOME" python3 - "$TMP_HOOKS" <<'PY'
+HERE="$HERE" CLAUDE_HOOKS="$CLAUDE_HOOKS" CODEX_HOME="$CODEX_HOME" LAYOUT="$LAYOUT" MEMKIT_RUN="$MEMKIT_RUN" python3 - "$TMP_HOOKS" <<'PY'
 import json, os, sys
 here, ch, home = os.environ["HERE"], os.environ["CLAUDE_HOOKS"], os.environ["CODEX_HOME"]
 MARK = "# codex-sync"            # метка наших хуков: по ней пересобираем, чужие не трогаем
@@ -60,18 +73,23 @@ def cmd(c, timeout=15, matcher=None):
     g = {"hooks": [{"type": "command", "command": f"{c} {MARK}", "timeout": timeout}]}
     if matcher: g["matcher"] = matcher
     return g
+if os.environ["LAYOUT"] == "kit":
+    mem = lambda name: f'bash "{os.environ["MEMKIT_RUN"]}" hooks/{name}'
+else:
+    mem = lambda name: f'node "{ch}/{name}"'
 ours = {
   "SessionStart": [
-    cmd(f'node "{ch}/session-start-memory-index.js"', 10),
+    cmd(mem("session-start-memory-index.js"), 10),
     cmd(f'node "{here}/hooks/project-memory.js"', 10),
   ],
-  "UserPromptSubmit": [cmd(f'node "{ch}/memory-retrieval.js"', 15)],
-  "PreToolUse": [
-    cmd(f'{adapter} "{here}/hooks/protect-claude-config.js"', 10, "^(Bash|apply_patch)$"),
-    cmd(f'{adapter} "{ch}/outbound-text-guard.js"', 10, "^(Bash|apply_patch|mcp__.*)$"),
-  ],
-  "PostToolUse": [cmd(f'node "{ch}/post-bash-command-log.js" audit', 10, "^Bash$")],
+  "UserPromptSubmit": [cmd(mem("memory-retrieval.js"), 15)],
+  "PreToolUse": [cmd(f'{adapter} "{here}/hooks/protect-claude-config.js"', 10, "^(Bash|apply_patch)$")],
 }
+# Охрана текстов наружу и журнал команд есть только на сервере Сергея.
+if os.path.isfile(f"{ch}/outbound-text-guard.js"):
+    ours["PreToolUse"].append(cmd(f'{adapter} "{ch}/outbound-text-guard.js"', 10, "^(Bash|apply_patch|mcp__.*)$"))
+if os.path.isfile(f"{ch}/post-bash-command-log.js"):
+    ours["PostToolUse"] = [cmd(f'node "{ch}/post-bash-command-log.js" audit', 10, "^Bash$")]
 path = os.path.join(home, "hooks.json")
 try: cur = json.load(open(path)).get("hooks", {})
 except Exception: cur = {}
@@ -81,9 +99,11 @@ for ev in sorted(set(cur) | set(ours)):
     merged[ev] = ours.get(ev, []) + foreign
 json.dump({"hooks": merged}, open(sys.argv[1], "w"), ensure_ascii=False, indent=2)
 PY
-for f in session-start-memory-index.js memory-retrieval.js outbound-text-guard.js post-bash-command-log.js; do
-  [[ -f "$CLAUDE_HOOKS/$f" ]] || die "нет хука Claude: $CLAUDE_HOOKS/$f"
-done
+if [[ "$LAYOUT" == sergey ]]; then
+  for f in session-start-memory-index.js memory-retrieval.js; do
+    [[ -f "$CLAUDE_HOOKS/$f" ]] || die "нет хука Claude: $CLAUDE_HOOKS/$f"
+  done
+fi
 log "hooks.json: $(python3 -c "import json,sys;d=json.load(open(sys.argv[1]))['hooks'];print(sum(len(v) for v in d.values()))" "$TMP_HOOKS") групп"
 if (( DRY )); then rm -f "$TMP_HOOKS"; else
   if ! cmp -s "$TMP_HOOKS" "$CODEX_HOME/hooks.json"; then backup "$CODEX_HOME/hooks.json"; fi

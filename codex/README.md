@@ -59,3 +59,31 @@ Cron пересобирает каждую ночь в 03:35 (лог — `codex/
 
 Поставить Codex, войти (`codex login --device-auth`), затем запустить `sync.sh`, добавить строку cron
 и, если на сервере старая выжимка, скопировать `codex/digest-jsonl.js` в `~/.claude/scripts/cron/` (копия версии с чтением сессий Codex на 2026-11-06).
+
+## Серверы, поставленные kit (сотрудники)
+
+`sync.sh` сам определяет устройство сервера:
+
+| Устройство | Признак | Хуки памяти | Шапка правил |
+|---|---|---|---|
+| сервер Сергея | есть `~/.claude/scripts/hooks/memory-retrieval.js` | `node ~/.claude/scripts/hooks/*` | `AGENTS.header.md` + `/root/CLAUDE.md` |
+| сервер kit | есть `~/llm-memory-kit/run.sh` | `bash ~/llm-memory-kit/run.sh hooks/*` | `AGENTS.header.kit.md`, без личных правил |
+
+Охрана текстов наружу и журнал команд подключаются, только если такие хуки есть на сервере.
+Правила разработки берутся из `~/.claude/rules/{common,web}` или `~/.claude/rules/ecc/{common,web}`.
+
+Сессии Codex на серверах kit читает сам `llm-memory-kit` (`core/digest.js`, переменная
+`MEMKIT_CODEX_SESSIONS`), копировать `digest-jsonl.js` не нужно.
+
+Порядок: `npm i -g @openai/codex`, `bash codex/sync.sh`, строка cron
+`35 3 * * * /bin/bash <kit>/codex/sync.sh >> <kit>/codex/sync.log 2>&1`. Вход в Codex
+(`codex login --device-auth`) — только когда он реально нужен: без входа обвязка просто ждёт.
+
+## Проверка памяти на серверах
+
+`tools/memory-audit/audit.sh` — только чтение: для каждого пользователя с `~/llm-memory-kit`
+показывает хуки, cron, последнюю выжимку, число тем и сессии вне папки проектов.
+
+```bash
+ssh <сервер> 'bash -s' < tools/memory-audit/audit.sh
+```

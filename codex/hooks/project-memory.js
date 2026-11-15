@@ -34,7 +34,7 @@ try {
     (proj || '_Пока пусто._'));
   if (slug !== '-root') {
     const root = readCapped(path.join(rootDir, 'MEMORY.md'));
-    if (root) parts.push(`# Общие правила про Сергея (из \`${rootDir}/MEMORY.md\`)\n\nИндекс; открывай файлы по ссылкам, когда тема касается запроса.\n\n${root}`);
+    if (root) parts.push(`# Общие правила про владельца сервера (из \`${rootDir}/MEMORY.md\`)\n\nИндекс; открывай файлы по ссылкам, когда тема касается запроса.\n\n${root}`);
   }
   emit(parts.join('\n\n---\n\n'));
 } catch { emit(''); }
